@@ -1,3 +1,8 @@
+## 0.8.0
+
+* Add Cell.get() as an alias to Cell.value
+* Add Cell.set(value) as an alias to Cell.value = value 
+
 ## 0.7.0
 
 * Add @slot_def and @cell_def decorators...which both take a resolve_ctx callable to resolve the ctx object.

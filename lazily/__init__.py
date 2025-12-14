@@ -12,7 +12,7 @@ from .slot import BaseSlot, Slot, slot_def, slot
 from .types import LazilyCallable
 
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "BaseSlot",
     "Cell",

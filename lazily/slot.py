@@ -9,11 +9,14 @@ __all__ = ["BaseSlot", "Slot", "resolve_identity", "slot", "slot_def", "slot_sta
 C = TypeVar("C")
 T = TypeVar("T")
 
+
 def resolve_identity(ctx: C) -> dict:
     return ctx
 
+
 class SlotSubscriber[T](Protocol):
     def __call__[**P](self, slot: "Slot", ctx: dict) -> Any: ...
+
 
 class BaseSlot(Generic[C, T]):
     """
@@ -25,10 +28,7 @@ class BaseSlot(Generic[C, T]):
 
     callable: LazilyCallable[C, T]
 
-    def __init__(
-        self,
-        callable: Optional[LazilyCallable[dict, T]] = None
-    ) -> None:
+    def __init__(self, callable: Optional[LazilyCallable[dict, T]] = None) -> None:
         if callable is not None:
             self.callable = callable
 
@@ -64,7 +64,7 @@ class Slot(BaseSlot[dict, T], Generic[C, T]):
     def __init__(
         self,
         callable: Optional[LazilyCallable[dict, T]] = None,
-        resolve_ctx: ResolveCallable[C]=resolve_identity,
+        resolve_ctx: ResolveCallable[C] = resolve_identity,
     ) -> None:
         super().__init__(callable)
         self._subscribers = set()
@@ -73,7 +73,7 @@ class Slot(BaseSlot[dict, T], Generic[C, T]):
     def __call__(self, ctx: C) -> T:
         if len(slot_stack) > 0:
             parent_slot = slot_stack[-1]
-            self.subscribe(lambda self, ctx : parent_slot.reset(ctx))
+            self.subscribe(lambda self, ctx: parent_slot.reset(ctx))
 
         ctx = self.resolve_ctx(ctx)
         if self in ctx:
@@ -101,6 +101,7 @@ class Slot(BaseSlot[dict, T], Generic[C, T]):
         for subscriber in self._subscribers:
             subscriber(self, ctx)
 
+
 slot_stack: list[Slot] = []
 
 
@@ -112,27 +113,33 @@ class slot(Slot[dict, T]):
     ```
     from lazily import slot
 
+
     @slot
     def hello(ctx: dict) -> str:
         return "Hello"
 
+
     @slot
     def world(ctx: dict) -> str:
         return "World"
+
 
     @slot
     def greeting(ctx: dict) -> str:
         print("Calculating greeting...")
         return f"{hello(ctx)} {world(ctx)}!"
 
+
     @slot
     def response(ctx: dict) -> str:
         return "How are you?"
+
 
     @slot
     def greeting_and_response(ctx: dict) -> str:
         print("Calculating greeting_and_response...")
         return f"{greeting(ctx)} {response(ctx)}"
+
 
     ctx = {}
 
@@ -156,7 +163,10 @@ class slot(Slot[dict, T]):
         super().__init__()
         self.callable = callable
 
-def slot_def(resolve_ctx: Callable[[C], dict]) -> Callable[[Callable[[dict], T]], Slot[C, T]]:
+
+def slot_def(
+    resolve_ctx: Callable[[C], dict],
+) -> Callable[[Callable[[dict], T]], Slot[C, T]]:
     """
     Defines a slot with a resolve_ctx argument extract a context from the argument.
     This is useful with http request libraries or graphql libraries.
@@ -165,34 +175,42 @@ def slot_def(resolve_ctx: Callable[[C], dict]) -> Callable[[Callable[[dict], T]]
     ```
     from lazily import slot_def
 
+
     @dataclass
     class CustomCtxResolver:
         ctx: dict
 
+
     def resolve_ctx(resolver: CustomCtxResolver | dict) -> dict:
         return resolver.ctx if isinstance(resolver, CustomCtxResolver) else resolver
+
 
     @slot_def(resolve_ctx)
     def hello(ctx: dict) -> str:
         return "Hello"
 
+
     @slot_def(resolve_ctx)
     def world(ctx: dict) -> str:
         return "World"
+
 
     @slot_def(resolve_ctx)
     def greeting(ctx: dict) -> str:
         print("Calculating greeting...")
         return f"{hello(ctx)} {world(ctx)}!"
 
+
     @slot_def(resolve_ctx)
     def response(ctx: dict) -> str:
         return "How are you?"
+
 
     @slot_def(resolve_ctx)
     def greeting_and_response(ctx: dict) -> str:
         print("Calculating greeting_and_response...")
         return f"{greeting(ctx)} {response(ctx)}"
+
 
     ctx = {}
     resolver = CustomCtxResolver(ctx)
@@ -212,6 +230,8 @@ def slot_def(resolve_ctx: Callable[[C], dict]) -> Callable[[Callable[[dict], T]]
     # Hello World! How are you?
     ```
     """
+
     def outer(callable: Callable[[dict], T]) -> Slot[C, T]:
         return Slot[C, T](callable, resolve_ctx)
+
     return outer
