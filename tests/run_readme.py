@@ -32,7 +32,7 @@ def greeting_and_response(ctx: dict) -> str:
     print("Calculating greeting_and_response...")
     return f"{greeting(ctx)} {response(ctx).value}"
 
-ctx = {}
+ctx: dict[object, object] = {}
 custom_ctx_resolver = CustomCtxResolver(ctx)
 name(ctx).value = "World"
 

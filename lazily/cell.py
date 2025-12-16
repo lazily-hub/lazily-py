@@ -1,12 +1,12 @@
 from typing import Any, Callable, Generic, Protocol, TypeVar
 
 from .slot import BaseSlot, Slot, slot_stack
-from .types import LazilyCallable
 
 
 __all__ = ["Cell", "cell", "cell_def"]
 
-C = TypeVar("C")
+C_in = TypeVar("C_in", contravariant=True)
+C_ctx = TypeVar("C_ctx", bound=dict)
 T = TypeVar("T")
 
 
@@ -20,6 +20,8 @@ class Cell(Generic[T]):
     """
 
     __slots__ = ("_subscribers", "_value", "ctx", "name")
+
+    _subscribers: set[CellSubscriber[T]]
 
     def __init__(self, ctx: dict, initial_value: T) -> None:
         self.ctx = ctx
@@ -59,97 +61,32 @@ class Cell(Generic[T]):
             subscriber(self.ctx, self._value)
 
 
-none_callable = lambda ctx: None
+def none_callable(ctx: dict) -> None:
+    return None
 
 
-class cell(BaseSlot[dict, Cell[T]]):
+def _none_as_t(ctx: dict) -> Any:
+    return None
+
+
+class cell(BaseSlot[dict, dict, Cell[T]]):
     """
     Decorator for creating a slot that returns a Cell.
-
-    ==Example==
-    ```python
-    from lazily import cell, slot
-
-
-    @cell
-    def name(ctx: dict) -> str:
-        return "World"
-
-
-    @slot
-    def greeting(ctx: dict) -> str:
-        print("Calculating...")
-        return f"Hello, {name(ctx).value}!"
-
-
-    ctx = {}
-
-    # First access: runs the function
-    greeting(ctx)
-    # Calculating...
-    # 'Hello, World!'
-
-    # Second access: uses cache (no print)
-    greeting(ctx)
-    # 'Hello, World!'
-
-    # Update cell: invalidates cache
-    name(ctx).value = "Lazily"
-
-    # Access again: re-runs the function
-    greeting(ctx)
-    # Calculating...
-    # 'Hello, Lazily!'
-    ```
     """
 
-    def __init__(self, callable: LazilyCallable[dict, T] = none_callable) -> None:
-        super().__init__(lambda ctx: Cell(ctx, callable(ctx)))
+    def __init__(self, callable: Callable[[dict], T] | None = None) -> None:
+        if callable is None:
+            callable = _none_as_t
+        super().__init__(callable=lambda ctx: Cell(ctx, callable(ctx)))
 
 
 def cell_def(
-    resolve_ctx: Callable[[C], T],
-) -> Callable[[Callable[[dict], T]], Slot[C, Cell[T]]]:
-    """
-
-    ==Example==
-    ```python
-    from lazily import cell, slot
-
-
-    @cell
-    def name(ctx: dict) -> str:
-        return "World"
-
-
-    @slot
-    def greeting(ctx: dict) -> str:
-        print("Calculating...")
-        return f"Hello, {name(ctx).value}!"
-
-
-    ctx = {}
-
-    # First access: runs the function
-    greeting(ctx)
-    # Calculating...
-    # 'Hello, World!'
-
-    # Second access: uses cache (no print)
-    greeting(ctx)
-    # 'Hello, World!'
-
-    # Update cell: invalidates cache
-    name(ctx).value = "Lazily"
-
-    # Access again: re-runs the function
-    greeting(ctx)
-    # Calculating...
-    # 'Hello, Lazily!'
-    ```
-    """
-
-    def outer(callable: LazilyCallable[dict, T]) -> Slot[C, Cell[T]]:
-        return Slot[C, T](lambda ctx: Cell(ctx, callable(ctx)), resolve_ctx)
+    resolve_ctx: Callable[[C_in], dict],
+) -> Callable[[Callable[[dict], T]], Slot[C_in, dict, Cell[T]]]:
+    def outer(callable: Callable[[dict], T]) -> Slot[C_in, dict, Cell[T]]:
+        return Slot[C_in, dict, Cell[T]](
+            callable=lambda ctx: Cell(ctx, callable(ctx)),
+            resolve_ctx=resolve_ctx,
+        )
 
     return outer

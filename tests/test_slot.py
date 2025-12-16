@@ -1,6 +1,12 @@
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from lazily import Slot, slot
+
 
 class TestSlot:
     """Test the base Slot class functionality."""
@@ -14,14 +20,14 @@ class TestSlot:
     def test_slot_with_manual_callable(self):
         """Test Slot with manually assigned callable."""
         instance_slot = Slot()
-        instance_slot .callable = lambda ctx: "test value"
+        instance_slot.callable = lambda ctx: "test value"
 
         ctx = {}
         instance = instance_slot(ctx)
 
         assert instance == "test value"
-        assert instance_slot  in ctx
-        assert ctx[instance_slot ] == "test value"
+        assert instance_slot in ctx
+        assert ctx[instance_slot] == "test value"
 
     def test_slot_get_method(self):
         """Test the get method."""
@@ -102,15 +108,15 @@ class TestSlotClass:
 
         first = slot(lambda ctx: "Hello")
         second = slot(lambda ctx: "World")
-        combined = slot(lambda ctx: f"{first(ctx)} {second (ctx)}!")
+        combined = slot(lambda ctx: f"{first(ctx)} {second(ctx)}!")
 
         ctx = {}
-        result = combined (ctx)
+        result = combined(ctx)
 
         assert result == "Hello World!"
         assert first in ctx
-        assert second  in ctx
-        assert combined  in ctx
+        assert second in ctx
+        assert combined in ctx
 
     def test_multiple_contexts(self):
         """Test that different contexts are independent."""
@@ -144,11 +150,12 @@ class TestIntegration:
 
     def test_complex_dependency_graph(self):
         """Test a complex dependency graph."""
+
         @slot
         def config(ctx: dict) -> dict:
             return {"api_url": "https://api.example.com", "timeout": 30}
 
-        class HttpClient(Slot[dict, str]):
+        class HttpClient(Slot[dict, dict, str]):
             def callable(self, ctx: dict) -> str:
                 _config = config(ctx)
                 return f"HttpClient({_config['api_url']}, timeout={_config['timeout']})"
@@ -167,29 +174,6 @@ class TestIntegration:
 
         expected = "App(user=UserService(HttpClient(https://api.example.com, timeout=30)), auth=AuthService(HttpClient(https://api.example.com, timeout=30)))"
         assert result == expected
-
-    def test_context_isolation(self):
-        """Test that different contexts don't interfere with each other."""
-        @slot
-        def value_slot(ctx: dict) -> str:
-            return ctx.get("input", "default")
-
-        @slot
-        def multiplier_slot(ctx: dict) -> int:
-            base = value_slot(ctx)
-            return len(base) * 2
-
-        ctx1 = {"input": "hello"}
-        ctx2 = {"input": "hi"}
-        ctx3 = {}
-
-        result1 = multiplier_slot(ctx1)  # len('hello') * 2 = 10
-        result2 = multiplier_slot(ctx2)  # len('hi') * 2 = 4
-        result3 = multiplier_slot(ctx3)  # len('default') * 2 = 14
-
-        assert result1 == 10
-        assert result2 == 4
-        assert result3 == 14
 
 
 class TestEdgeCases:
@@ -249,3 +233,53 @@ class TestEdgeCases:
 
         # Should not slot cached after exception
         assert not error_slot.is_in(ctx)
+
+    def test_multiple_context_types(self) -> None:
+        class FooCtx(dict): ...
+
+        class BarCtx(dict): ...
+
+        @slot
+        def foo(ctx: FooCtx) -> int:
+            return 1
+
+        foo_ctx = FooCtx()
+        foo(foo_ctx)
+
+        """
+        The following has an incompatible type mypy error.
+        
+        :see: TestEdgeCases.test_mypy_rejects_barctx_for_fooctx
+        """
+        # bar_ctx = BarCtx()
+        # foo(bar_ctx)
+
+    def test_mypy_rejects_barctx_for_fooctx(self) -> None:
+        # Write a small module that should FAIL mypy.
+        p = Path(tempfile.gettempdir()) / "negative_case.py"
+        p.write_text(
+            """
+from lazily import slot
+
+class FooCtx(dict): ...
+class BarCtx(dict): ...
+
+@slot
+def foo(ctx: FooCtx) -> int:
+    return 1
+
+bar_ctx = BarCtx()
+foo(bar_ctx)
+            """.lstrip()
+        )
+
+        # Run mypy against that file
+        proc = subprocess.run(
+            [sys.executable, "-m", "mypy", "--explicit-package-bases", str(p)],
+            capture_output=True,
+            text=True,
+        )
+
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        # Optional: assert a specific diagnostic shows up
+        assert "incompatible type" in (proc.stdout + proc.stderr).lower()

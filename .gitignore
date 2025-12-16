@@ -76,3 +76,5 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 .envrc
+
+poetry.lock

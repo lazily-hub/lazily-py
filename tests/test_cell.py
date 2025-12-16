@@ -42,7 +42,7 @@ class TestCell:
             slot_events(ctx).append("greeting_and_response")
             return f"{greeting(ctx)} {response(ctx).value}"
 
-        ctx = {}
+        ctx: dict[object, object] = {}
         custom_ctx_resolver = CustomCtxResolver(ctx)
 
         assert ctx.get(greeting) is None
@@ -110,7 +110,7 @@ class TestCell:
             slot_events(ctx).append("greeting_and_response")
             return f"{greeting(ctx)} {response(ctx).get()}"
 
-        ctx = {}
+        ctx: dict[object, object] = {}
         custom_ctx_resolver = CustomCtxResolver(ctx)
 
         assert ctx.get(greeting) is None
@@ -143,13 +143,13 @@ class TestCell:
         ]
 
     def test_empty_cell(self) -> None:
-        empty_cell = cell()
+        empty_cell: cell[str] = cell()
 
         @slot
         def cell_dependency(ctx: dict) -> str:
             return f"empty_cell={empty_cell(ctx).value}"
 
-        ctx = {}
+        ctx: dict[object, object] = {}
         assert empty_cell(ctx).value == None
         assert cell_dependency(ctx) == "empty_cell=None"
         empty_cell(ctx).value = "test"

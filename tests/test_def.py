@@ -40,7 +40,7 @@ class TestDef:
             slot_events(ctx).append("greeting_and_response")
             return f"{greeting(ctx)} {response(ctx).value}"
 
-        ctx = {}
+        ctx: dict[object, object] = {}
         custom_ctx_resolver = CustomCtxResolver(ctx)
 
         assert ctx.get(greeting) is None
