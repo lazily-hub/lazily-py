@@ -11,10 +11,10 @@ pip install lazily
 ### Example usage
 
 ```python
-from lazily import cell, slot
+from lazily import CellSlot, cell, slot
 
 # Cells hold a value that can be updated.
-name = cell()
+name = CellSlot[dict, dict, str]()
 
 
 # Slots are functions that depend on cells and other slots.
@@ -24,7 +24,7 @@ def greeting(ctx: dict) -> str:
     return f"Hello, {name(ctx).value}!"
 
 
-# A cell can also have a default value.
+# A CellSlot can also have a default value.
 @cell
 def response(ctx: dict) -> str:
     return "How are you?"
