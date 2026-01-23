@@ -36,11 +36,13 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
-    "poethepoet",
-    "pytest>=6.0",
-    "pytest-cov",
-    "ruff",
-    "mypy"
+    "build==1.4.0",
+    "mypy==1.19.1",
+    "poethepoet==0.40.0",
+    "pytest-cov==7.0.0",
+    "pytest==9.0.2",
+    "ruff==0.14.14",
+    "twine==6.2.0",
 ]
 
 [dependency-groups]

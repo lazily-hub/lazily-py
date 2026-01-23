@@ -1,5 +1,6 @@
-.PHONY: install-dev build test lint format type-check clean publish-test publish
+.PHONY: init build test lint format type-check clean publish-test publish
 
+# Install development dependencies and package in editable mode
 init: PY_VERSION = $(shell [ -f .python-version ] && \
 	cat .python-version || \
 	uv run python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" \
@@ -18,11 +19,6 @@ init:
 	else \
 		uv sync --python "$(PY_VERSION)" $(SYNC_ARGS); \
 	fi
-
-# Install development dependencies and package in editable mode
-install-dev:
-	uv run pip install build twine pytest pytest-cov ruff mypy
-	uv run pip install -e .
 
 # Run tests
 test:
