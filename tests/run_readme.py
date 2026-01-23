@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 
-from lazily import cell, slot, slot_def
+from lazily import CellSlot, cell, slot, slot_def
 
 
 # Cells hold a value that can be updated.
-name = cell[str]()
+name = CellSlot[dict, dict, str]()
 
 
 # Slots are functions that depend on cells and other slots.

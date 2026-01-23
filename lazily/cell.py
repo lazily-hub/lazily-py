@@ -1,9 +1,10 @@
-from typing import Any, Callable, Generic, Protocol, TypeVar
+from collections.abc import Callable
+from typing import Any, Protocol, TypeVar
 
-from .slot import BaseSlot, Slot, slot_stack
+from .slot import BaseSlot, slot_stack
 
 
-__all__ = ["Cell", "cell", "cell_def"]
+__all__ = ["Cell", "CellSlot", "cell", "cell_def"]
 
 C_in = TypeVar("C_in", contravariant=True)
 C_ctx = TypeVar("C_ctx", bound=dict)
@@ -14,7 +15,7 @@ class CellSubscriber[T](Protocol):
     def __call__(self, ctx: dict, value: T) -> Any: ...
 
 
-class Cell(Generic[T]):
+class Cell[T]:
     """
     A subscribable that can be used with Slots.
     """
@@ -35,7 +36,7 @@ class Cell(Generic[T]):
     def value(self) -> T:
         if len(slot_stack) > 0:
             callable = slot_stack[-1]
-            self.subscribe(lambda ctx, value: callable.reset(self.ctx))
+            self.subscribe(lambda _ctx, _value: callable.reset(self.ctx))
         return self._value
 
     @value.setter
@@ -61,32 +62,44 @@ class Cell(Generic[T]):
             subscriber(self.ctx, self._value)
 
 
-def none_callable(ctx: dict) -> None:
+def none_callable(_: dict) -> None:
     return None
 
 
-def _none_as_t(ctx: dict) -> Any:
+def _none_as_t(_: dict) -> Any:
     return None
 
 
-class cell(BaseSlot[dict, dict, Cell[T]]):
+class CellSlot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, Cell[T]]):
+    __slots__ = [
+        "_subscribers",
+    ]
+
+    def __init__(
+        self,
+        callable: Callable[[C_ctx], T] = _none_as_t,
+        resolve_ctx: Callable[[C_in], C_ctx] | None = None,
+    ) -> None:
+        super().__init__(callable=lambda ctx: Cell(ctx, callable(ctx)), resolve_ctx=resolve_ctx)
+
+
+def cell[C_ctx:dict, T](callable: Callable[[C_ctx], T] = _none_as_t) -> CellSlot[C_ctx, C_ctx, T]:
     """
     Decorator for creating a slot that returns a Cell.
+
+    Note: this is intentionally a function (not a class) so type checkers
+    correctly treat @cell as transforming the function type from T to Cell[T].
     """
-
-    def __init__(self, callable: Callable[[dict], T] | None = None) -> None:
-        if callable is None:
-            callable = _none_as_t
-        super().__init__(callable=lambda ctx: Cell(ctx, callable(ctx)))
+    return CellSlot(callable=callable)
 
 
-def cell_def(
-    resolve_ctx: Callable[[C_in], dict],
-) -> Callable[[Callable[[dict], T]], Slot[C_in, dict, Cell[T]]]:
-    def outer(callable: Callable[[dict], T]) -> Slot[C_in, dict, Cell[T]]:
-        return Slot[C_in, dict, Cell[T]](
-            callable=lambda ctx: Cell(ctx, callable(ctx)),
-            resolve_ctx=resolve_ctx,
+def cell_def[C_in, C_ctx: dict, T](
+    resolve_ctx: Callable[[C_in], C_ctx],
+) -> Callable[[Callable[[C_ctx], T]], CellSlot[C_in, C_ctx, T]]:
+    def outer(callable: Callable[[C_ctx], T]) -> CellSlot[C_in, C_ctx, T]:
+        return CellSlot[C_in, C_ctx, T](
+            callable=callable,
+            resolve_ctx=resolve_ctx
         )
 
     return outer

@@ -1,21 +1,40 @@
 .PHONY: install-dev build test lint format type-check clean publish-test publish
 
+init: PY_VERSION = $(shell [ -f .python-version ] && \
+	cat .python-version || \
+	uv run python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" \
+)
+init:
+	@echo "Using Python version: $(PY_VERSION)"
+
+	@if command -v mise >/dev/null 2>&1; then \
+		mise install; \
+	fi
+
+	uv venv .venv --python "$(PY_VERSION)" --no-project --clear --seed $(VENV_ARGS)
+
+	@if [ -n "$(ALL)" ]; then \
+		uv sync --python "$(PY_VERSION)" --all-groups --all-extras $(SYNC_ARGS); \
+	else \
+		uv sync --python "$(PY_VERSION)" $(SYNC_ARGS); \
+	fi
+
 # Install development dependencies and package in editable mode
 install-dev:
-	pip install build twine pytest pytest-cov ruff mypy
-	pip install -e .
+	uv run pip install build twine pytest pytest-cov ruff mypy
+	uv run pip install -e .
 
 # Run tests
 test:
-	pytest tests/ -v
+	uv run pytest tests/ -v
 
 # Run tests with coverage
 test-cov:
-	pytest tests/ --cov=lazily --cov-report=html --cov-report=term-missing
+	uv run pytest tests/ --cov=lazily --cov-report=html --cov-report=term-missing
 
 # Format code with ruff
 format:
-	ruff format lazily/ tests/
+	uv run ruff format lazily/ tests/
 
 # Lint code with ruff
 lint:
