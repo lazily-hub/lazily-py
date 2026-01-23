@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lazily"
-version = "0.9.0"
+version = "0.10.0"
 description = "A library for lazy evaluation with context caching"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -19,10 +19,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -30,7 +26,7 @@ classifiers = [
     "Topic :: Utilities"
 ]
 keywords = ["lazy", "evaluation", "dependency", "injection", "context", "lazily"]
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 dependencies = []
 
 [project.urls]
@@ -47,6 +43,9 @@ dev = [
     "mypy"
 ]
 
+[dependency-groups]
+dev = ["lazily[dev]"]
+
 [tool.setuptools.packages.find]
 include = ["lazily*"]
 exclude = ["tests*"]
@@ -54,12 +53,19 @@ exclude = ["tests*"]
 [tool.setuptools.package-data]
 lazily = ["py.typed"]
 
+[tool.uv]
+default-groups = ["dev"]
+python-preference = "only-managed"
+package = true
+
 [tool.poe.tasks]
 mypy = "mypy --config-file ./pyproject.toml --explicit-package-bases ./"
+precommit = ["mypy", "ruff_fix", "test"]
+ruff_fix = "ruff check --fix"
+test = "pytest tests/ -v"
 
 [tool.ruff]
-# Target Python 3.8+
-target-version = "py38"
+target-version = "py312"
 
 # Set the maximum line length to 88 (Black's default)
 line-length = 88

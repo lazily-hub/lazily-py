@@ -248,7 +248,6 @@ class TestEdgeCases:
 
         """
         The following has an incompatible type mypy error.
-        
         :see: TestEdgeCases.test_mypy_rejects_barctx_for_fooctx
         """
         # bar_ctx = BarCtx()

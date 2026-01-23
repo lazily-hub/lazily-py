@@ -1,10 +1,8 @@
-from typing import Any, Callable, Generic, Optional, Protocol, TypeVar, cast
-
-from .types import LazilyCallable
+from collections.abc import Callable
+from typing import Any, Protocol, TypeVar, cast
 
 
 __all__ = ["BaseSlot", "Slot", "resolve_identity", "slot", "slot_def", "slot_stack"]
-
 
 C_in = TypeVar("C_in", contravariant=True)
 C_ctx = TypeVar("C_ctx", bound=dict)
@@ -12,7 +10,7 @@ C_dict = TypeVar("C_dict", bound=dict)
 T = TypeVar("T")
 
 
-def resolve_identity(ctx: C_ctx) -> C_ctx:
+def resolve_identity[C_ctx: dict](ctx: C_ctx) -> C_ctx:
     return ctx
 
 
@@ -20,7 +18,7 @@ class SlotSubscriber(Protocol):
     def __call__(self, slot: "Slot[Any, Any, Any]", ctx: dict) -> Any: ...
 
 
-class BaseSlot(Generic[C_in, C_ctx, T]):
+class BaseSlot[C_in, C_ctx: dict, T]:
     """
     Base class for a lazy slot Callable. Wraps a callable implementation field.
     Does not subscribe to Cells.
@@ -33,7 +31,7 @@ class BaseSlot(Generic[C_in, C_ctx, T]):
 
     def __init__(
         self,
-        callable: Optional[Callable[[C_ctx], T]] = None,
+        callable: Callable[[C_ctx], T] | None = None,
         resolve_ctx: Callable[[C_in], C_ctx] | None = None,
     ) -> None:
         if callable is not None:
@@ -54,7 +52,7 @@ class BaseSlot(Generic[C_in, C_ctx, T]):
     def __repr__(self) -> str:
         return f"<Slot {self.callable.__name__}>"
 
-    def get(self, ctx: C_in) -> Optional[T]:
+    def get(self, ctx: C_in) -> T | None:
         resolved = self.resolve_ctx(ctx)
         return resolved.get(self)
 
@@ -67,7 +65,7 @@ class BaseSlot(Generic[C_in, C_ctx, T]):
         return self in resolved
 
 
-class Slot(BaseSlot[C_in, C_ctx, T]):
+class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
     """
     Base class for a lazy slot Callable that subscribes to Cells.
     """
@@ -88,7 +86,7 @@ class Slot(BaseSlot[C_in, C_ctx, T]):
         if len(slot_stack) > 0:
             parent_slot = slot_stack[-1]
             self.subscribe(
-                lambda self_slot, resolved_ctx: parent_slot.reset(resolved_ctx)
+                lambda _, resolved_ctx: parent_slot.reset(resolved_ctx)
             )
 
         resolved = self.resolve_ctx(ctx)
@@ -122,7 +120,7 @@ class Slot(BaseSlot[C_in, C_ctx, T]):
 slot_stack: list[Slot[Any, Any, Any]] = []
 
 
-class slot(Slot[C_dict, C_dict, T], Generic[C_dict, T]):
+class slot[C_dict: dict, T](Slot[C_dict, C_dict, T]):
     """
     A Slot that can be initialized with the callable as an argument.
     """
@@ -131,10 +129,10 @@ class slot(Slot[C_dict, C_dict, T], Generic[C_dict, T]):
         super().__init__(callable=callable)
 
 
-def slot_def(
+def slot_def[C_in, C_ctx: dict, T](
     resolve_ctx: Callable[[C_in], C_ctx],
-) -> Callable[[Callable[[dict], T]], Slot[C_in, dict, T]]:
-    def outer(callable: Callable[[dict], T]) -> Slot[C_in, dict, T]:
-        return Slot[C_in, dict, T](callable=callable, resolve_ctx=resolve_ctx)
+) -> Callable[[Callable[[C_ctx], T]], Slot[C_in, C_ctx, T]]:
+    def outer(callable: Callable[[C_ctx], T]) -> Slot[C_in, C_ctx, T]:
+        return Slot[C_in, C_ctx, T](callable=callable, resolve_ctx=resolve_ctx)
 
     return outer

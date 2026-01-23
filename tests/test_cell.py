@@ -1,6 +1,7 @@
 from dataclasses import dataclass
+from typing import Any
 
-from lazily import Cell, cell, slot, slot_def
+from lazily import BaseSlot, Cell, cell, slot, slot_def
 
 
 class TestCell:
@@ -143,14 +144,14 @@ class TestCell:
         ]
 
     def test_empty_cell(self) -> None:
-        empty_cell: cell[str] = cell()
+        empty_cell: BaseSlot[Any, Any, Cell[str]] = cell()
 
         @slot
         def cell_dependency(ctx: dict) -> str:
             return f"empty_cell={empty_cell(ctx).value}"
 
         ctx: dict[object, object] = {}
-        assert empty_cell(ctx).value == None
+        assert empty_cell(ctx).value is None
         assert cell_dependency(ctx) == "empty_cell=None"
         empty_cell(ctx).value = "test"
         assert empty_cell(ctx).value == "test"
