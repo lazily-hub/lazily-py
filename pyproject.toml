@@ -62,8 +62,9 @@ package = true
 
 [tool.poe.tasks]
 mypy = "mypy --config-file ./pyproject.toml --explicit-package-bases ./"
-precommit = ["mypy", "ruff_fix", "test"]
+precommit = ["mypy", "ruff_fix", "run_readme", "test"]
 ruff_fix = "ruff check --fix"
+run_readme = "python -m tests.run_readme"
 test = "pytest tests/ -v"
 
 [tool.ruff]
