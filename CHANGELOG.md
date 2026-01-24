@@ -1,3 +1,9 @@
+## D.10.0
+
+* Fix cell type inference.
+* Drop support for python version <3.12.
+* Use uv + mise for development package management.
+
 ## 0.9.0
 
 * Add type-aware context to slot and cell functions.
