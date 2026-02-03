@@ -1,5 +1,4 @@
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -274,11 +273,11 @@ foo(bar_ctx)
 
         # Run mypy against that file
         proc = subprocess.run(
-            [sys.executable, "-m", "mypy", "--explicit-package-bases", str(p)],
+            ["ty", "check", str(p)],
             capture_output=True,
             text=True,
         )
 
         assert proc.returncode != 0, proc.stdout + proc.stderr
         # Optional: assert a specific diagnostic shows up
-        assert "incompatible type" in (proc.stdout + proc.stderr).lower()
+        assert "invalid-argument-type" in (proc.stdout + proc.stderr).lower()

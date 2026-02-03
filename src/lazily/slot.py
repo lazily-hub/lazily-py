@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from functools import partial
 from typing import Any, Protocol, TypeVar, cast
 
 
@@ -50,7 +51,7 @@ class BaseSlot[C_in, C_ctx: dict, T]:
         return resolved[self]
 
     def __repr__(self) -> str:
-        return f"<Slot {self.callable.__name__}>"
+        return f"<Slot {self.callable}>"
 
     def get(self, ctx: C_in) -> T | None:
         resolved = self.resolve_ctx(ctx)
@@ -84,10 +85,7 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
 
     def __call__(self, ctx: C_in) -> T:
         if len(slot_stack) > 0:
-            parent_slot = slot_stack[-1]
-            self.subscribe(
-                lambda _, resolved_ctx: parent_slot.reset(resolved_ctx)
-            )
+            self.subscribe(partial(self._subscriber, slot_stack[-1]))
 
         resolved = self.resolve_ctx(ctx)
 
@@ -102,6 +100,14 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
             slot_stack.pop()
 
         return resolved[self]
+
+    def _subscriber(
+        self,
+        parent_slot: "Slot",
+        slot: "Slot[Any, Any, Any]",
+        ctx: dict,
+    ) -> Any:
+        parent_slot.reset(ctx)
 
     def reset(self, ctx: C_in) -> None:
         resolved = self.resolve_ctx(ctx)
