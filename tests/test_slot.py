@@ -246,13 +246,13 @@ class TestEdgeCases:
         foo(foo_ctx)
 
         """
-        The following has an incompatible type mypy error.
-        :see: TestEdgeCases.test_mypy_rejects_barctx_for_fooctx
+        The following has an incompatible type ty error.
+        :see: TestEdgeCases.test_ty_rejects_barctx_for_fooctx
         """
         # bar_ctx = BarCtx()
         # foo(bar_ctx)
 
-    def test_mypy_rejects_barctx_for_fooctx(self) -> None:
+    def test_ty_rejects_barctx_for_fooctx(self) -> None:
         # Write a small module that should FAIL mypy.
         p = Path(tempfile.gettempdir()) / "negative_case.py"
         p.write_text(
