@@ -38,7 +38,7 @@ lint:
 
 # Type check
 type-check:
-	mypy lazily/
+	poe ty
 
 # Run all checks
 check: format lint type-check test
