@@ -1,7 +1,8 @@
 from collections.abc import Callable
+from functools import partial
 from typing import Any, Protocol, TypeVar
 
-from .slot import BaseSlot, slot_stack
+from .slot import BaseSlot, Slot, slot_stack
 
 
 __all__ = ["Cell", "CellSlot", "cell", "cell_def"]
@@ -35,9 +36,11 @@ class Cell[T]:
     @property
     def value(self) -> T:
         if len(slot_stack) > 0:
-            callable = slot_stack[-1]
-            self.subscribe(lambda _ctx, _value: callable.reset(self.ctx))
+            self.subscribe(partial(self._subscriber, slot_stack[-1]))
         return self._value
+
+    def _subscriber(self, parent_slot: Slot, ctx: dict, value: T) -> None:
+        parent_slot.reset(self.ctx)
 
     @value.setter
     def value(self, value: T) -> None:
@@ -80,10 +83,14 @@ class CellSlot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, Cell[T]]):
         callable: Callable[[C_ctx], T] = _none_as_t,
         resolve_ctx: Callable[[C_in], C_ctx] | None = None,
     ) -> None:
-        super().__init__(callable=lambda ctx: Cell(ctx, callable(ctx)), resolve_ctx=resolve_ctx)
+        super().__init__(
+            callable=lambda ctx: Cell(ctx, callable(ctx)), resolve_ctx=resolve_ctx
+        )
 
 
-def cell[C_ctx:dict, T](callable: Callable[[C_ctx], T] = _none_as_t) -> CellSlot[C_ctx, C_ctx, T]:
+def cell[C_ctx: dict, T](
+    callable: Callable[[C_ctx], T] = _none_as_t,
+) -> CellSlot[C_ctx, C_ctx, T]:
     """
     Decorator for creating a slot that returns a Cell.
 
@@ -97,9 +104,6 @@ def cell_def[C_in, C_ctx: dict, T](
     resolve_ctx: Callable[[C_in], C_ctx],
 ) -> Callable[[Callable[[C_ctx], T]], CellSlot[C_in, C_ctx, T]]:
     def outer(callable: Callable[[C_ctx], T]) -> CellSlot[C_in, C_ctx, T]:
-        return CellSlot[C_in, C_ctx, T](
-            callable=callable,
-            resolve_ctx=resolve_ctx
-        )
+        return CellSlot[C_in, C_ctx, T](callable=callable, resolve_ctx=resolve_ctx)
 
     return outer
