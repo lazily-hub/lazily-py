@@ -1,7 +1,7 @@
+__all__ = ["LazilyCallable", "ResolveCallable"]
+
 from typing import Protocol, TypeVar
 
-
-__all__ = ["LazilyCallable", "ResolveCallable"]
 
 C_contra = TypeVar("C_contra", contravariant=True, bound=dict)
 C_cov = TypeVar("C_cov", covariant=True, bound=dict)

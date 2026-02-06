@@ -1,11 +1,11 @@
+__all__ = ["Cell", "CellSlot", "cell", "cell_def"]
+
 from collections.abc import Callable
 from functools import partial
 from typing import Any, Protocol, TypeVar
 
 from .slot import BaseSlot, Slot, slot_stack
 
-
-__all__ = ["Cell", "CellSlot", "cell", "cell_def"]
 
 C_in = TypeVar("C_in", contravariant=True)
 C_ctx = TypeVar("C_ctx", bound=dict)

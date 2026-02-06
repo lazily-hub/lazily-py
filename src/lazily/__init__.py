@@ -7,12 +7,7 @@ and dependency injection patterns in Python applications.
 The core concept revolves around 'Be' objects that lazily evaluate their values
 only when needed, storing results in a context dictionary for efficient reuse.
 """
-from .cell import Cell, CellSlot, cell, cell_def
-from .slot import BaseSlot, Slot, slot, slot_def
-from .types import LazilyCallable
 
-
-__version__ = "0.10.2"
 __all__ = [
     "BaseSlot",
     "Cell",
@@ -24,3 +19,8 @@ __all__ = [
     "slot",
     "slot_def",
 ]
+__version__ = "0.10.2"
+
+from .cell import Cell, CellSlot, cell, cell_def
+from .slot import BaseSlot, Slot, slot, slot_def
+from .types import LazilyCallable

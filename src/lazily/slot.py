@@ -1,9 +1,9 @@
+__all__ = ["BaseSlot", "Slot", "resolve_identity", "slot", "slot_def", "slot_stack"]
+
 from collections.abc import Callable
 from functools import partial
 from typing import Any, Protocol, TypeVar, cast
 
-
-__all__ = ["BaseSlot", "Slot", "resolve_identity", "slot", "slot_def", "slot_stack"]
 
 C_in = TypeVar("C_in", contravariant=True)
 C_ctx = TypeVar("C_ctx", bound=dict)
