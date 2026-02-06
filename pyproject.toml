@@ -54,6 +54,7 @@ python-preference = "only-managed"
 package = true
 
 [tool.poe.tasks]
+init = "uv sync --all-groups"
 precommit = ["ty", "ruff_fix", "run_readme", "test"]
 ruff_fix = "ruff check --fix"
 run_readme = "python -m tests.run_readme"
