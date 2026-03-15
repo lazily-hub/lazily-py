@@ -63,6 +63,7 @@ venv.bak/
 # IDEs
 .vscode/
 .idea/
+*.iml
 *.swp
 *.swo
 *~
