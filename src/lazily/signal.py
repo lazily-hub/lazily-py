@@ -1,0 +1,164 @@
+"""Eager derived value — the ``Signal`` member of the Slot → Cell → Signal family.
+
+Where a :class:`~lazily.slot.Slot` is **lazy** (invalidation only marks it dirty;
+the value is recomputed on the next read), a :class:`Signal` is **eager**: it
+computes its value once at creation and recomputes immediately whenever a tracked
+dependency changes. A :class:`Signal` is composed from existing primitives — a
+memoized :class:`~lazily.slot.Slot` plus a puller that re-pulls the slot on
+invalidation — and applies a PartialEq/memo guard so an eager recompute that
+yields an equal value suppresses downstream cascades.
+
+This mirrors ``ctx.signal()`` in the Rust reference (`lazily-rs`) and the eager
+Signal wire representation in ``lazily-spec``: on the wire a Signal is just the
+ordinary backing slot node that stores its materialized value (no separate wire
+type). The puller here is local execution state and is never serialized.
+"""
+
+from __future__ import annotations
+
+
+__all__ = ["Signal", "signal", "signal_def"]
+
+from functools import partial
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from .slot import Slot, slot, slot_stack
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+C_in = TypeVar("C_in", contravariant=True)
+C_ctx = TypeVar("C_ctx", bound=dict)
+T = TypeVar("T")
+
+
+class _SignalSlot[C_in, C_ctx: dict, T](Slot[C_in, C_ctx, T]):
+    """Backing memoized slot whose ``reset`` eagerly re-pulls its owning Signal."""
+
+    __slots__ = ("_signal",)
+
+    def __init__(
+        self,
+        callable: Callable[[C_ctx], T],
+        resolve_ctx: Callable[[C_in], C_ctx] | None = None,
+    ) -> None:
+        super().__init__(callable=callable, resolve_ctx=resolve_ctx)
+        self._signal: Signal[T] | None = None
+
+    def reset(self, ctx: C_in) -> None:
+        super().reset(ctx)
+        sig = self._signal
+        if sig is not None and sig.is_active():
+            sig._eager_recompute()
+
+
+class Signal[T]:
+    """An eager derived value bound to a single context.
+
+    The value is materialized at construction and kept fresh: when an upstream
+    Cell or Slot it read changes, the Signal recomputes right away rather than
+    waiting for the next read. Reading :attr:`value` inside a Slot/Signal
+    computation registers a dependency, so downstream reactives invalidate when
+    this Signal's value changes.
+    """
+
+    __slots__ = ("_active", "_recomputing", "_slot", "_subscribers", "_value", "ctx")
+
+    def __init__(self, ctx: dict, callable: Callable[[dict], T]) -> None:
+        self.ctx = ctx
+        self._subscribers: set[Callable[[dict, T], Any]] = set()
+        self._active = True
+        self._recomputing = False
+        self._slot: _SignalSlot[dict, dict, T] = _SignalSlot(callable)
+        self._slot._signal = self
+        # Eager activation: compute once now so there is no intermediate unset
+        # value, and so dependency edges are established immediately.
+        self._value = self._slot(ctx)
+
+    def _eager_recompute(self) -> None:
+        if not self._active or self._recomputing:
+            return
+        self._recomputing = True
+        try:
+            new_value = self._slot(self.ctx)
+        finally:
+            self._recomputing = False
+        # Memo / PartialEq guard: an equal recompute suppresses the cascade.
+        if new_value != self._value:
+            self._value = new_value
+            self.touch()
+
+    @property
+    def value(self) -> T:
+        """The current materialized value; auto-subscribes the reading slot."""
+        if len(slot_stack) > 0:
+            self.subscribe(partial(self._subscriber, slot_stack[-1]))
+        if not self._active:
+            # Disposed: the eager puller is gone, so behave lazily and recompute
+            # on read via the backing slot.
+            return self._slot(self.ctx)
+        return self._value
+
+    def __call__(self) -> T:
+        return self.value
+
+    def get(self) -> T:
+        """Alias for the :attr:`value` getter."""
+        return self.value
+
+    def _subscriber(self, parent_slot: Slot, ctx: dict, value: T) -> None:
+        parent_slot.reset(self.ctx)
+
+    def subscribe(self, subscriber: Callable[[dict, T], Any]) -> None:
+        self._subscribers.add(subscriber)
+
+    def touch(self) -> None:
+        # Iterate a snapshot: a subscriber may re-subscribe (re-establishing a
+        # dependency) while being notified.
+        for subscriber in tuple(self._subscribers):
+            subscriber(self.ctx, self._value)
+
+    def is_active(self) -> bool:
+        """Whether the eager puller is still installed."""
+        return self._active
+
+    def dispose(self) -> None:
+        """Remove the eager puller.
+
+        The value remains readable but reverts to lazy behavior: it will only be
+        recomputed on the next explicit read of the backing slot, not eagerly.
+        """
+        self._active = False
+        self._slot._signal = None
+
+
+def signal[T](callable: Callable[[dict], T]) -> Slot[dict, dict, Signal[T]]:
+    """Decorator: turn a context function into an eager-Signal factory.
+
+    The returned factory is itself context-cached (one Signal per context), so
+    ``my_signal(ctx)`` returns the same eager Signal on repeated calls::
+
+        @signal
+        def doubled(ctx: dict) -> int:
+            return n(ctx).value * 2
+
+        s = doubled(ctx)   # eager: computed now
+        s.value            # always current
+    """
+    return slot(lambda ctx: Signal(ctx, callable))
+
+
+def signal_def[C_in, T](
+    resolve_ctx: Callable[[C_in], dict],
+) -> Callable[[Callable[[dict], T]], Slot[C_in, dict, Signal[T]]]:
+    """Decorator factory: like :func:`signal`, with a custom context resolver."""
+
+    def outer(callable: Callable[[dict], T]) -> Slot[C_in, dict, Signal[T]]:
+        return Slot(
+            callable=lambda ctx: Signal(ctx, callable),
+            resolve_ctx=resolve_ctx,
+        )
+
+    return outer

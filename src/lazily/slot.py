@@ -119,7 +119,9 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         self._subscribers.add(subscriber)
 
     def touch(self, ctx: C_ctx) -> None:
-        for subscriber in self._subscribers:
+        # Iterate a snapshot: an eager subscriber may re-subscribe (re-establish
+        # a dependency) while being notified.
+        for subscriber in tuple(self._subscribers):
             subscriber(self, ctx)
 
 

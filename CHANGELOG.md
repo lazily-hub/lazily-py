@@ -1,3 +1,16 @@
+## 0.11.0
+
+* Add `lazily.ipc`: the language-agnostic `lazily-spec` IPC wire protocol
+  (Snapshot / Delta) with JSON byte-compatible with the Rust and Zig bindings —
+  `IpcMessage`, `Snapshot`, `Delta`, the 7 `DeltaOp` variants, `NodeState` /
+  `IpcValue` / `ShmBlobRef`, epoch sequencing (`apply_status` / resync), and a
+  default-deny `PeerPermissions` boundary that omits non-readable nodes.
+* Add conformance tests against the canonical `lazily-spec/conformance` fixtures
+  (vendored under `tests/conformance/` for standalone CI).
+* Add the eager `Signal` primitive — the third member of the
+  `Slot → Cell → Signal` family (`signal` / `signal_def` decorators, eager
+  recompute with a memo guard, `dispose()` reverts to lazy).
+
 ## D.10.0
 
 * Fix cell type inference.

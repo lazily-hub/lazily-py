@@ -1,0 +1,33 @@
+{
+  "description": "Sequential delta covering all 7 DeltaOp variants",
+  "protocol_version": 1,
+  "kind": "Delta",
+  "assertions": {
+    "base_epoch": 40,
+    "epoch": 41,
+    "is_sequential": true,
+    "op_count": 7,
+    "has_all_op_variants": true
+  },
+  "wire": {
+    "Delta": {
+      "base_epoch": 40,
+      "epoch": 41,
+      "ops": [
+        { "CellSet": { "node": 1, "payload": { "Inline": [10] } } },
+        { "SlotValue": { "node": 2, "payload": { "Inline": [20] } } },
+        { "Invalidate": { "node": 3 } },
+        {
+          "NodeAdd": {
+            "node": 4,
+            "type_tag": "u64",
+            "state": { "Payload": [64] }
+          }
+        },
+        { "NodeRemove": { "node": 5 } },
+        { "EdgeAdd": { "dependent": 2, "dependency": 1 } },
+        { "EdgeRemove": { "dependent": 3, "dependency": 1 } }
+      ]
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "description": "Minimal snapshot with one payload node and no edges",
+  "protocol_version": 1,
+  "kind": "Snapshot",
+  "assertions": {
+    "epoch": 1,
+    "node_count": 1,
+    "edge_count": 0,
+    "root_count": 1,
+    "first_node_type_tag": "i32"
+  },
+  "wire": {
+    "Snapshot": {
+      "epoch": 1,
+      "nodes": [
+        {
+          "node": 1,
+          "type_tag": "i32",
+          "state": {
+            "Payload": [1, 2, 3, 4]
+          }
+        }
+      ],
+      "edges": [],
+      "roots": [1]
+    }
+  }
+}

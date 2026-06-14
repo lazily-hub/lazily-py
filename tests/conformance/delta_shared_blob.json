@@ -1,0 +1,34 @@
+{
+  "description": "Delta with shared-blob payload referencing shared memory",
+  "protocol_version": 1,
+  "kind": "Delta",
+  "assertions": {
+    "base_epoch": 8,
+    "epoch": 9,
+    "op_count": 1,
+    "first_op_kind": "SlotValue",
+    "first_op_payload_kind": "SharedBlob"
+  },
+  "wire": {
+    "Delta": {
+      "base_epoch": 8,
+      "epoch": 9,
+      "ops": [
+        {
+          "SlotValue": {
+            "node": 7,
+            "payload": {
+              "SharedBlob": {
+                "offset": 40,
+                "len": 17,
+                "generation": 2,
+                "epoch": 9,
+                "checksum": 987654321
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

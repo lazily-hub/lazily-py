@@ -1,0 +1,44 @@
+{
+  "description": "Snapshot with payload nodes, opaque node, edges, and roots",
+  "protocol_version": 1,
+  "kind": "Snapshot",
+  "assertions": {
+    "epoch": 7,
+    "node_count": 3,
+    "edge_count": 2,
+    "root_count": 2,
+    "has_opaque_node": true,
+    "opaque_node_id": 3
+  },
+  "wire": {
+    "Snapshot": {
+      "epoch": 7,
+      "nodes": [
+        {
+          "node": 1,
+          "type_tag": "i32",
+          "state": {
+            "Payload": [1, 2, 3]
+          }
+        },
+        {
+          "node": 2,
+          "type_tag": "f64",
+          "state": {
+            "Payload": [0, 0, 0, 0, 0, 0, 240, 63]
+          }
+        },
+        {
+          "node": 3,
+          "type_tag": "opaque-type",
+          "state": "Opaque"
+        }
+      ],
+      "edges": [
+        { "dependent": 2, "dependency": 1 },
+        { "dependent": 3, "dependency": 1 }
+      ],
+      "roots": [1, 2]
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "description": "Snapshot with a shared-blob node referencing shared memory",
+  "protocol_version": 1,
+  "kind": "Snapshot",
+  "assertions": {
+    "epoch": 9,
+    "node_count": 1,
+    "edge_count": 0,
+    "root_count": 1,
+    "first_node_state_kind": "SharedBlob",
+    "blob_offset": 0,
+    "blob_len": 16,
+    "blob_epoch": 9
+  },
+  "wire": {
+    "Snapshot": {
+      "epoch": 9,
+      "nodes": [
+        {
+          "node": 7,
+          "type_tag": "text/plain",
+          "state": {
+            "SharedBlob": {
+              "offset": 0,
+              "len": 16,
+              "generation": 1,
+              "epoch": 9,
+              "checksum": 123456789
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "roots": [7]
+    }
+  }
+}

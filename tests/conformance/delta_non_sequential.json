@@ -1,0 +1,18 @@
+{
+  "description": "Non-sequential delta with gap (requires resync)",
+  "protocol_version": 1,
+  "kind": "Delta",
+  "assertions": {
+    "base_epoch": 12,
+    "epoch": 13,
+    "is_sequential": true,
+    "resync_after_epoch_10": true
+  },
+  "wire": {
+    "Delta": {
+      "base_epoch": 12,
+      "epoch": 13,
+      "ops": []
+    }
+  }
+}

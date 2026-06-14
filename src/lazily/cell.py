@@ -61,7 +61,9 @@ class Cell[T]:
         self._subscribers.add(subscriber)
 
     def touch(self) -> None:
-        for subscriber in self._subscribers:
+        # Iterate a snapshot: an eager subscriber may re-subscribe (re-establish
+        # a dependency) while being notified.
+        for subscriber in tuple(self._subscribers):
             subscriber(self.ctx, self._value)
 
 
