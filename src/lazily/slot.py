@@ -95,7 +95,6 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         try:
             slot_stack.append(self)
             resolved[self] = self.callable(resolved)
-            self.touch(resolved)
         finally:
             slot_stack.pop()
 
@@ -112,8 +111,10 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
     def reset(self, ctx: C_in) -> None:
         resolved = self.resolve_ctx(ctx)
         super().reset(ctx)
-        self.touch(resolved)
+        subs = tuple(self._subscribers)
         self._subscribers.clear()
+        for subscriber in subs:
+            subscriber(self, resolved)
 
     def subscribe(self, subscriber: SlotSubscriber) -> None:
         self._subscribers.add(subscriber)

@@ -19,9 +19,11 @@ def greeting(ctx: dict) -> str:
 def response(ctx: dict) -> str:
     return "How are you?"
 
+
 @dataclass
 class CustomCtxResolver:
     ctx: dict
+
 
 def resolve_ctx(resolver: CustomCtxResolver | dict) -> dict:
     return resolver.ctx if isinstance(resolver, CustomCtxResolver) else resolver
@@ -31,6 +33,7 @@ def resolve_ctx(resolver: CustomCtxResolver | dict) -> dict:
 def greeting_and_response(ctx: dict) -> str:
     print("Calculating greeting_and_response...")
     return f"{greeting(ctx)} {response(ctx).value}"
+
 
 ctx: dict[object, object] = {}
 custom_ctx_resolver = CustomCtxResolver(ctx)

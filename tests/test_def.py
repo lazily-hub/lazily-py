@@ -48,10 +48,20 @@ class TestDef:
         assert greeting(custom_ctx_resolver) == "Hello World!"
         assert slot_events(ctx) == ["greeting", "hello", "name"]
         assert greeting_and_response(custom_ctx_resolver) == "Hello World! How are you?"
-        assert slot_events(ctx) == ["greeting", "hello", "name", "greeting_and_response"]
+        assert slot_events(ctx) == [
+            "greeting",
+            "hello",
+            "name",
+            "greeting_and_response",
+        ]
         name(custom_ctx_resolver).value = "You"
         assert ctx.get(greeting) is None
-        assert slot_events(ctx) == ["greeting", "hello", "name", "greeting_and_response"]
+        assert slot_events(ctx) == [
+            "greeting",
+            "hello",
+            "name",
+            "greeting_and_response",
+        ]
         assert greeting_and_response(custom_ctx_resolver) == "Hello You! How are you?"
         assert slot_events(ctx) == [
             "greeting",
@@ -61,4 +71,3 @@ class TestDef:
             "greeting_and_response",
             "greeting",
         ]
-

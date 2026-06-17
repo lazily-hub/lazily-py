@@ -110,6 +110,32 @@ def test_signal_decorator_is_context_cached() -> None:
     assert tripled(ctx).value == 12
 
 
+def test_signal_depends_on_slot() -> None:
+    ctx: dict = {}
+
+    @slot
+    def base(c: dict) -> int:
+        return 21
+
+    sig = Signal(ctx, lambda c: base(c) * 2)
+    assert sig.value == 42
+
+    base.reset(ctx)
+    assert sig.value == 42
+
+    runs = {"n": 0}
+
+    @slot
+    def view(c: dict) -> int:
+        runs["n"] += 1
+        return base(c) + sig.value
+
+    assert view(ctx) == 63
+    assert runs["n"] == 1
+    assert view(ctx) == 63
+    assert runs["n"] == 1
+
+
 def test_signal_get_and_call_aliases() -> None:
     ctx: dict = {}
     n = cell(lambda c: 7)

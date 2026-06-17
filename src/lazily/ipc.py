@@ -260,9 +260,7 @@ class NodeSnapshot:
         return cls(node, type_tag, NodeState_Opaque())
 
     @classmethod
-    def shared_blob(
-        cls, node: NodeId, type_tag: str, blob: ShmBlobRef
-    ) -> NodeSnapshot:
+    def shared_blob(cls, node: NodeId, type_tag: str, blob: ShmBlobRef) -> NodeSnapshot:
         """A visible node whose value lives in a shared-memory blob arena."""
         return cls(node, type_tag, NodeState_SharedBlob(blob))
 
@@ -328,9 +326,7 @@ class Snapshot:
             roots=list(d.get("roots", [])),
         )
 
-    def filter_readable(
-        self, permissions: PeerPermissions, peer: PeerId
-    ) -> Snapshot:
+    def filter_readable(self, permissions: PeerPermissions, peer: PeerId) -> Snapshot:
         """Peer-specific snapshot that **omits** non-readable nodes entirely.
 
         Edges are retained only when both endpoints are readable; roots preserve
@@ -494,9 +490,7 @@ class DeltaOp_EdgeAdd(DeltaOp):
     dependency: NodeId
 
     def to_wire(self) -> dict[str, Any]:
-        return {
-            "EdgeAdd": {"dependent": self.dependent, "dependency": self.dependency}
-        }
+        return {"EdgeAdd": {"dependent": self.dependent, "dependency": self.dependency}}
 
     def _target_readable(self, permissions: PeerPermissions, peer: PeerId) -> bool:
         return permissions.can_read(peer, self.dependent) and permissions.can_read(
@@ -745,9 +739,7 @@ class PeerPermissions:
         nodes.add(op.node)
         return True
 
-    def allow_many(
-        self, peer: PeerId, kind: OpKind, nodes: Iterable[NodeId]
-    ) -> None:
+    def allow_many(self, peer: PeerId, kind: OpKind, nodes: Iterable[NodeId]) -> None:
         """Grant ``peer`` ``kind`` access over many nodes at once."""
         target = self._peers.setdefault(peer, {}).setdefault(kind, set())
         target.update(nodes)
@@ -786,9 +778,7 @@ class PeerPermissions:
     def can_read(self, peer: PeerId, node: NodeId) -> bool:
         return self.is_allowed(peer, RemoteOp.read(node))
 
-    def filter_readable(
-        self, peer: PeerId, nodes: Iterable[NodeId]
-    ) -> list[NodeId]:
+    def filter_readable(self, peer: PeerId, nodes: Iterable[NodeId]) -> list[NodeId]:
         """Retain only the nodes ``peer`` may read, preserving input order."""
         peer_perms = self._peers.get(peer)
         if peer_perms is None:

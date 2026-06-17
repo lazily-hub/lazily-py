@@ -10,6 +10,10 @@
 * Add the eager `Signal` primitive — the third member of the
   `Slot → Cell → Signal` family (`signal` / `signal_def` decorators, eager
   recompute with a memo guard, `dispose()` reverts to lazy).
+* Fix `RecursionError` when a `Signal` reads a `Slot` dependency: `Slot.__call__`
+  no longer fires `touch()` during computation (computation must not cascade
+  invalidation), and `Slot.reset` clears subscribers before notification so a
+  subscriber-triggered reset cannot mutually recurse.
 
 ## D.10.0
 

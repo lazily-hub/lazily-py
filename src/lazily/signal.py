@@ -144,8 +144,9 @@ def signal[T](callable: Callable[[dict], T]) -> Slot[dict, dict, Signal[T]]:
         def doubled(ctx: dict) -> int:
             return n(ctx).value * 2
 
-        s = doubled(ctx)   # eager: computed now
-        s.value            # always current
+
+        s = doubled(ctx)  # eager: computed now
+        s.value  # always current
     """
     return slot(lambda ctx: Signal(ctx, callable))
 

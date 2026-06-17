@@ -33,9 +33,7 @@ def test_snapshot_round_trip_bytes() -> None:
         nodes=[
             NodeSnapshot.payload(1, "i32", bytes([1, 2, 3])),
             NodeSnapshot.opaque(2, "opaque-type"),
-            NodeSnapshot.shared_blob(
-                3, "text/plain", ShmBlobRef(0, 16, 1, 7, 999)
-            ),
+            NodeSnapshot.shared_blob(3, "text/plain", ShmBlobRef(0, 16, 1, 7, 999)),
         ],
         edges=[EdgeSnapshot(2, 1), EdgeSnapshot(3, 1)],
         roots=[1, 2],

@@ -36,7 +36,7 @@ Lazily-computed cached value with automatic dependency tracking via a global `sl
 |--------|---------|
 | `subscribe(subscriber)` | Register invalidation callback |
 | `touch(ctx)` | Notify all subscribers |
-| `reset(ctx)` | Clear cache + notify subscribers + clear subscriber list |
+| `reset(ctx)` | Clear cache + notify subscribers + clear subscriber list (re-entrancy-safe: subscribers are cleared before notification so a subscriber-triggered reset cannot mutually recurse) |
 
 ### Cell
 
@@ -116,7 +116,8 @@ Uses a global `slot_stack: list[Slot]` (acts as thread-local execution context).
 ## Invalidation Semantics
 
 - `Cell.value = new_value` → if changed: `touch()` → subscribers → `parent.reset()` → cascade
-- `Slot.reset(ctx)` → clear cache → `touch()` → subscribers → cascade up dependency tree
+- `Slot.__call__(ctx)` → compute or return cached value; does **not** cascade invalidation (computation must not trigger subscriber resets)
+- `Slot.reset(ctx)` → clear cache → snapshot + clear subscribers → notify snapshot → cascade up dependency tree. Clearing before notification makes reset re-entrancy-safe: a subscriber that itself triggers a reset finds an empty subscriber set, preventing mutual recursion.
 - Value equality check: Cells only invalidate when `new_value != old_value`
 
 ## Context Resolvers
