@@ -1,3 +1,14 @@
+## Unreleased
+
+* Add `ShmBlobArena` host capability to `lazily.ipc` — ports the `lazily-rs`
+  `ShmBlobArena<B>` shared-memory blob arena and mirrors `lazily-zig`
+  `ShmBlobArena`: a `bytearray`-backed arena with a 40-byte header
+  (`LZSH` magic + FNV-1a-64 checksum), append-only writes with wraparound, and
+  full read validation. A Python process can now host blob payloads (not just
+  carry `ShmBlobRef` descriptors). Descriptors are byte-compatible with the
+  Rust and Zig arenas. Exports `ShmBlobArena`, `ShmBlobArenaError` (with six
+  variant subclasses), and `SHM_BLOB_HEADER_LEN`.
+
 ## 0.11.0
 
 * Add `lazily.ipc`: the language-agnostic `lazily-spec` IPC wire protocol

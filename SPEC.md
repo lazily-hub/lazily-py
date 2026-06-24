@@ -179,6 +179,36 @@ Each `Delta` carries `{ base_epoch, epoch }` with `epoch == base_epoch + 1`.
   else `DeltaApplyStatus.resync_required(last_epoch, base_epoch, epoch)`, which
   tells the receiver to discard the delta and request a fresh `Snapshot`.
 
+### Shared-memory blob arena (host)
+
+`ShmBlobArena` ports the `lazily-rs` `ShmBlobArena<B>` host capability
+(`ipc.rs`) and mirrors `lazily-zig` `ShmBlobArena` (`ipc.zig`), so a Python
+process can **host** shared-memory blob payloads rather than only carry
+`ShmBlobRef` descriptors produced elsewhere. The arena is a flat `bytearray`
+plus an append-only write cursor; each write emits a `ShmBlobRef` descriptor and
+prepends a 40-byte header (`LZSH` magic, version, header length, generation,
+epoch, payload length, FNV-1a-64 checksum). Reads validate bounds, the header,
+generation/epoch/length, and the checksum before returning a zero-copy
+`memoryview`. Append-only with wraparound; each write bumps a generation counter
+so a stale descriptor landing on an overwritten region fails validation instead
+of returning torn data. Descriptors are byte-compatible with the Rust and Zig
+arenas (identical header layout + FNV-1a-64 constants).
+
+- `ShmBlobArena.with_capacity(n)` / `ShmBlobArena.from_buffer(buf)` — allocate
+  a fresh `bytearray` or wrap externally-owned storage (e.g. an `mmap` region
+  cast to `bytearray`); caller keeps `buf` ownership in the latter case.
+- `arena.write_blob(epoch, payload) -> ShmBlobRef`
+- `arena.read_blob(ref) -> memoryview` (zero-copy, read-only)
+- `arena.capacity` / `arena.max_blob_len` / `arena.write_offset`
+- Errors: `ShmBlobArenaError` base with variants `ShmBlobCapacityTooSmall`,
+  `ShmBlobTooLarge`, `ShmBlobDescriptorOutOfBounds`, `ShmBlobDescriptorMismatch`,
+  `ShmBlobChecksumMismatch`, `ShmBlobGenerationOverflow` — matching the Rust enum
+  and Zig error set. `SHM_BLOB_HEADER_LEN` is exported.
+
+True cross-process OS shared memory (`/dev/shm`, `mmap`) is out of scope here
+and is a follow-on that swaps the backing buffer; this port establishes the
+in-process arena and host parity across siblings.
+
 ### Permission boundary (omission, not redaction)
 
 `PeerPermissions` is a default-deny per-peer allowlist gating `read`, `write`,

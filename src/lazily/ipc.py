@@ -20,6 +20,7 @@ from __future__ import annotations
 
 
 __all__ = [
+    "SHM_BLOB_HEADER_LEN",
     "Delta",
     "DeltaApplyStatus",
     "DeltaApplyStatusKind",
@@ -47,11 +48,20 @@ __all__ = [
     "PeerPermissions",
     "PermissionDenied",
     "RemoteOp",
+    "ShmBlobArena",
+    "ShmBlobArenaError",
+    "ShmBlobCapacityTooSmall",
+    "ShmBlobChecksumMismatch",
+    "ShmBlobDescriptorMismatch",
+    "ShmBlobDescriptorOutOfBounds",
+    "ShmBlobGenerationOverflow",
     "ShmBlobRef",
+    "ShmBlobTooLarge",
     "Snapshot",
 ]
 
 import json
+import struct
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -115,6 +125,274 @@ class ShmBlobRef:
             epoch=d["epoch"],
             checksum=d["checksum"],
         )
+
+
+# ---------------------------------------------------------------------------
+# Shared-memory blob arena (parity with lazily-rs / lazily-zig)
+# ---------------------------------------------------------------------------
+
+#: Bytes reserved before every shared-memory blob payload. Matches the 40-byte
+#: header written by ``lazily-rs`` ``ShmBlobArena`` and ``lazily-zig``
+#: ``ShmBlobArena`` so descriptors interoperate across siblings.
+SHM_BLOB_HEADER_LEN = 40
+
+_SHM_BLOB_MAGIC = 0x4C5A5348  # "LZSH"
+_SHM_BLOB_VERSION = 1
+_FNV_OFFSET_BASIS = 0xCBF29CE484222325
+_FNV_PRIME = 0x00000100000001B3
+_U64_MASK = (1 << 64) - 1
+_SHM_BLOB_MIN_CAPACITY = SHM_BLOB_HEADER_LEN + 1
+
+
+class ShmBlobArenaError(Exception):
+    """Base class for errors raised by :class:`ShmBlobArena`.
+
+    Each failure mode has a concrete subclass; catch
+    :class:`ShmBlobArenaError` to handle any arena failure. The variants mirror
+    the ``lazily-rs`` ``ShmBlobArenaError`` enum and the ``lazily-zig``
+    ``ShmBlobArenaError`` error set.
+    """
+
+
+class ShmBlobCapacityTooSmall(ShmBlobArenaError):
+    """The backing buffer cannot hold one header plus one payload byte."""
+
+    def __init__(self, capacity: int, min_capacity: int) -> None:
+        self.capacity = capacity
+        self.min_capacity = min_capacity
+        super().__init__(
+            f"SHM blob arena capacity {capacity} is smaller than minimum {min_capacity}"
+        )
+
+
+class ShmBlobTooLarge(ShmBlobArenaError):
+    """Payload is larger than the largest single blob this arena can hold."""
+
+    def __init__(self, length: int, max_length: int) -> None:
+        self.length = length
+        self.max_length = max_length
+        super().__init__(f"SHM blob length {length} exceeds maximum {max_length}")
+
+
+class ShmBlobDescriptorOutOfBounds(ShmBlobArenaError):
+    """Descriptor points outside this arena."""
+
+    def __init__(self, offset: int, length: int, capacity: int) -> None:
+        self.offset = offset
+        self.length = length
+        self.capacity = capacity
+        super().__init__(
+            f"SHM blob descriptor offset={offset} len={length} exceeds arena "
+            f"capacity {capacity}"
+        )
+
+
+class ShmBlobDescriptorMismatch(ShmBlobArenaError):
+    """Descriptor/header metadata did not match (e.g. stale after wraparound)."""
+
+    def __init__(self, field: str) -> None:
+        self.field = field
+        super().__init__(f"SHM blob descriptor mismatch for {field}")
+
+
+class ShmBlobChecksumMismatch(ShmBlobArenaError):
+    """Payload checksum did not match the descriptor/header checksum."""
+
+    def __init__(self, expected: int, actual: int) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"SHM blob checksum mismatch: expected {expected:#x}, got {actual:#x}"
+        )
+
+
+class ShmBlobGenerationOverflow(ShmBlobArenaError):
+    """The arena generation counter overflowed ``u64``."""
+
+    def __init__(self) -> None:
+        super().__init__("SHM blob generation counter overflowed")
+
+
+def _fnv1a_64(payload: bytes | bytearray | memoryview) -> int:
+    """FNV-1a (64-bit) non-cryptographic checksum, matching lazily-rs/zig."""
+    hash_value = _FNV_OFFSET_BASIS
+    for byte in payload:
+        hash_value = ((hash_value ^ byte) * _FNV_PRIME) & _U64_MASK
+    return hash_value
+
+
+def _write_blob_header(buffer: bytearray, offset: int, descriptor: ShmBlobRef) -> None:
+    struct.pack_into(
+        "<IHHQQQQ",
+        buffer,
+        offset,
+        _SHM_BLOB_MAGIC,
+        _SHM_BLOB_VERSION,
+        SHM_BLOB_HEADER_LEN,
+        descriptor.generation,
+        descriptor.epoch,
+        descriptor.len,
+        descriptor.checksum,
+    )
+
+
+def _read_blob_header(buffer: bytearray, offset: int) -> ShmBlobRef:
+    magic, version, header_len, generation, epoch, length, checksum = (
+        struct.unpack_from("<IHHQQQQ", buffer, offset)
+    )
+    if magic != _SHM_BLOB_MAGIC:
+        raise ShmBlobDescriptorMismatch("magic")
+    if version != _SHM_BLOB_VERSION:
+        raise ShmBlobDescriptorMismatch("version")
+    if header_len != SHM_BLOB_HEADER_LEN:
+        raise ShmBlobDescriptorMismatch("header_len")
+    return ShmBlobRef(
+        offset=offset,
+        generation=generation,
+        epoch=epoch,
+        len=length,
+        checksum=checksum,
+    )
+
+
+def _blob_mismatch_field(actual: ShmBlobRef, expected: ShmBlobRef) -> str:
+    if actual.generation != expected.generation:
+        return "generation"
+    if actual.epoch != expected.epoch:
+        return "epoch"
+    if actual.len != expected.len:
+        return "len"
+    if actual.checksum != expected.checksum:
+        return "checksum"
+    return "offset"
+
+
+class ShmBlobArena:
+    """Fixed-size blob arena suitable for a shared-memory transport.
+
+    Ports ``lazily-rs`` ``ShmBlobArena<B>`` (``ipc.rs``) and mirrors
+    ``lazily-zig`` ``ShmBlobArena`` (``ipc.zig``): a flat byte buffer plus an
+    append-only write cursor and fixed-size :class:`ShmBlobRef` descriptors.
+
+    The arena writes a 40-byte header before each payload. Readers validate the
+    header, generation, epoch, payload length, and FNV-1a checksum before
+    returning a view. Writes are append-only with wraparound; each write bumps a
+    generation counter so a stale descriptor that lands on an overwritten region
+    fails validation instead of returning torn data.
+
+    Backing is a :class:`bytearray` (no native extension — preserves the
+    pure-Python install story). :meth:`from_buffer` wraps externally-owned
+    storage; the caller remains responsible for that buffer's lifetime. True
+    cross-process OS shared memory (``/dev/shm``, ``mmap``) is a follow-on that
+    swaps the backing buffer.
+    """
+
+    __slots__ = ("_buffer", "_next_generation", "_write_offset")
+
+    def __init__(self, buffer: bytearray) -> None:
+        capacity = len(buffer)
+        if capacity < _SHM_BLOB_MIN_CAPACITY:
+            raise ShmBlobCapacityTooSmall(capacity, _SHM_BLOB_MIN_CAPACITY)
+        self._buffer = buffer
+        self._write_offset = 0
+        self._next_generation = 1
+
+    @classmethod
+    def with_capacity(cls, capacity: int) -> ShmBlobArena:
+        """Create a ``bytearray``-backed arena of ``capacity`` bytes."""
+        if capacity < _SHM_BLOB_MIN_CAPACITY:
+            raise ShmBlobCapacityTooSmall(capacity, _SHM_BLOB_MIN_CAPACITY)
+        return cls(bytearray(capacity))
+
+    @classmethod
+    def from_buffer(cls, buffer: bytearray) -> ShmBlobArena:
+        """Wrap an existing ``bytearray`` (externally-owned, not zeroed).
+
+        The caller keeps ownership of ``buffer``; the arena reads and writes it
+        in place. Use this to back an arena with OS shared memory once a
+        transport swaps the buffer in.
+        """
+        return cls(buffer)
+
+    @property
+    def capacity(self) -> int:
+        """Total arena capacity in bytes."""
+        return len(self._buffer)
+
+    @property
+    def max_blob_len(self) -> int:
+        """Maximum payload length this arena can hold in one blob."""
+        return self.capacity - SHM_BLOB_HEADER_LEN
+
+    @property
+    def write_offset(self) -> int:
+        """Current write cursor offset."""
+        return self._write_offset
+
+    def buffer(self) -> memoryview:
+        """Read-only view of the backing bytes (for transport setup/inspection)."""
+        return memoryview(self._buffer).toreadonly()
+
+    def write_blob(
+        self, epoch: int, payload: bytes | bytearray | memoryview
+    ) -> ShmBlobRef:
+        """Write a payload and return a descriptor suitable for an IPC message."""
+        capacity = self.capacity
+        length = len(payload)
+        max_len = self.max_blob_len
+        if length > max_len:
+            raise ShmBlobTooLarge(length, max_len)
+
+        total_len = SHM_BLOB_HEADER_LEN + length
+        if self._write_offset + total_len > capacity:
+            self._write_offset = 0
+
+        generation = self._next_generation
+        if generation == _U64_MASK:
+            raise ShmBlobGenerationOverflow()
+        self._next_generation = generation + 1
+
+        offset = self._write_offset
+        checksum = _fnv1a_64(payload)
+        descriptor = ShmBlobRef(
+            offset=offset,
+            len=length,
+            generation=generation,
+            epoch=epoch,
+            checksum=checksum,
+        )
+
+        payload_offset = offset + SHM_BLOB_HEADER_LEN
+        _write_blob_header(self._buffer, offset, descriptor)
+        self._buffer[payload_offset : payload_offset + length] = payload
+
+        self._write_offset += total_len
+        if self._write_offset == capacity:
+            self._write_offset = 0
+
+        return descriptor
+
+    def read_blob(self, descriptor: ShmBlobRef) -> memoryview:
+        """Read and validate a previously written blob; returns a zero-copy view."""
+        capacity = self.capacity
+        offset = descriptor.offset
+        length = descriptor.len
+        if offset < 0 or length < 0:
+            raise ShmBlobDescriptorOutOfBounds(offset, length, capacity)
+        total_len = SHM_BLOB_HEADER_LEN + length
+        if offset > capacity or total_len > capacity or offset > capacity - total_len:
+            raise ShmBlobDescriptorOutOfBounds(offset, length, capacity)
+
+        header = _read_blob_header(self._buffer, offset)
+        if header != descriptor:
+            raise ShmBlobDescriptorMismatch(_blob_mismatch_field(header, descriptor))
+
+        payload_offset = offset + SHM_BLOB_HEADER_LEN
+        payload = memoryview(self._buffer)[payload_offset : payload_offset + length]
+        actual = _fnv1a_64(payload)
+        if actual != descriptor.checksum:
+            raise ShmBlobChecksumMismatch(descriptor.checksum, actual)
+        return payload.toreadonly()
 
 
 # ---------------------------------------------------------------------------

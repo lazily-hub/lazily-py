@@ -12,6 +12,7 @@ remote observers across processes and languages.
 """
 
 __all__ = [
+    "SHM_BLOB_HEADER_LEN",
     "BaseSlot",
     "Cell",
     "CellSlot",
@@ -30,6 +31,8 @@ __all__ = [
     "PeerPermissions",
     "PermissionDenied",
     "RemoteOp",
+    "ShmBlobArena",
+    "ShmBlobArenaError",
     "ShmBlobRef",
     "Signal",
     "Slot",
@@ -48,6 +51,7 @@ __version__ = "0.11.0"
 from . import ipc
 from .cell import Cell, CellSlot, cell, cell_def
 from .ipc import (
+    SHM_BLOB_HEADER_LEN,
     Delta,
     DeltaApplyStatus,
     DeltaOp,
@@ -62,6 +66,8 @@ from .ipc import (
     PeerPermissions,
     PermissionDenied,
     RemoteOp,
+    ShmBlobArena,
+    ShmBlobArenaError,
     ShmBlobRef,
     Snapshot,
 )

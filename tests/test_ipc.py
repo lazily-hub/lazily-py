@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from lazily.ipc import (
+    SHM_BLOB_HEADER_LEN,
     Delta,
     DeltaOp,
     DeltaOp_SlotValue,
@@ -17,7 +18,12 @@ from lazily.ipc import (
     PeerPermissions,
     PermissionDenied,
     RemoteOp,
+    ShmBlobArena,
+    ShmBlobCapacityTooSmall,
+    ShmBlobChecksumMismatch,
+    ShmBlobDescriptorMismatch,
     ShmBlobRef,
+    ShmBlobTooLarge,
     Snapshot,
 )
 
@@ -235,3 +241,76 @@ def test_malformed_wire_rejected() -> None:
         IpcMessage.from_wire({"Unknown": {}})
     with pytest.raises(ValueError):
         DeltaOp.from_wire({"Bogus": {}})
+
+
+# ---------------------------------------------------------------------------
+# ShmBlobArena host (parity with lazily-rs / lazily-zig)
+# ---------------------------------------------------------------------------
+
+
+def test_shm_blob_arena_round_trip() -> None:
+    arena = ShmBlobArena.with_capacity(256)
+
+    payload = b"hello lazily"
+    desc = arena.write_blob(7, payload)
+
+    assert desc.offset == 0
+    assert desc.len == len(payload)
+    assert desc.epoch == 7
+    assert desc.generation == 1
+
+    assert bytes(arena.read_blob(desc)) == payload
+
+
+def test_shm_blob_arena_rejects_oversized_and_tiny_capacity() -> None:
+    arena = ShmBlobArena.with_capacity(SHM_BLOB_HEADER_LEN + 4)
+    with pytest.raises(ShmBlobTooLarge):
+        arena.write_blob(0, b"abcdef")  # 6 > max_blob_len (4)
+    with pytest.raises(ShmBlobCapacityTooSmall):
+        ShmBlobArena.with_capacity(SHM_BLOB_HEADER_LEN)
+
+
+def test_shm_blob_arena_from_buffer_wraps_external_storage() -> None:
+    backing = bytearray(128)
+    arena = ShmBlobArena.from_buffer(backing)  # aliasing, no copy/zero
+
+    desc = arena.write_blob(1, b"abc")
+    assert bytes(arena.read_blob(desc)) == b"abc"
+    # the arena writes through into the caller-owned backing buffer
+    assert backing[SHM_BLOB_HEADER_LEN : SHM_BLOB_HEADER_LEN + 3] == b"abc"
+
+
+def test_shm_blob_arena_wraparound_invalidates_stale_descriptor() -> None:
+    # capacity holds exactly one max-len blob (header + 5)
+    arena = ShmBlobArena.with_capacity(SHM_BLOB_HEADER_LEN + 5)
+
+    first = arena.write_blob(1, b"first")
+    assert bytes(arena.read_blob(first)) == b"first"
+
+    # next write wraps to offset 0, bumps generation, overwrites first
+    second = arena.write_blob(2, b"2nd!!")
+    assert second.offset == 0
+    assert second.generation > first.generation
+
+    with pytest.raises(ShmBlobDescriptorMismatch):
+        arena.read_blob(first)
+    assert bytes(arena.read_blob(second)) == b"2nd!!"
+
+
+def test_shm_blob_arena_checksum_mismatch_on_corrupted_payload() -> None:
+    backing = bytearray(128)
+    arena = ShmBlobArena.from_buffer(backing)
+
+    desc = arena.write_blob(0, b"payload")
+    backing[SHM_BLOB_HEADER_LEN] ^= 0xFF  # corrupt first payload byte via alias
+    with pytest.raises(ShmBlobChecksumMismatch):
+        arena.read_blob(desc)
+
+
+def test_shm_blob_descriptor_flows_through_ipc_value_shared_blob() -> None:
+    arena = ShmBlobArena.with_capacity(128)
+    desc = arena.write_blob(3, b"blob payload")
+
+    value = IpcValue_SharedBlob(desc)
+    assert value.blob == desc
+    assert bytes(arena.read_blob(value.blob)) == b"blob payload"
