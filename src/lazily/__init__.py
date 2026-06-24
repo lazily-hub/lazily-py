@@ -34,6 +34,7 @@ __all__ = [
     "Signal",
     "Slot",
     "Snapshot",
+    "StateMachine",
     "cell",
     "cell_def",
     "ipc",
@@ -66,4 +67,5 @@ from .ipc import (
 )
 from .signal import Signal, signal, signal_def
 from .slot import BaseSlot, Slot, slot, slot_def
+from .state_machine import StateMachine
 from .types import LazilyCallable
