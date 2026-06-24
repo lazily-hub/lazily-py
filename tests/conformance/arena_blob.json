@@ -1,0 +1,46 @@
+{
+  "description": "ShmBlobArena host: descriptor + 40-byte LZSH header for one write. Byte-compatible across lazily-rs / lazily-py / lazily-zig (identical header layout + FNV-1a-64 checksum). Not a wire type — locks the in-process arena host contract.",
+  "protocol_version": 1,
+  "kind": "Arena",
+  "assertions": {
+    "capacity": 128,
+    "epoch": 9,
+    "header_len": 40,
+    "magic": "LZSH",
+    "payload_len": 31,
+    "descriptor": {
+      "offset": 0,
+      "len": 31,
+      "generation": 1,
+      "epoch": 9,
+      "checksum": 13098019626228322701
+    }
+  },
+  "input": {
+    "capacity": 128,
+    "epoch": 9,
+    "payload": [
+      108, 97, 122, 105, 108, 121, 32, 115, 104, 97, 114, 101, 100, 45, 109,
+      101, 109, 111, 114, 121, 32, 98, 108, 111, 98, 32, 97, 114, 101, 110,
+      97
+    ]
+  },
+  "expected": {
+    "descriptor": {
+      "offset": 0,
+      "len": 31,
+      "generation": 1,
+      "epoch": 9,
+      "checksum": 13098019626228322701
+    },
+    "header_bytes": [
+      72, 83, 90, 76, 1, 0, 40, 0, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0,
+      0, 0, 31, 0, 0, 0, 0, 0, 0, 0, 141, 17, 111, 42, 116, 131, 197, 181
+    ],
+    "payload_region": [
+      108, 97, 122, 105, 108, 121, 32, 115, 104, 97, 114, 101, 100, 45, 109,
+      101, 109, 111, 114, 121, 32, 98, 108, 111, 98, 32, 97, 114, 101, 110,
+      97
+    ]
+  }
+}

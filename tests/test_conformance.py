@@ -33,6 +33,7 @@ from lazily.ipc import (
     NodeState_Opaque,
     NodeState_Payload,
     NodeState_SharedBlob,
+    ShmBlobArena,
 )
 
 
@@ -199,6 +200,39 @@ def test_conformance_delta_shared_blob() -> None:
     assert op.payload.blob.epoch == 9
 
     assert_round_trip_json(message, fixture)
+
+
+# ---------------------------------------------------------------------------
+# ShmBlobArena host fixture (not a wire type — locks the arena byte contract)
+# ---------------------------------------------------------------------------
+
+
+def test_conformance_arena_blob() -> None:
+    fixture = load_fixture("arena_blob.json")
+    assert fixture["kind"] == "Arena"
+    a = fixture["assertions"]
+
+    arena = ShmBlobArena.with_capacity(fixture["input"]["capacity"])
+    payload = bytes(fixture["input"]["payload"])
+    desc = arena.write_blob(fixture["input"]["epoch"], payload)
+
+    expected_desc = fixture["expected"]["descriptor"]
+    assert desc.offset == expected_desc["offset"]
+    assert desc.len == expected_desc["len"]
+    assert desc.generation == expected_desc["generation"]
+    assert desc.epoch == expected_desc["epoch"]
+    assert desc.checksum == expected_desc["checksum"]
+
+    # 40-byte LZSH header byte-identical across rs / py / zig
+    buf = arena.buffer()
+    header_len = a["header_len"]
+    assert bytes(buf[0:header_len]) == bytes(fixture["expected"]["header_bytes"])
+    assert bytes(buf[header_len : header_len + len(payload)]) == bytes(
+        fixture["expected"]["payload_region"]
+    )
+
+    # round-trip
+    assert bytes(arena.read_blob(desc)) == payload
 
 
 # ---------------------------------------------------------------------------
