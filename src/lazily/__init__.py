@@ -16,6 +16,7 @@ __all__ = [
     "BaseSlot",
     "Cell",
     "CellSlot",
+    "ChartDef",
     "Delta",
     "DeltaApplyStatus",
     "DeltaOp",
@@ -37,6 +38,7 @@ __all__ = [
     "Signal",
     "Slot",
     "Snapshot",
+    "StateChart",
     "StateMachine",
     "cell",
     "cell_def",
@@ -74,4 +76,5 @@ from .ipc import (
 from .signal import Signal, signal, signal_def
 from .slot import BaseSlot, Slot, slot, slot_def
 from .state_machine import StateMachine
+from .statechart import ChartDef, StateChart
 from .types import LazilyCallable
