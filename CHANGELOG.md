@@ -1,5 +1,17 @@
 ## Unreleased
 
+## 0.11.1
+
+* Docs: refresh README — Signal family, `lazily.ipc` wire protocol, ShmBlobArena,
+  and the lazily language family.
+* Docs: reference the sibling `lazily-spec` (wire protocol + conformance) and
+  `lazily-formal` (Lean 4 formal model) projects.
+
+## 0.11.0
+
+* Add `StateMachine[S, E]` — a finite state machine backed by a reactive `Cell`,
+  so any `Slot` that reads the machine's state is invalidated on transition.
+  Mirrors `lazily-rs` `StateMachine<S, E>` and `lazily-zig` `StateMachine(S, E)`.
 * Add `ShmBlobArena` host capability to `lazily.ipc` — ports the `lazily-rs`
   `ShmBlobArena<B>` shared-memory blob arena and mirrors `lazily-zig`
   `ShmBlobArena`: a `bytearray`-backed arena with a 40-byte header
@@ -8,9 +20,6 @@
   carry `ShmBlobRef` descriptors). Descriptors are byte-compatible with the
   Rust and Zig arenas. Exports `ShmBlobArena`, `ShmBlobArenaError` (with six
   variant subclasses), and `SHM_BLOB_HEADER_LEN`.
-
-## 0.11.0
-
 * Add `lazily.ipc`: the language-agnostic `lazily-spec` IPC wire protocol
   (Snapshot / Delta) with JSON byte-compatible with the Rust and Zig bindings —
   `IpcMessage`, `Snapshot`, `Delta`, the 7 `DeltaOp` variants, `NodeState` /
