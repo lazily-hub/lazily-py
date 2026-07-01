@@ -1,5 +1,22 @@
 ## Unreleased
 
+## 0.12.0
+
+* Add `StateChart` — a full Harel/SCXML state-chart interpreter backed by a
+  reactive `Cell[frozenset[str]]`, conforming to `lazily-spec`
+  `docs/state-charts.md` and the Lean `StateChart` formal model
+  (`lazily-formal`). The `Cell`'s `!=` (PartialEq) guard suppresses no-op
+  self-transitions, and any `Slot`/`Signal` reading `configuration()` /
+  `active_leaves()` / `matches()` is invalidated on a real transition.
+* Implemented subset: compound states, orthogonal (parallel) regions, shallow +
+  deep history, entry/exit/transition actions, named guards (fail-closed),
+  external + internal transitions, `final`-as-leaf. `run` actions and
+  `{expr: ...}` context guards are rejected explicitly per spec.
+* Replays all `lazily-spec/conformance/statechart/*.json` fixtures (flat cycle,
+  hierarchical player, guarded door, parallel regions, shallow/deep history,
+  entry/exit actions).
+* Exports `ChartDef` and `StateChart`.
+
 ## 0.11.1
 
 * Docs: refresh README — Signal family, `lazily.ipc` wire protocol, ShmBlobArena,

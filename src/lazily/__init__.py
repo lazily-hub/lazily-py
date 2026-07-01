@@ -48,7 +48,7 @@ __all__ = [
     "slot",
     "slot_def",
 ]
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 
 from . import ipc
 from .cell import Cell, CellSlot, cell, cell_def
