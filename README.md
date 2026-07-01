@@ -256,11 +256,13 @@ subclasses), and `SHM_BLOB_HEADER_LEN`.
 | [`lazily-zig`](https://github.com/lazily-hub/lazily-zig) | Zig | GitHub |
 | [`@lazily/signaling`](https://github.com/lazily-hub/lazily-js) | TypeScript / Cloudflare Worker | npm |
 | [`lazily-spec`](https://github.com/lazily-hub/lazily-spec) | — | wire protocol + conformance fixtures |
+| [`lazily-formal`](https://github.com/lazily-hub/lazily-formal) | — | Lean 4 formal model (FSM kernel + Harel state chart) |
 
 See [`lazily-spec`](https://github.com/lazily-hub/lazily-spec) for the canonical
-Snapshot/Delta schemas, the Lean 4 formal model of the epoch/memo/batch
-invariants, and the conformance fixtures every IPC-capable binding validates
-against.
+Snapshot/Delta schemas, the IPC Lean proofs of the epoch/memo/batch invariants,
+and the conformance fixtures every IPC-capable binding validates against. The
+language-agnostic formal model — the flat FSM kernel and the full Harel state
+chart — lives in [`lazily-formal`](https://github.com/lazily-hub/lazily-formal).
 
 ## Development
 
