@@ -20,7 +20,14 @@ from __future__ import annotations
 
 
 __all__ = [
+    "NODE_KEY_MAX_LEN",
+    "NODE_KEY_MAX_SEGMENTS",
+    "PROTOCOL_ID",
+    "PROTOCOL_MAJOR_VERSION",
     "SHM_BLOB_HEADER_LEN",
+    "CapabilityHandshake",
+    "CrdtOp",
+    "CrdtSync",
     "Delta",
     "DeltaApplyStatus",
     "DeltaApplyStatusKind",
@@ -38,6 +45,8 @@ __all__ = [
     "IpcValue_Inline",
     "IpcValue_SharedBlob",
     "NodeId",
+    "NodeKey",
+    "NodeKeyError",
     "NodeSnapshot",
     "NodeState",
     "NodeState_Opaque",
@@ -58,11 +67,12 @@ __all__ = [
     "ShmBlobRef",
     "ShmBlobTooLarge",
     "Snapshot",
+    "WireStamp",
 ]
 
 import json
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -90,6 +100,129 @@ def _bytes_to_wire(data: bytes) -> list[int]:
 
 def _bytes_from_wire(value: Any) -> bytes:
     return bytes(value)
+
+
+# ---------------------------------------------------------------------------
+# NodeKey (optional wire-stable keyed address)
+# ---------------------------------------------------------------------------
+
+
+#: Maximum encoded byte length of a :class:`NodeKey` path.
+NODE_KEY_MAX_LEN = 1024
+#: Maximum number of ``/``-separated segments in a :class:`NodeKey`.
+NODE_KEY_MAX_SEGMENTS = 32
+
+
+class NodeKeyError(ValueError):
+    """Why a :class:`NodeKey` path failed validation.
+
+    Mirrors the ``lazily-rs`` ``NodeKeyError`` enum: a ``kind`` discriminator
+    (one of the class constants below) plus context describing the offending
+    path. Bounds are checked on construction and on the wire.
+    """
+
+    #: The path was empty.
+    EMPTY = "empty"
+    #: The path exceeded :data:`NODE_KEY_MAX_LEN` bytes.
+    TOO_LONG = "too_long"
+    #: The path had more than :data:`NODE_KEY_MAX_SEGMENTS` segments.
+    TOO_MANY_SEGMENTS = "too_many_segments"
+    #: The path contained an empty segment (leading/trailing/double ``/``).
+    EMPTY_SEGMENT = "empty_segment"
+
+    def __init__(
+        self,
+        kind: str,
+        *,
+        length: int | None = None,
+        segments: int | None = None,
+    ) -> None:
+        self.kind = kind
+        self.length = length
+        self.segments = segments
+        super().__init__(self._message())
+
+    def _message(self) -> str:
+        if self.kind is NodeKeyError.EMPTY:
+            return "node key path is empty"
+        if self.kind is NodeKeyError.TOO_LONG:
+            return f"node key path is {self.length} bytes, exceeds {NODE_KEY_MAX_LEN}"
+        if self.kind is NodeKeyError.TOO_MANY_SEGMENTS:
+            return (
+                f"node key has {self.segments} segments, "
+                f"exceeds {NODE_KEY_MAX_SEGMENTS}"
+            )
+        return "node key path has an empty segment"
+
+
+@dataclass(frozen=True)
+class NodeKey:
+    """Wire-stable keyed address for a collection entry.
+
+    A ``/``-joined path (e.g. ``scores/alice``, ``outer/k1/inner/k2``). Unlike
+    :data:`NodeId` — the volatile internal handle a producer may re-mint after a
+    resync or remove-then-readd — a :class:`NodeKey` is producer-defined and
+    **stable across NodeId churn**, so a peer can subscribe to "entry
+    ``scores/alice``" without an out-of-band key→NodeId map. A multi-segment
+    path addresses nested collections with no extra machinery.
+
+    :class:`NodeKey` is **additive**: it never changes :data:`NodeId` semantics.
+    It appears only as the optional ``key`` field on :class:`NodeSnapshot` and
+    :class:`DeltaOp_NodeAdd`. Length and segment count are bounded
+    (:data:`NODE_KEY_MAX_LEN`, :data:`NODE_KEY_MAX_SEGMENTS`) to cap
+    attacker-controlled growth; oversized keys are rejected on construction and
+    on the wire.
+
+    On the wire :class:`NodeKey` serializes as a bare JSON string, and a missing
+    ``key`` field decodes to ``None`` (``null``) so pre-``key`` encoders and the
+    existing conformance fixtures round-trip unchanged.
+    """
+
+    path: str
+
+    @classmethod
+    def new(cls, path: str) -> NodeKey:
+        """Construct a validated key from a ``/``-joined path."""
+        cls._validate(path)
+        return cls(path)
+
+    @classmethod
+    def from_segments(cls, segments: Iterable[str]) -> NodeKey:
+        """Construct a key from segments joined with ``/`` (then validated)."""
+        return cls.new("/".join(segments))
+
+    @staticmethod
+    def _validate(path: str) -> None:
+        if not path:
+            raise NodeKeyError(NodeKeyError.EMPTY)
+        byte_len = len(path.encode("utf-8"))
+        if byte_len > NODE_KEY_MAX_LEN:
+            raise NodeKeyError(NodeKeyError.TOO_LONG, length=byte_len)
+        parts = path.split("/")
+        if any(segment == "" for segment in parts):
+            raise NodeKeyError(NodeKeyError.EMPTY_SEGMENT)
+        if len(parts) > NODE_KEY_MAX_SEGMENTS:
+            raise NodeKeyError(NodeKeyError.TOO_MANY_SEGMENTS, segments=len(parts))
+
+    def as_str(self) -> str:
+        """The full ``/``-joined path."""
+        return self.path
+
+    def segments(self) -> list[str]:
+        """The path segments."""
+        return self.path.split("/")
+
+    def __str__(self) -> str:
+        return self.path
+
+    def to_wire(self) -> str:
+        """Serialize as a bare JSON string (matches ``serde_str``)."""
+        return self.path
+
+    @classmethod
+    def from_wire(cls, value: str) -> NodeKey:
+        """Deserialize and validate a bare string path."""
+        return cls.new(value)
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +659,7 @@ class NodeSnapshot:
     node: NodeId
     type_tag: str
     state: NodeState
+    key: NodeKey | None = None
 
     @classmethod
     def payload(cls, node: NodeId, type_tag: str, data: bytes) -> NodeSnapshot:
@@ -542,12 +676,22 @@ class NodeSnapshot:
         """A visible node whose value lives in a shared-memory blob arena."""
         return cls(node, type_tag, NodeState_SharedBlob(blob))
 
+    def with_key(self, key: NodeKey) -> NodeSnapshot:
+        """Return a copy carrying a wire-stable :class:`NodeKey` (builder style)."""
+        return NodeSnapshot(self.node, self.type_tag, self.state, key)
+
     def to_wire(self) -> dict[str, Any]:
-        return {
+        # Self-describing codecs (JSON, MessagePack) omit a `None` key so
+        # pre-`key` encoders and existing conformance fixtures round-trip
+        # unchanged.
+        wire: dict[str, Any] = {
             "node": self.node,
             "type_tag": self.type_tag,
             "state": self.state.to_wire(),
         }
+        if self.key is not None:
+            wire["key"] = self.key.to_wire()
+        return wire
 
     @classmethod
     def from_wire(cls, d: dict[str, Any]) -> NodeSnapshot:
@@ -555,6 +699,7 @@ class NodeSnapshot:
             node=d["node"],
             type_tag=d["type_tag"],
             state=NodeState.from_wire(d["state"]),
+            key=NodeKey.from_wire(d["key"]) if "key" in d else None,
         )
 
 
@@ -646,8 +791,13 @@ class DeltaOp:
         return DeltaOp_Invalidate(node)
 
     @staticmethod
-    def node_add(node: NodeId, type_tag: str, state: NodeState) -> DeltaOp:
-        return DeltaOp_NodeAdd(node, type_tag, state)
+    def node_add(
+        node: NodeId,
+        type_tag: str,
+        state: NodeState,
+        key: NodeKey | None = None,
+    ) -> DeltaOp:
+        return DeltaOp_NodeAdd(node, type_tag, state, key)
 
     @staticmethod
     def node_remove(node: NodeId) -> DeltaOp:
@@ -674,7 +824,10 @@ class DeltaOp:
             return DeltaOp_Invalidate(body["node"])
         if tag == "NodeAdd":
             return DeltaOp_NodeAdd(
-                body["node"], body["type_tag"], NodeState.from_wire(body["state"])
+                body["node"],
+                body["type_tag"],
+                NodeState.from_wire(body["state"]),
+                NodeKey.from_wire(body["key"]) if "key" in body else None,
             )
         if tag == "NodeRemove":
             return DeltaOp_NodeRemove(body["node"])
@@ -733,15 +886,18 @@ class DeltaOp_NodeAdd(DeltaOp):
     node: NodeId
     type_tag: str
     state: NodeState
+    key: NodeKey | None = None
 
     def to_wire(self) -> dict[str, Any]:
-        return {
-            "NodeAdd": {
-                "node": self.node,
-                "type_tag": self.type_tag,
-                "state": self.state.to_wire(),
-            }
+        # Self-describing codecs omit a `None` key (matches NodeSnapshot).
+        body: dict[str, Any] = {
+            "node": self.node,
+            "type_tag": self.type_tag,
+            "state": self.state.to_wire(),
         }
+        if self.key is not None:
+            body["key"] = self.key.to_wire()
+        return {"NodeAdd": body}
 
     def _target_readable(self, permissions: PeerPermissions, peer: PeerId) -> bool:
         return permissions.can_read(peer, self.node)
@@ -888,16 +1044,154 @@ class Delta:
 
 
 # ---------------------------------------------------------------------------
-# IpcMessage (externally-tagged enum: Snapshot | Delta)
+# Distributed: CRDT cell plane (CrdtSync)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WireStamp:
+    """Wire mirror of the runtime HLC stamp — a total order ``(wall, logical, peer)``.
+
+    All plain integers so the wire format is codec-stable whether or not a peer
+    compiles the CRDT runtime in. Round-trips across all codecs (JSON,
+    MessagePack, Postcard).
+    """
+
+    wall_time: int
+    logical: int
+    peer: int
+
+    def to_wire(self) -> dict[str, int]:
+        return {
+            "wall_time": self.wall_time,
+            "logical": self.logical,
+            "peer": self.peer,
+        }
+
+    @classmethod
+    def from_wire(cls, d: dict[str, Any]) -> WireStamp:
+        return cls(
+            wall_time=d["wall_time"],
+            logical=d["logical"],
+            peer=d["peer"],
+        )
+
+
+@dataclass(frozen=True)
+class CrdtOp:
+    """One CRDT cell op on the wire (state-based / CvRDT).
+
+    The converged register, sequence, or text ``state`` for ``node``, tagged
+    with the :class:`WireStamp` that produced it and an optional wire-stable
+    :class:`NodeKey` that survives NodeId churn. The receiver merges ``state``
+    into its local replica; because every cell CRDT merge is commutative,
+    associative, and idempotent, out-of-order, duplicated, or batched delivery
+    all converge — so a :class:`CrdtOp` is safe to resend.
+    """
+
+    node: NodeId
+    key: NodeKey | None
+    stamp: WireStamp
+    state: IpcValue
+
+    @classmethod
+    def new(
+        cls, node: NodeId, stamp: WireStamp, state: IpcValue | ShmBlobRef | bytes
+    ) -> CrdtOp:
+        """Construct a keyless op (addressed only by ``node``)."""
+        return cls(node, None, stamp, IpcValue.of(state))
+
+    @classmethod
+    def keyed(
+        cls,
+        node: NodeId,
+        key: NodeKey,
+        stamp: WireStamp,
+        state: IpcValue | ShmBlobRef | bytes,
+    ) -> CrdtOp:
+        """Construct an op carrying a wire-stable :class:`NodeKey`."""
+        return cls(node, key, stamp, IpcValue.of(state))
+
+    def to_wire(self) -> dict[str, Any]:
+        # Mirrors the lazily-rs derived serde struct: `key` is always present
+        # (null when unset) so byte output matches the Rust reference. A decoder
+        # also accepts an absent field.
+        return {
+            "node": self.node,
+            "key": self.key.to_wire() if self.key is not None else None,
+            "stamp": self.stamp.to_wire(),
+            "state": self.state.to_wire(),
+        }
+
+    @classmethod
+    def from_wire(cls, d: dict[str, Any]) -> CrdtOp:
+        key = d.get("key")
+        return cls(
+            node=d["node"],
+            key=NodeKey.from_wire(key) if key is not None else None,
+            stamp=WireStamp.from_wire(d["stamp"]),
+            state=IpcValue.from_wire(d["state"]),
+        )
+
+
+@dataclass(frozen=True)
+class CrdtSync:
+    """A CRDT anti-entropy sync frame (the multi-writer plane).
+
+    The sender advertises its per-peer **stamp frontier** (the highest
+    :class:`WireStamp` it has observed from each peer) and ships a batch of
+    :class:`CrdtOp` s. The frontier exchange is bounded, idempotent, and
+    resumable; re-sending a frame the receiver already has is a no-op.
+    """
+
+    frontier: list[tuple[int, WireStamp]] = field(default_factory=list)
+    ops: list[CrdtOp] = field(default_factory=list)
+
+    @classmethod
+    def new(cls, frontier: list[tuple[int, WireStamp]], ops: list[CrdtOp]) -> CrdtSync:
+        """Construct a sync frame from a frontier advertisement and an op batch."""
+        return cls(frontier=list(frontier), ops=list(ops))
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "frontier": [[peer, stamp.to_wire()] for peer, stamp in self.frontier],
+            "ops": [op.to_wire() for op in self.ops],
+        }
+
+    @classmethod
+    def from_wire(cls, d: dict[str, Any]) -> CrdtSync:
+        frontier = [
+            (int(entry[0]), WireStamp.from_wire(entry[1]))
+            for entry in d.get("frontier", [])
+        ]
+        ops = [CrdtOp.from_wire(op) for op in d.get("ops", [])]
+        return cls(frontier=frontier, ops=ops)
+
+    def filter_readable(self, permissions: PeerPermissions, peer: PeerId) -> CrdtSync:
+        """Peer-specific frame that **omits** ops for non-readable nodes entirely.
+
+        Omission, not redaction — mirroring :meth:`Delta.filter_readable`. The
+        ``frontier`` advertisement is retained: it names peers and stamps, not
+        node content, and the receiver needs the whole frontier to compute a
+        sound causal-stability watermark.
+        """
+        ops = [op for op in self.ops if permissions.can_read(peer, op.node)]
+        return CrdtSync(frontier=list(self.frontier), ops=ops)
+
+
+# ---------------------------------------------------------------------------
+# IpcMessage (externally-tagged enum: Snapshot | Delta | CrdtSync)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class IpcMessage:
-    """Tagged IPC protocol message — a :class:`Snapshot` or a :class:`Delta`."""
+    """Tagged IPC protocol message — a :class:`Snapshot`, :class:`Delta`, or
+    :class:`CrdtSync`."""
 
     snapshot: Snapshot | None = None
     delta: Delta | None = None
+    crdt_sync: CrdtSync | None = None
 
     @classmethod
     def of_snapshot(cls, snapshot: Snapshot) -> IpcMessage:
@@ -907,6 +1201,10 @@ class IpcMessage:
     def of_delta(cls, delta: Delta) -> IpcMessage:
         return cls(delta=delta)
 
+    @classmethod
+    def of_crdt_sync(cls, crdt_sync: CrdtSync) -> IpcMessage:
+        return cls(crdt_sync=crdt_sync)
+
     @property
     def is_snapshot(self) -> bool:
         return self.snapshot is not None
@@ -915,12 +1213,18 @@ class IpcMessage:
     def is_delta(self) -> bool:
         return self.delta is not None
 
+    @property
+    def is_crdt_sync(self) -> bool:
+        return self.crdt_sync is not None
+
     def to_wire(self) -> dict[str, Any]:
         if self.snapshot is not None:
             return {"Snapshot": self.snapshot.to_wire()}
         if self.delta is not None:
             return {"Delta": self.delta.to_wire()}
-        raise ValueError("IpcMessage carries neither a Snapshot nor a Delta")
+        if self.crdt_sync is not None:
+            return {"CrdtSync": self.crdt_sync.to_wire()}
+        raise ValueError("IpcMessage carries neither a Snapshot, Delta, nor CrdtSync")
 
     @classmethod
     def from_wire(cls, value: Any) -> IpcMessage:
@@ -931,6 +1235,8 @@ class IpcMessage:
             return cls(snapshot=Snapshot.from_wire(body))
         if tag == "Delta":
             return cls(delta=Delta.from_wire(body))
+        if tag == "CrdtSync":
+            return cls(crdt_sync=CrdtSync.from_wire(body))
         raise ValueError(f"unknown IpcMessage variant: {tag!r}")
 
     def encode_json(self) -> bytes:
@@ -1076,3 +1382,123 @@ class PeerPermissions:
             del peer_perms[kind]
         if not peer_perms:
             del self._peers[peer]
+
+
+# ---------------------------------------------------------------------------
+# Capability negotiation (handshake)
+# ---------------------------------------------------------------------------
+
+
+#: The protocol identifier every ``lazily-ipc`` peer must advertise.
+PROTOCOL_ID = "lazily-ipc"
+#: The current protocol major version.
+PROTOCOL_MAJOR_VERSION = 1
+
+
+@dataclass(frozen=True)
+class CapabilityHandshake:
+    """Compatibility handshake exchanged before any graph state flows.
+
+    Each non-local session starts with this frame. Serialized as a plain JSON
+    object (it is a standalone frame, not an :class:`IpcMessage` variant).
+    Peers that disagree on ``protocol_major_version``, ``codec``, or
+    ``ordered_reliable`` fail closed before applying any :class:`Snapshot` or
+    :class:`Delta`.
+
+    ``fragmentation_supported`` and ``features`` default to off/empty and are
+    omitted when absent only if explicitly cleared; the frame otherwise carries
+    every field so a peer sees the full advertisement.
+    """
+
+    protocol_id: str
+    protocol_major_version: int
+    codec: str
+    max_frame_size: int
+    fragmentation_supported: bool = False
+    ordered_reliable: bool = True
+    peer_id: PeerId = 0
+    session_id: str = ""
+    features: list[str] = field(default_factory=list)
+
+    @classmethod
+    def new(cls, peer_id: PeerId, session_id: str) -> CapabilityHandshake:
+        """Create a handshake with protocol defaults (JSON codec, 1 MiB frame,
+        ordered-reliable, no features)."""
+        return cls(
+            protocol_id=PROTOCOL_ID,
+            protocol_major_version=PROTOCOL_MAJOR_VERSION,
+            codec="json",
+            max_frame_size=1_048_576,
+            fragmentation_supported=False,
+            ordered_reliable=True,
+            peer_id=peer_id,
+            session_id=session_id,
+            features=[],
+        )
+
+    def with_codec(self, codec: str) -> CapabilityHandshake:
+        """Return a copy with the codec negotiation token set."""
+        return replace(self, codec=codec)
+
+    def with_max_frame_size(self, max_frame_size: int) -> CapabilityHandshake:
+        """Return a copy with the max frame size set."""
+        return replace(self, max_frame_size=max_frame_size)
+
+    def with_features(self, features: Iterable[str]) -> CapabilityHandshake:
+        """Return a copy with the features list set."""
+        return replace(self, features=list(features))
+
+    def with_fragmentation(self, supported: bool) -> CapabilityHandshake:
+        """Return a copy with fragmentation support set."""
+        return replace(self, fragmentation_supported=supported)
+
+    def has_feature(self, feature: str) -> bool:
+        """Whether this peer advertises ``feature``."""
+        return feature in self.features
+
+    def is_compatible_with(self, other: CapabilityHandshake) -> bool:
+        """Whether this handshake is mutually compatible with ``other``.
+
+        Peers are compatible when both advertise :data:`PROTOCOL_ID`, both
+        advertise :data:`PROTOCOL_MAJOR_VERSION`, their major versions and
+        codecs agree, and both require ordered reliable delivery. Feature
+        negotiation is caller-driven via :attr:`features` /
+        :meth:`has_feature`.
+        """
+        return (
+            self.protocol_id == PROTOCOL_ID
+            and other.protocol_id == PROTOCOL_ID
+            and self.protocol_major_version == PROTOCOL_MAJOR_VERSION
+            and other.protocol_major_version == PROTOCOL_MAJOR_VERSION
+            and self.protocol_major_version == other.protocol_major_version
+            and self.codec == other.codec
+            and self.ordered_reliable
+            and other.ordered_reliable
+        )
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "protocol_id": self.protocol_id,
+            "protocol_major_version": self.protocol_major_version,
+            "codec": self.codec,
+            "max_frame_size": self.max_frame_size,
+            "fragmentation_supported": self.fragmentation_supported,
+            "ordered_reliable": self.ordered_reliable,
+            "peer_id": self.peer_id,
+            "session_id": self.session_id,
+            "features": list(self.features),
+        }
+
+    @classmethod
+    def from_wire(cls, d: dict[str, Any]) -> CapabilityHandshake:
+        return cls(
+            protocol_id=d["protocol_id"],
+            protocol_major_version=d["protocol_major_version"],
+            codec=d["codec"],
+            max_frame_size=d["max_frame_size"],
+            fragmentation_supported=d.get("fragmentation_supported", False),
+            ordered_reliable=d.get("ordered_reliable", True),
+            peer_id=d["peer_id"],
+            session_id=d["session_id"],
+            features=list(d.get("features", [])),
+        )

@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from lazily.ipc import (
+    NODE_KEY_MAX_SEGMENTS,
+    PROTOCOL_ID,
+    PROTOCOL_MAJOR_VERSION,
     SHM_BLOB_HEADER_LEN,
+    CapabilityHandshake,
+    CrdtOp,
+    CrdtSync,
     Delta,
     DeltaOp,
     DeltaOp_SlotValue,
     EdgeSnapshot,
     IpcMessage,
     IpcValue_SharedBlob,
+    NodeKey,
+    NodeKeyError,
     NodeSnapshot,
     NodeState_Payload,
     OpKind,
@@ -25,6 +35,7 @@ from lazily.ipc import (
     ShmBlobRef,
     ShmBlobTooLarge,
     Snapshot,
+    WireStamp,
 )
 
 
@@ -314,3 +325,230 @@ def test_shm_blob_descriptor_flows_through_ipc_value_shared_blob() -> None:
     value = IpcValue_SharedBlob(desc)
     assert value.blob == desc
     assert bytes(arena.read_blob(value.blob)) == b"blob payload"
+
+
+# ---------------------------------------------------------------------------
+# NodeKey (wire-stable keyed address)
+# ---------------------------------------------------------------------------
+
+
+def test_node_key_validates_path_bounds() -> None:
+    assert NodeKey.new("scores/alice").as_str() == "scores/alice"
+
+    with pytest.raises(NodeKeyError) as exc_empty:
+        NodeKey.new("")
+    assert exc_empty.value.kind is NodeKeyError.EMPTY
+
+    with pytest.raises(NodeKeyError) as exc_double:
+        NodeKey.new("a//b")
+    assert exc_double.value.kind is NodeKeyError.EMPTY_SEGMENT
+
+    with pytest.raises(NodeKeyError) as exc_leading:
+        NodeKey.new("/leading")
+    assert exc_leading.value.kind is NodeKeyError.EMPTY_SEGMENT
+
+    too_many = "/".join(["s"] * (NODE_KEY_MAX_SEGMENTS + 1))
+    with pytest.raises(NodeKeyError) as exc_many:
+        NodeKey.new(too_many)
+    assert exc_many.value.kind is NodeKeyError.TOO_MANY_SEGMENTS
+
+    too_long = "x" * 2000
+    with pytest.raises(NodeKeyError) as exc_long:
+        NodeKey.new(too_long)
+    assert exc_long.value.kind is NodeKeyError.TOO_LONG
+
+
+def test_node_key_segments_round_trip() -> None:
+    key = NodeKey.from_segments(["outer", "k1", "inner", "k2"])
+    assert key.as_str() == "outer/k1/inner/k2"
+    assert key.segments() == ["outer", "k1", "inner", "k2"]
+
+
+def test_node_key_wire_is_bare_string() -> None:
+    key = NodeKey.new("scores/alice")
+    assert key.to_wire() == "scores/alice"
+    assert NodeKey.from_wire("scores/alice") == key
+
+
+def test_keyed_node_snapshot_round_trips_through_json() -> None:
+    key = NodeKey.new("scores/alice")
+    node = NodeSnapshot.payload(1, "i32", bytes([1])).with_key(key)
+    message = IpcMessage.of_snapshot(Snapshot(epoch=1, nodes=[node], roots=[1]))
+
+    encoded = message.encode_json()
+    assert b"scores/alice" in encoded
+    assert IpcMessage.decode_json(encoded) == message
+
+
+def test_unkeyed_node_snapshot_omits_key_field() -> None:
+    node = NodeSnapshot.payload(1, "i32", bytes([1]))
+    message = IpcMessage.of_snapshot(Snapshot(epoch=1, nodes=[node], roots=[1]))
+    encoded = message.encode_json().decode("utf-8")
+    assert '"key"' not in encoded, f"unkeyed node must omit key field: {encoded}"
+
+
+def test_node_snapshot_without_key_decodes_to_none() -> None:
+    wire = (
+        '{"Snapshot":{"epoch":1,"nodes":['
+        '{"node":1,"type_tag":"i32","state":{"Payload":[1]}}'
+        '],"edges":[],"roots":[1]}}'
+    )
+    message = IpcMessage.decode_json(wire)
+    assert message.snapshot is not None
+    assert message.snapshot.nodes[0].key is None
+
+
+def test_keyed_node_add_delta_round_trips() -> None:
+    key = NodeKey.new("sheet/A1")
+    delta = Delta.next(
+        1,
+        [
+            DeltaOp.node_add(2, "i32", NodeState_Payload(bytes([2])), key),
+            DeltaOp.node_add(3, "i32", NodeState_Payload(bytes([3]))),
+        ],
+    )
+    message = IpcMessage.of_delta(delta)
+    encoded = message.encode_json()
+
+    decoded = IpcMessage.decode_json(encoded)
+    assert decoded == message
+    assert decoded.delta.ops[0].key == key
+    assert decoded.delta.ops[1].key is None
+
+    # unkeyed NodeAdd omits key, keyed NodeAdd includes it
+    text = encoded.decode("utf-8")
+    assert '"key"' in text  # at least one keyed op
+
+
+def test_unkeyed_node_add_omits_key_field() -> None:
+    delta = Delta.next(
+        1,
+        [DeltaOp.node_add(2, "i32", NodeState_Payload(bytes([2])))],
+    )
+    text = IpcMessage.of_delta(delta).encode_json().decode("utf-8")
+    assert '"key"' not in text, f"unkeyed NodeAdd must omit key field: {text}"
+
+
+# ---------------------------------------------------------------------------
+# Distributed: CRDT cell plane (CrdtSync)
+# ---------------------------------------------------------------------------
+
+
+def test_crdt_sync_round_trips_through_json() -> None:
+    stamp_a = WireStamp(wall_time=200, logical=0, peer=1)
+    stamp_b = WireStamp(wall_time=180, logical=3, peer=2)
+    sync = CrdtSync.new(
+        [(1, stamp_a), (2, stamp_b)],
+        [
+            CrdtOp.new(1, stamp_a, bytes([10, 20])),
+            CrdtOp.keyed(2, NodeKey.new("scores/alice"), stamp_b, bytes([30])),
+        ],
+    )
+    message = IpcMessage.of_crdt_sync(sync)
+    assert message.is_crdt_sync
+    assert message.crdt_sync == sync
+
+    encoded = message.encode_json()
+    decoded = IpcMessage.decode_json(encoded)
+    assert decoded == message
+    assert decoded.crdt_sync == sync
+    assert decoded.crdt_sync.ops[1].key == NodeKey.new("scores/alice")
+
+
+def test_crdt_op_keyless_serializes_null_key() -> None:
+    # Byte parity with lazily-rs: a derived struct always carries `key`
+    # (null when unset), unlike NodeSnapshot/NodeAdd which omit it.
+    op = CrdtOp.new(1, WireStamp(1, 0, 1), bytes([1]))
+    assert op.to_wire()["key"] is None
+
+
+def test_crdt_sync_filter_omits_non_readable_ops_but_keeps_frontier() -> None:
+    frontier = [(1, WireStamp(200, 0, 1)), (2, WireStamp(200, 0, 2))]
+    sync = CrdtSync.new(
+        frontier,
+        [
+            CrdtOp.new(1, WireStamp(1, 0, 1), bytes([1])),
+            CrdtOp.new(2, WireStamp(2, 0, 1), bytes([2])),
+            CrdtOp.new(3, WireStamp(3, 0, 1), bytes([3])),
+        ],
+    )
+    perms = PeerPermissions()
+    perms.allow_many(1, OpKind.READ, [1, 2])
+
+    filtered = sync.filter_readable(perms, 1)
+    assert filtered.frontier == frontier  # frontier kept whole
+    assert [op.node for op in filtered.ops] == [1, 2]  # node 3 omitted
+
+
+def test_crdt_sync_from_wire_accepts_keyless_op() -> None:
+    wire = {
+        "CrdtSync": {
+            "frontier": [[1, {"wall_time": 5, "logical": 0, "peer": 1}]],
+            "ops": [
+                {
+                    "node": 1,
+                    "key": None,
+                    "stamp": {"wall_time": 5, "logical": 0, "peer": 1},
+                    "state": {"Inline": [1]},
+                }
+            ],
+        }
+    }
+    message = IpcMessage.from_wire(wire)
+    assert message.is_crdt_sync
+    assert message.crdt_sync.ops[0].key is None
+    assert message.to_wire() == wire
+
+
+# ---------------------------------------------------------------------------
+# Capability negotiation
+# ---------------------------------------------------------------------------
+
+
+def test_capability_handshake_defaults() -> None:
+    hs = CapabilityHandshake.new(7, "abc-123")
+    assert hs.protocol_id == PROTOCOL_ID == "lazily-ipc"
+    assert hs.protocol_major_version == PROTOCOL_MAJOR_VERSION == 1
+    assert hs.codec == "json"
+    assert hs.max_frame_size == 1_048_576
+    assert hs.ordered_reliable is True
+    assert hs.fragmentation_supported is False
+    assert hs.peer_id == 7
+    assert hs.session_id == "abc-123"
+    assert hs.features == []
+
+
+def test_capability_handshake_round_trips() -> None:
+    hs = (
+        CapabilityHandshake.new(1, "s1")
+        .with_features(["shared-blob", "signaling-relay"])
+        .with_max_frame_size(2_097_152)
+        .with_fragmentation(True)
+    )
+    assert hs.has_feature("shared-blob")
+    wire = hs.to_wire()
+    assert wire["features"] == ["shared-blob", "signaling-relay"]
+    assert CapabilityHandshake.from_wire(wire) == hs
+
+
+def test_capability_handshake_compatibility() -> None:
+    a = CapabilityHandshake.new(1, "s")
+    b = CapabilityHandshake.new(2, "s")
+    assert a.is_compatible_with(b)
+
+    # codec mismatch fails closed
+    assert not a.is_compatible_with(b.with_codec("postcard"))
+    # unordered fails closed
+    assert not a.is_compatible_with(
+        CapabilityHandshake(
+            protocol_id=PROTOCOL_ID,
+            protocol_major_version=PROTOCOL_MAJOR_VERSION,
+            codec="json",
+            max_frame_size=1_048_576,
+            ordered_reliable=False,
+            peer_id=2,
+            session_id="s",
+        )
+    )
+    # wrong protocol id fails closed
+    assert not a.is_compatible_with(replace(a, protocol_id="not-lazily"))

@@ -150,15 +150,20 @@ observers across processes and languages. The JSON representation is
 
 | Type | Wire form |
 |------|-----------|
-| `IpcMessage` | Externally-tagged: `{"Snapshot": …}` or `{"Delta": …}` |
+| `IpcMessage` | Externally-tagged: `{"Snapshot": …}`, `{"Delta": …}`, or `{"CrdtSync": …}` |
 | `Snapshot` | `{ epoch, nodes[], edges[], roots[] }` |
-| `NodeSnapshot` | `{ node, type_tag, state }` |
+| `NodeSnapshot` | `{ node, type_tag, state, key? }` (`key` omitted when absent) |
 | `NodeState` | `{"Payload": [u8…]}` \| `{"SharedBlob": {…}}` \| `"Opaque"` |
+| `NodeKey` | Bare string path (`scores/alice`); optional on `NodeSnapshot` / `NodeAdd` |
 | `EdgeSnapshot` | `{ dependent, dependency }` |
 | `Delta` | `{ base_epoch, epoch, ops[] }` |
-| `DeltaOp` | 7 variants: `CellSet`, `SlotValue`, `Invalidate`, `NodeAdd`, `NodeRemove`, `EdgeAdd`, `EdgeRemove` |
+| `DeltaOp` | 7 variants: `CellSet`, `SlotValue`, `Invalidate`, `NodeAdd`, `NodeRemove`, `EdgeAdd`, `EdgeRemove` (`NodeAdd` carries an optional `key`) |
 | `IpcValue` | `{"Inline": [u8…]}` \| `{"SharedBlob": {…}}` |
 | `ShmBlobRef` | `{ offset, len, generation, epoch, checksum }` |
+| `WireStamp` | `{ wall_time, logical, peer }` (CRDT HLC stamp mirror) |
+| `CrdtOp` | `{ node, key, stamp, state }` (state-based / CvRDT) |
+| `CrdtSync` | `{ frontier[], ops[] }` (anti-entropy multi-writer plane) |
+| `CapabilityHandshake` | Standalone frame: `{ protocol_id, protocol_major_version, codec, … }` |
 
 **Conventions matching the normative fixtures:**
 
@@ -166,8 +171,54 @@ observers across processes and languages. The JSON representation is
 - Wire-stable identifiers (`NodeId`, `PeerId`) are bare JSON integers; keep them
   ≤ `2**53` for JavaScript/TypeScript peers.
 - Serialized value bytes are JSON **arrays of `u8`**, not base64.
+- `NodeKey` is **additive**: a missing `key` field decodes to `None` (`null`),
+  so pre-`key` encoders and existing conformance fixtures round-trip unchanged.
+  A `None` `key` is omitted from `NodeSnapshot` / `NodeAdd` (self-describing
+  codecs); `CrdtOp.key` is emitted as `null` when unset (matches the Rust
+  derived struct). Path bounds (`NODE_KEY_MAX_LEN = 1024`, `NODE_KEY_MAX_SEGMENTS = 32`)
+  are enforced on construction and on the wire.
 - `IpcMessage.encode_json()` / `decode_json()` move transport-agnostic bytes
   (unix socket, pipe, WebSocket, WebRTC data channel, shared memory).
+
+### NodeKey
+
+A `NodeKey` is a `/`-joined path (`scores/alice`, `outer/k1/inner/k2`) — an
+optional wire-stable keyed address that survives `NodeId` churn. Unlike
+`NodeId` (a volatile internal handle a producer may re-mint after a resync or
+remove-then-readd), a key is producer-defined and stable, so a peer can
+subscribe to "entry `scores/alice`" without an out-of-band key→NodeId map.
+
+- `NodeKey.new(path)` / `NodeKey.from_segments(parts)` — validated construction
+  (raises `NodeKeyError`: `Empty`, `TooLong`, `TooManySegments`, `EmptySegment`).
+- `NodeSnapshot.with_key(key)` / `DeltaOp.node_add(node, type_tag, state, key)`
+  attach a key; the `key` field is omitted from JSON when unset.
+
+### Distributed: CRDT cell plane
+
+`CrdtSync` rides the same `lazily-ipc` transport as `Snapshot`/`Delta` as a
+third `IpcMessage` variant. It is the multi-writer anti-entropy plane
+(`merge: crdt`): each `CrdtOp` ships a converged state-based register value
+tagged with a `WireStamp` (the wire mirror of the runtime HLC stamp); the
+`frontier` advertises the sender's per-peer highest observed stamp so the
+receiver can compute the causal-stability watermark. Merges are commutative,
+associative, and idempotent, so out-of-order or duplicated delivery converges.
+
+- `CrdtSync.filter_readable(permissions, peer)` omits ops for non-readable
+  nodes entirely (omission, not redaction) while retaining the full frontier.
+- Wiring the plane to live `merge: crdt` root cells is a follow-on runtime slice;
+  this binding ships the codec-stable wire types.
+
+### Capability negotiation
+
+`CapabilityHandshake` is the standalone frame exchanged before any graph state
+flows (it is not an `IpcMessage` variant). Peers that disagree on
+`protocol_major_version`, `codec`, or `ordered_reliable` fail closed before any
+`Snapshot` or `Delta` is applied.
+
+- `CapabilityHandshake.new(peer_id, session_id)` — protocol defaults (JSON codec,
+  1 MiB frame, ordered-reliable, no features).
+- `handshake.is_compatible_with(other)` — fail-closed compatibility check.
+- Constants `PROTOCOL_ID = "lazily-ipc"`, `PROTOCOL_MAJOR_VERSION = 1`.
 
 ### Epoch sequencing
 

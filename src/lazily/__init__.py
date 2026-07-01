@@ -12,11 +12,18 @@ remote observers across processes and languages.
 """
 
 __all__ = [
+    "NODE_KEY_MAX_LEN",
+    "NODE_KEY_MAX_SEGMENTS",
+    "PROTOCOL_ID",
+    "PROTOCOL_MAJOR_VERSION",
     "SHM_BLOB_HEADER_LEN",
     "BaseSlot",
+    "CapabilityHandshake",
     "Cell",
     "CellSlot",
     "ChartDef",
+    "CrdtOp",
+    "CrdtSync",
     "Delta",
     "DeltaApplyStatus",
     "DeltaOp",
@@ -25,6 +32,8 @@ __all__ = [
     "IpcValue",
     "LazilyCallable",
     "NodeId",
+    "NodeKey",
+    "NodeKeyError",
     "NodeSnapshot",
     "NodeState",
     "OpKind",
@@ -40,6 +49,7 @@ __all__ = [
     "Snapshot",
     "StateChart",
     "StateMachine",
+    "WireStamp",
     "cell",
     "cell_def",
     "ipc",
@@ -53,7 +63,14 @@ __version__ = "0.12.0"
 from . import ipc
 from .cell import Cell, CellSlot, cell, cell_def
 from .ipc import (
+    NODE_KEY_MAX_LEN,
+    NODE_KEY_MAX_SEGMENTS,
+    PROTOCOL_ID,
+    PROTOCOL_MAJOR_VERSION,
     SHM_BLOB_HEADER_LEN,
+    CapabilityHandshake,
+    CrdtOp,
+    CrdtSync,
     Delta,
     DeltaApplyStatus,
     DeltaOp,
@@ -61,6 +78,8 @@ from .ipc import (
     IpcMessage,
     IpcValue,
     NodeId,
+    NodeKey,
+    NodeKeyError,
     NodeSnapshot,
     NodeState,
     OpKind,
@@ -72,6 +91,7 @@ from .ipc import (
     ShmBlobArenaError,
     ShmBlobRef,
     Snapshot,
+    WireStamp,
 )
 from .signal import Signal, signal, signal_def
 from .slot import BaseSlot, Slot, slot, slot_def
