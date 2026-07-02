@@ -1,5 +1,3 @@
-from collections.abc import Callable
-
 from lazily import StateMachine, slot
 
 
@@ -28,7 +26,9 @@ class TestStateMachine:
 
     def test_guard_rejection(self) -> None:
         ctx: dict = {}
-        m = StateMachine(ctx, "Locked", lambda s, e: "Unlocked" if e == "coin" else None)
+        m = StateMachine(
+            ctx, "Locked", lambda s, e: "Unlocked" if e == "coin" else None
+        )
 
         assert m.send("push") is False
         assert m.state == "Locked"
@@ -51,8 +51,9 @@ class TestStateMachine:
         ctx: dict = {}
         transitions: list[tuple[str, str]] = []
         m = StateMachine(
-            ctx, "A", lambda s, e: {"A": "B", "B": "C", "C": "A"}.get(s)
-            if e == "go" else None,
+            ctx,
+            "A",
+            lambda s, e: {"A": "B", "B": "C", "C": "A"}.get(s) if e == "go" else None,
         )
         m.on_transition(lambda old, new: transitions.append((old, new)))
 
@@ -65,7 +66,9 @@ class TestStateMachine:
     def test_on_transition_dispose(self) -> None:
         ctx: dict = {}
         fired: list[str] = []
-        m = StateMachine(ctx, "A", lambda s, e: chr(ord(s) + 1) if e == "next" else None)
+        m = StateMachine(
+            ctx, "A", lambda s, e: chr(ord(s) + 1) if e == "next" else None
+        )
         dispose = m.on_transition(lambda old, new: fired.append(new))
 
         m.send("next")
@@ -99,9 +102,7 @@ class TestStateMachine:
         """Handler receives the correct old and new states across multiple transitions."""
         ctx: dict = {}
         pairs: list[tuple[int, int]] = []
-        m = StateMachine(
-            ctx, 0, lambda s, e: (s + 1) % 3 if e == "inc" else None
-        )
+        m = StateMachine(ctx, 0, lambda s, e: (s + 1) % 3 if e == "inc" else None)
         m.on_transition(lambda old, new: pairs.append((old, new)))
 
         m.send("inc")

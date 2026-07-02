@@ -13,7 +13,7 @@ T = TypeVar("T")
 
 
 class CellSubscriber[T](Protocol):
-    def __call__(self, ctx: dict, value: T) -> Any: ...
+    def __call__(self, ctx: dict[Any, Any], value: T, /) -> Any: ...
 
 
 class Cell[T]:

@@ -1,0 +1,170 @@
+"""Keyed reactive collections — CellMap / CellFamily independence laws.
+
+The Python counterpart of the Lean ``LazilyFormal.Collection`` formal model in
+``lazily-formal``. Each test mirrors a named theorem (the three independent
+reactive signals + atomic-move identity preservation + per-key memoization).
+"""
+
+from __future__ import annotations
+
+from lazily import CellFamily, CellMap, slot
+
+
+# =================================================================================
+# setEntryValue_preserves_{membership,order,siblings}
+# Updating one entry's value touches neither the membership nor the order
+# signal, nor any sibling entry's value cell.
+# =================================================================================
+
+
+def test_set_entry_value_preserves_membership_and_order() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    cm.insert("a", 1)
+    cm.insert("b", 2)
+    m_before = cm.membership_signal.value
+    o_before = cm.order_signal.value
+
+    cm.set_value("a", 99)
+
+    assert cm.membership_signal.value == m_before  # membership unchanged
+    assert cm.order_signal.value == o_before  # order unchanged
+    assert cm.get("a") == 99
+
+
+def test_set_entry_value_preserves_siblings() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    cm.insert("a", 1)
+    cm.insert("b", 2)
+    cm.set_value("a", 99)
+    assert cm.get("b") == 2  # sibling untouched
+
+
+# =================================================================================
+# moveKey_preserves_{membership,values} / moveKey_advances_order
+# A pure reorder leaves membership and every value cell untouched, bumping only
+# the order signal — "a pure reorder MUST NOT invalidate set-membership readers".
+# =================================================================================
+
+
+def test_move_to_preserves_membership_and_values() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    cm.insert("a", 1)
+    cm.insert("b", 2)
+    cm.insert("c", 3)
+    m_before = cm.membership_signal.value
+
+    cm.move_to("a", 2)  # [a,b,c] -> [b,c,a]
+
+    assert cm.membership_signal.value == m_before  # membership unchanged
+    assert cm.get("a") == 1  # value cell identity preserved (not re-minted)
+    assert cm.get("b") == 2
+    assert cm.get("c") == 3
+    assert cm.keys() == ["b", "c", "a"]
+
+
+def test_move_to_advances_order_signal_only() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    cm.insert("a", 1)
+    cm.insert("b", 2)
+    m_before = cm.membership_signal.value
+    o_before = cm.order_signal.value
+
+    cm.move_to("a", 1)
+
+    assert cm.membership_signal.value == m_before  # unchanged
+    assert cm.order_signal.value == o_before + 1  # advanced exactly once
+
+
+def test_move_before_and_move_after() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    for k, v in [("a", 1), ("b", 2), ("c", 3), ("d", 4)]:
+        cm.insert(k, v)
+    cm.move_before("d", "b")  # [a,b,c,d] -> [a,d,b,c]
+    assert cm.keys() == ["a", "d", "b", "c"]
+    cm.move_after("a", "c")  # [a,d,b,c] -> [d,b,c,a]
+    assert cm.keys() == ["d", "b", "c", "a"]
+
+
+# =================================================================================
+# addKey_advances_membership_and_order / removeKey
+# =================================================================================
+
+
+def test_add_key_advances_membership_and_order() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    cm.insert("a", 1)
+    m0, o0 = cm.membership_signal.value, cm.order_signal.value
+    cm.insert("b", 2)
+    assert cm.membership_signal.value == m0 + 1
+    assert cm.order_signal.value == o0 + 1
+    # Idempotent: re-inserting a member is a no-op.
+    cm.insert("a", 99)
+    assert cm.get("a") == 1  # unchanged — insert of existing member is a no-op
+
+
+def test_remove_key_advances_signals() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    cm.insert("a", 1)
+    cm.insert("b", 2)
+    m0, o0 = cm.membership_signal.value, cm.order_signal.value
+    cm.remove("a")
+    assert "a" not in cm
+    assert cm.membership_signal.value == m0 + 1
+    assert cm.order_signal.value == o0 + 1
+
+
+# =================================================================================
+# Reactive independence — a Slot reading `len` is NOT invalidated by a move.
+# =================================================================================
+
+
+def test_len_reader_not_invalidated_by_move() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    cm.insert("a", 1)
+    cm.insert("b", 2)
+
+    @slot
+    def length(_ctx: dict) -> int:
+        return len(cm)
+
+    runs = [0]
+
+    @slot
+    def watch(_ctx: dict) -> int:
+        v = length(_ctx)
+        runs[0] += 1
+        return v
+
+    assert watch(ctx) == 2
+    assert runs[0] == 1
+    cm.move_to("a", 1)  # pure reorder — membership unchanged
+    assert watch(ctx) == 2
+    assert runs[0] == 1  # len reader NOT invalidated by the move
+    cm.insert("c", 3)  # membership change
+    assert watch(ctx) == 3
+    assert runs[0] == 2  # invalidated by the add
+
+
+# =================================================================================
+# Family.get_idempotent_after_first — per-key identity stability.
+# =================================================================================
+
+
+def test_cell_family_get_idempotent_after_first() -> None:
+    ctx: dict = {}
+    cm = CellMap[str, int](ctx)
+    fam = CellFamily(cm)
+    c1 = fam.get("x", 1)
+    c2 = fam.get("x", 1)  # second request -> same cell
+    assert c1 is c2
+    assert fam.is_minted("x")
+    c3 = fam.get("y", 2)
+    assert c3 is not c1

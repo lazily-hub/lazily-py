@@ -186,6 +186,25 @@ event). `send(event)` returns whether the transition was accepted; a
 self-transition to an equal state is accepted but suppressed by the Cell's
 `PartialEq` guard.
 
+### Reactive collections, async, and thread-safe contexts
+
+lazily-py also implements the `lazily-spec` compute-layer `MUST`s, each ported
+from its Lean formal model in [`lazily-formal`](https://github.com/lazily-hub/lazily-formal):
+
+- **`CellMap` / `CellFamily` / `CellTree`** — keyed reactive collections with
+  independent value/membership/order signals and atomic move.
+- **`reconcile_ops`** — move-minimized keyed reconciliation (LIS kernel).
+- **`AsyncSlot` / `AsyncEffect`** — the async slot lifecycle with stale-completion
+  discard, and cleanup-before-body effect scheduling.
+- **`ThreadSafeContext`** — a lock-serialized `batch` boundary that coalesces
+  writes into one invalidation pass.
+- **`lazily.ffi`** — the C-ABI FFI boundary (`LazilyFfiStatus`,
+  `LazilyFfiMessageKind` incl. `CrdtSync = 3`, `LazilyFfiBytes`).
+
+The test suite gates on `lazily-formal`'s `lake build` (every theorem checks)
+and mirrors the named Lean theorems as property tests. See `SPEC.md` for the
+full compliance surface.
+
 ## IPC — the `lazily-spec` wire protocol
 
 `lazily.ipc` implements the language-agnostic [`lazily-spec`](https://github.com/lazily-hub/lazily-spec)

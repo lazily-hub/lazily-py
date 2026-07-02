@@ -30,11 +30,11 @@ test-cov:
 
 # Format code with ruff
 format:
-	uv run ruff format lazily/ tests/
+	uv run ruff format src/lazily/ tests/
 
 # Lint code with ruff
 lint:
-	ruff check lazily/ tests/
+	uv run ruff check src/lazily/ tests/
 
 # Type check
 type-check:

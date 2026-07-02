@@ -281,6 +281,69 @@ fixtures (preferring the sibling spec repo, falling back to a vendored copy unde
 `IpcMessage`, asserts the language-agnostic `assertions`, and re-serializes to
 confirm round-trip fidelity — the same contract the Rust and Zig bindings run.
 
+## lazily-spec Compute-Layer Compliance
+
+Beyond the wire protocol, lazily-py implements the `lazily-spec` compute-layer
+`MUST`s, each ported from its Lean formal model in `lazily-formal` and covered
+by property tests that mirror the named Lean theorems.
+
+### Keyed reactive collections (`CellMap` / `CellFamily` / `CellTree`)
+
+Three independent reactive signals: per-entry value, set-membership, and order.
+A pure reorder (`move_to`) bumps the order signal only — `len`/`contains` readers
+are not invalidated; an atomic move keeps each entry's cell identity (not remove
++ re-mint). `CellFamily` lazily mints and caches one cell per key (identity
+stability across requests). `CellTree` extends the model to an ordered keyed
+tree with per-node value and per-level membership/order reactivity.
+
+- `CellMap.set_value` / `.insert` / `.remove` / `.move_to` / `.move_before` /
+  `.move_after`; `membership_signal` / `order_signal`; `CellFamily.get(key, value)`.
+- `CellTree.set_node_value` / `.insert_child` / `.move_child`.
+
+### Keyed reconciliation (`reconcile_ops`)
+
+The move-minimized `{insert, remove, move, update}` op set a level diff emits by
+stable key, over a longest-increasing-subsequence (LIS) kernel. Keys already in
+relative order (the LIS) do NOT move; a stable entry with an unchanged value is
+neither moved nor updated — so its value cell is untouched. Replays the
+`lazily-spec/conformance/collections/keyed_reconciliation_lis.json` fixture.
+
+### Async reactive context (`AsyncSlot` / `AsyncEffect`)
+
+The `Empty / Computing / Resolved / Error` slot lifecycle with revision-tracked
+stale-completion discard — a stale completion is never published. `AsyncEffect`
+serializes reruns cleanup-before-body and schedules them at the outermost batch
+boundary (invalidation only queues, never runs inline); disposal is terminal.
+The pure `step` kernels (`lazily.async_slot.step` / `lazily.async_effect.step`)
+mirror `LazilyFormal.AsyncSlotState` / `AsyncEffect`.
+
+### Thread-safe reactive context (`ThreadSafeContext`)
+
+A lock-serialized `batch(run)` that queues cell writes and flushes them in one
+coalesced invalidation pass at the outermost boundary — the "coalesced frontier:
+a dependent reached through many changed cells in one batch appears at most once
+per delta" invariant. A singleton batch refines the single-threaded `Cell.set`.
+
+### C-ABI FFI boundary (`lazily.ffi`)
+
+`LazilyFfiStatus` (0 Ok / 1 Empty / 2 NullPointer / 3 InvalidMessage /
+4 EncodeFailed / 5 Panic), `LazilyFfiMessageKind` (0 Unknown / 1 Snapshot /
+2 Delta / **3 CrdtSync** — the spec mandates the kind discriminant carries
+`CrdtSync`), `LazilyFfiBytes` (`ptr`/`len`), and `encode_message` /
+`decode_message` re-encoding an `IpcMessage` to canonical JSON bytes
+byte-compatible with the Rust/Zig FFI boundaries.
+
+### lazily-formal integration
+
+`tests/test_formal_build.py` runs `lake build` over the sibling `lazily-formal`
+Lean model and fails the suite if any theorem regresses (skipped when `lake` or
+`lazily-formal` is absent, e.g. a standalone PyPI sdist checkout). The property
+tests across `test_statechart_properties.py`, `test_thread_safe_properties.py`,
+`test_async_slot_properties.py`, `test_async_effect_properties.py`,
+`test_collection.py`, `test_tree.py`, and `test_reconciliation.py` mirror the
+named Lean theorems — the universal guarantees no finite fixture suite can
+establish.
+
 ## Requirements
 
 - Python 3.12+

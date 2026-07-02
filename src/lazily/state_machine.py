@@ -14,11 +14,13 @@ that returns an equal state is accepted but suppressed by the Cell's
 
 from __future__ import annotations
 
+
 __all__ = ["StateMachine"]
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from .cell import Cell
+from .cell import Cell, CellSubscriber
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,17 +40,21 @@ class StateMachine[S, E]:
     Example::
 
         ctx = {}
-        m = StateMachine(ctx, "Red", lambda s, e:
-            {"Red": "Green", "Green": "Yellow", "Yellow": "Red"}.get(s)
-            if e == "advance" else None)
+        m = StateMachine(
+            ctx,
+            "Red",
+            lambda s, e: {"Red": "Green", "Green": "Yellow", "Yellow": "Red"}.get(s)
+            if e == "advance"
+            else None,
+        )
 
-        m.send("advance")   # True  — accepted
-        m.state             # "Green"
-        m.send("advance")   # True
-        m.state             # "Yellow"
+        m.send("advance")  # True  — accepted
+        m.state  # "Green"
+        m.send("advance")  # True
+        m.state  # "Yellow"
     """
 
-    __slots__ = ("ctx", "_cell", "_transition")
+    __slots__ = ("_cell", "_transition", "ctx")
 
     def __init__(
         self,
@@ -99,12 +105,13 @@ class StateMachine[S, E]:
         """
         prev: list[S] = [self._cell.get()]
 
-        def subscriber(_ctx: dict, new_state: S) -> None:
+        def _subscriber(_ctx: dict[Any, Any], new_state: S) -> None:
             old = prev[0]
             if old != new_state:
                 handler(old, new_state)
-            prev[0] = new_state
+                prev[0] = new_state
 
+        subscriber: CellSubscriber[S] = _subscriber
         self._cell.subscribe(subscriber)
 
         def dispose() -> None:

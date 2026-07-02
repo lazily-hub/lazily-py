@@ -1,5 +1,52 @@
 ## Unreleased
 
+## 0.14.0
+
+Full `lazily-spec` compute-layer compliance + `lazily-formal` test-suite
+integration. This release closes the remaining `MUST` layers of the
+`lazily-spec` conformance matrix (keyed collections, async reactive context,
+thread-safe context, C-ABI FFI) by porting the corresponding Lean formal models
+in `lazily-formal`, and makes `lazily-formal` part of the lazily-py test suite:
+`lake build` gates the suite on every theorem still checking.
+
+* **Keyed reactive collections** (`#lzcellmap`) — `CellMap` and `CellFamily`
+  with the three independent reactive signals (per-entry value, set-membership,
+  order), atomic move (`move_to`/`move_before`/`move_after`), and per-key
+  identity-stable minting. A pure reorder bumps the order signal only — `len`/
+  `contains` readers are not invalidated (the wire-level "a pure reorder MUST
+  NOT invalidate set-membership readers" invariant). Ports
+  `LazilyFormal.Collection`.
+* **Ordered keyed tree** (`CellTree`) — per-node value reactivity and per-level
+  membership/order reactivity; atomic child move preserves identity. Ports
+  `LazilyFormal.Tree`.
+* **Keyed reconciliation** (`reconcile_ops`) — the move-minimized
+  `{insert, remove, move, update}` op set over a longest-increasing-subsequence
+  (LIS) kernel: stable (LIS) keys never move, and a stable entry with an
+  unchanged value is neither moved nor updated. Replays the
+  `lazily-spec/conformance/collections/keyed_reconciliation_lis.json` fixture.
+  Ports `LazilyFormal.Reconciliation`.
+* **Async reactive context** (`#lzasync`) — `AsyncSlot` with the exact
+  `Empty / Computing / Resolved / Error` lifecycle and revision-tracked
+  stale-completion discard (a stale completion is never published); `AsyncEffect`
+  with cleanup-before-body ordering and batch-boundary scheduling (invalidation
+  only queues, never runs inline); disposal is terminal. Pure `step` kernels
+  mirror `LazilyFormal.AsyncSlotState` / `AsyncEffect`; the theorems are
+  replayed as property tests.
+* **Thread-safe reactive context** (`ThreadSafeContext`) — a lock-serialized
+  `batch` boundary that coalesces concurrent cell writes into one invalidation
+  pass (the coalesced frontier); a singleton batch refines the single-threaded
+  `setCell`. Ports `LazilyFormal.ThreadSafe`.
+* **C-ABI FFI boundary** (`lazily.ffi`) — `LazilyFfiStatus` (0..5),
+  `LazilyFfiMessageKind` (including `CrdtSync = 3`, as the spec mandates),
+  `LazilyFfiBytes` (`ptr`/`len`), and `encode_message`/`decode_message`
+  re-encoding `IpcMessage` to canonical JSON bytes byte-compatible with the
+  Rust/Zig FFI boundaries.
+* **lazily-formal test-suite integration** — `tests/test_formal_build.py` runs
+  `lake build` over the sibling `lazily-formal` Lean model and fails the suite
+  if any theorem regresses (skipped when `lake`/`lazily-formal` is absent, e.g.
+  a standalone PyPI sdist). Property tests mirror the named Lean theorems for
+  every new module.
+
 ## 0.13.0
 
 Full `lazily-spec` wire-protocol compliance: the IPC types the binding was
