@@ -1,5 +1,28 @@
 ## Unreleased
 
+## 0.13.0
+
+Full `lazily-spec` wire-protocol compliance: the IPC types the binding was
+missing versus `protocol.md` (matching the `lazily-rs` reference for
+cross-language byte parity), plus a schema-compliance test proving lazily-py's
+serializer output validates against the canonical `lazily-spec` JSON Schemas.
+
+* **NodeKey** (`#lzwirekey`) — the optional wire-stable keyed address the spec
+  explicitly names lazily-py as needing. `NodeKey`/`NodeKeyError` with
+  `NODE_KEY_MAX_LEN`/`NODE_KEY_MAX_SEGMENTS` bounds (validated on construction
+  and on the wire); optional `key` on `NodeSnapshot` (`.with_key`) and
+  `DeltaOp.node_add`, omitted from JSON when `None` so pre-`key` encoders and
+  existing conformance fixtures round-trip unchanged.
+* **Distributed CRDT plane** (`#lzcrdtplane5a`) — `WireStamp`, `CrdtOp`
+  (`new`/`keyed`, state-based CvRDT), `CrdtSync` (frontier + ops,
+  `filter_readable`). `IpcMessage` gains a third variant `{"CrdtSync": …}`.
+* **Capability negotiation** — `CapabilityHandshake` +
+  `PROTOCOL_ID`/`PROTOCOL_MAJOR_VERSION`; `is_compatible_with` fails closed on
+  protocol id / major version / codec / `ordered_reliable` disagreement.
+* **Schema compliance** — `tests/test_schema_compliance.py` validates
+  lazily-py's `to_wire()` output (Snapshot, Delta with keyed NodeAdd, CrdtSync)
+  against the sibling `lazily-spec/schemas`, closing the binding↔schema loop.
+
 ## 0.12.0
 
 * Add `StateChart` — a full Harel/SCXML state-chart interpreter backed by a
