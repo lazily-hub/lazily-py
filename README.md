@@ -27,6 +27,37 @@ There is **no dedicated `Context` class** — a plain `dict` is the context. Slo
 use themselves as dictionary keys to cache values, so any dict works as the
 reactive "world."
 
+## Feature coverage
+
+The full `lazily` capability set across every binding. Legend: ✅ shipped ·
+`~` partial · `—` absent or not applicable. The canonical matrix with per-cell
+notes and platform carve-outs lives in
+[`lazily-spec` § Cross-Language Coverage](../lazily-spec/docs/coverage.md).
+
+| Feature | Rust | Python | Kotlin | JS | Dart | Zig |
+|---------|:----:|:------:|:------:|:--:|:----:|:---:|
+| Reactive graph — `Cell` / `Slot` / `Signal` / `Effect` / memo / batch | ✅ | ~ | ✅ | ✅ | ~ | ~ |
+| Thread-safe context (lock-backed) | ✅ | ✅ | ✅ | — | — | ✅ |
+| Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed cell collections (`CellMap` / `CellTree`) + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ~ |
+| Memoized semantic tree (`SemTree`) | ✅ | — | ✅ | ✅ | — | — |
+| Stable-id alignment (manufactured identity) | ✅ | — | ✅ | ✅ | — | — |
+| Free-text character CRDT (`TextCrdt`) | ✅ | — | ✅ | ✅ | — | — |
+| `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | — | ✅ | ✅ | — | — |
+| Move-aware sequence CRDT (`SeqCrdt`) | ✅ | — | ✅ | ✅ | — | — |
+| Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | — | ✅ | ✅ | — | — |
+| IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ~ | ~ | ✅ |
+| Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | ✅ | — | ✅ | ✅ | ~ | — |
+| Distributed plane — WebRTC transport + signaling | ✅ | — | ✅ | ✅ | — | — |
+| State projection / mirror | ✅ | — | ✅ | ✅ | — | — |
+| C-ABI FFI boundary | ✅ | ✅ | ✅ | — | ✅ | ✅ |
+| Permission boundary (`PeerPermissions` / `RemoteOp`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Capability negotiation (`SessionHandshake`) | ✅ | — | ✅ | ✅ | ✅ | ✅ |
+| Instrumentation / benchmarks | ✅ | — | — | — | — | — |
+
 ## Installation
 
 ```
