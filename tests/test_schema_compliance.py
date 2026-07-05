@@ -28,6 +28,8 @@ from referencing import Registry  # noqa: E402
 from referencing.jsonschema import DRAFT202012  # noqa: E402
 
 from lazily.ipc import (  # noqa: E402
+    CausalReceipt,
+    CausalReceipts,
     CrdtOp,
     CrdtSync,
     Delta,
@@ -38,6 +40,7 @@ from lazily.ipc import (  # noqa: E402
     NodeSnapshot,
     NodeState_Opaque,
     NodeState_Payload,
+    ReceiptOutcome,
     ShmBlobRef,
     Snapshot,
     WireStamp,
@@ -46,7 +49,7 @@ from lazily.ipc import (  # noqa: E402
 
 _SPEC_SCHEMAS = Path(__file__).resolve().parents[2] / "lazily-spec" / "schemas"
 
-_SCHEMA_NAMES = ["defs", "snapshot", "delta", "distributed"]
+_SCHEMA_NAMES = ["defs", "snapshot", "delta", "distributed", "receipts"]
 
 
 def _registry() -> Registry:
@@ -156,3 +159,55 @@ def test_encode_json_bytes_validate_schema() -> None:
     # The byte-encoded transport form, parsed back, is schema-valid.
     wire = json.loads(message.encode_json().decode("utf-8"))
     _assert_valid(wire, "snapshot")
+
+
+# ---------------------------------------------------------------------------
+# CausalReceipts wire output — terminal outcome projection (not a transport ACK)
+# ---------------------------------------------------------------------------
+
+
+def test_causal_receipts_wire_validates_schema() -> None:
+    frame = CausalReceipts(
+        receipts=[
+            CausalReceipt(
+                receipt_id="receipt-observed",
+                causation_id="patch-123",
+                observer="editor",
+                generation=7,
+                outcome=ReceiptOutcome.OBSERVED,
+            ),
+            CausalReceipt(
+                receipt_id="receipt-applied",
+                causation_id="patch-123",
+                observer="editor",
+                generation=7,
+                outcome=ReceiptOutcome.APPLIED,
+                payload_hash="sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+            ),
+            CausalReceipt(
+                receipt_id="receipt-rejected",
+                causation_id="patch-123",
+                observer="editor",
+                generation=7,
+                outcome=ReceiptOutcome.REJECTED,
+                reason="stale generation",
+            ),
+        ]
+    )
+    _assert_valid(frame.to_wire(), "receipts")
+
+
+def test_causal_receipts_encode_json_bytes_validate_schema() -> None:
+    frame = CausalReceipts(
+        receipts=[
+            CausalReceipt(
+                receipt_id="r1",
+                causation_id="cmd-1",
+                observer="worker",
+                generation=0,
+                outcome=ReceiptOutcome.ACCEPTED,
+            )
+        ]
+    )
+    wire = json.loads(frame.encode_json().decode("utf-8"))
+    _assert_valid(wire, "receipts")

@@ -26,6 +26,8 @@ __all__ = [
     "PROTOCOL_MAJOR_VERSION",
     "SHM_BLOB_HEADER_LEN",
     "CapabilityHandshake",
+    "CausalReceipt",
+    "CausalReceipts",
     "CrdtOp",
     "CrdtSync",
     "Delta",
@@ -56,6 +58,9 @@ __all__ = [
     "PeerId",
     "PeerPermissions",
     "PermissionDenied",
+    "ReceiptApplyResult",
+    "ReceiptOutcome",
+    "ReceiptProjection",
     "RemoteOp",
     "ShmBlobArena",
     "ShmBlobArenaError",
@@ -1502,3 +1507,302 @@ class CapabilityHandshake:
             session_id=d["session_id"],
             features=list(d.get("features", [])),
         )
+
+
+# ---------------------------------------------------------------------------
+# Causal receipts (generic outcome projection — NOT a transport ACK)
+# ---------------------------------------------------------------------------
+
+
+class ReceiptOutcome(Enum):
+    """Generic receipt outcome vocabulary.
+
+    Mirrors ``LazilyFormal.Receipt.ReceiptOutcome`` and
+    ``lazily-spec/protocol.md § Causal Receipts``. ``observed`` and
+    ``accepted`` are **non-terminal** (an ACK-like transport/queue observation,
+    never proof an effect happened); ``applied`` and ``rejected`` are
+    **terminal** (the generic outcome a domain fact refines).
+    """
+
+    OBSERVED = "observed"
+    ACCEPTED = "accepted"
+    APPLIED = "applied"
+    REJECTED = "rejected"
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether this outcome completes the causation projection."""
+        return self in (ReceiptOutcome.APPLIED, ReceiptOutcome.REJECTED)
+
+    @classmethod
+    def from_wire(cls, value: str) -> ReceiptOutcome:
+        try:
+            return cls(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"unknown receipt outcome: {value!r} "
+                "(expected one of observed/accepted/applied/rejected)"
+            ) from exc
+
+
+@dataclass(frozen=True)
+class CausalReceipt:
+    """One causal receipt event — an idempotent observation of a command/effect.
+
+    A receipt records that an ``observer`` (peer, process, or subsystem) saw a
+    particular ``causation_id`` at a producer/editor ``generation`` and resolved
+    it to an :class:`ReceiptOutcome`. The primitive is projection data: it is
+    deliberately **not** a transport ACK, and a non-terminal
+    ``observed``/``accepted`` receipt is never authority that an effect
+    happened. Terminal ``applied``/``rejected`` receipts are the generic outcome
+    vocabulary that domain-specific facts refine.
+
+    ``receipt_id`` is the idempotency key — duplicates are no-ops.
+    ``payload_hash`` is an optional hash of the state/payload the receipt
+    observed; ``reason`` is an optional human/debug rejection reason. Both are
+    ``None`` when absent and serialize as JSON ``null``.
+    """
+
+    receipt_id: str
+    causation_id: str
+    observer: str
+    generation: int
+    outcome: ReceiptOutcome
+    reason: str | None = None
+    payload_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.receipt_id:
+            raise ValueError("receipt_id must be a non-empty string")
+        if not self.causation_id:
+            raise ValueError("causation_id must be a non-empty string")
+        if not self.observer:
+            raise ValueError("observer must be a non-empty string")
+        if self.generation < 0:
+            raise ValueError(f"generation must be >= 0, got {self.generation}")
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "receipt_id": self.receipt_id,
+            "causation_id": self.causation_id,
+            "observer": self.observer,
+            "generation": self.generation,
+            "outcome": self.outcome.value,
+            "reason": self.reason,
+            "payload_hash": self.payload_hash,
+        }
+
+    @classmethod
+    def from_wire(cls, d: dict[str, Any]) -> CausalReceipt:
+        return cls(
+            receipt_id=d["receipt_id"],
+            causation_id=d["causation_id"],
+            observer=d["observer"],
+            generation=d["generation"],
+            outcome=ReceiptOutcome.from_wire(d["outcome"]),
+            reason=d.get("reason"),
+            payload_hash=d.get("payload_hash"),
+        )
+
+
+@dataclass(frozen=True)
+class CausalReceipts:
+    """Wire frame carrying a batch of :class:`CausalReceipt` events.
+
+    Serialized as a standalone externally-tagged JSON object
+    (``{"CausalReceipts": {"receipts": [...]}}``) — like
+    :class:`CapabilityHandshake`, a :class:`CausalReceipts` frame is **not** an
+    :class:`IpcMessage` variant; transports may carry it on any channel without
+    touching the Snapshot/Delta/CrdtSync envelope. A frame may carry receipts
+    for several ``causation_id`` s; :meth:`group_by_causation` splits them for
+    per-causation projection.
+    """
+
+    receipts: list[CausalReceipt] = field(default_factory=list)
+
+    def to_wire(self) -> dict[str, dict[str, list[dict[str, Any]]]]:
+        return {"CausalReceipts": {"receipts": [r.to_wire() for r in self.receipts]}}
+
+    @classmethod
+    def from_wire(cls, d: dict[str, Any]) -> CausalReceipts:
+        if not (isinstance(d, dict) and set(d.keys()) == {"CausalReceipts"}):
+            raise ValueError(f"malformed CausalReceipts wire value: {d!r}")
+        body = d["CausalReceipts"]
+        return cls(
+            receipts=[CausalReceipt.from_wire(r) for r in body.get("receipts", [])]
+        )
+
+    def group_by_causation(self) -> dict[str, list[CausalReceipt]]:
+        """Group the frame's receipts by ``causation_id``.
+
+        The map a caller iterates to build one :class:`ReceiptProjection` per
+        causation id. Insertion order is the order receipts appear in the frame.
+        """
+        groups: dict[str, list[CausalReceipt]] = {}
+        for receipt in self.receipts:
+            groups.setdefault(receipt.causation_id, []).append(receipt)
+        return groups
+
+    def encode_json(self) -> bytes:
+        """Serialize to transport-agnostic JSON bytes."""
+        return json.dumps(self.to_wire(), separators=(",", ":")).encode("utf-8")
+
+    @classmethod
+    def decode_json(cls, data: bytes | str) -> CausalReceipts:
+        """Parse JSON bytes (or str) produced by any lazily binding."""
+        if isinstance(data, (bytes, bytearray)):
+            data = bytes(data).decode("utf-8")
+        return cls.from_wire(json.loads(data))
+
+
+class ReceiptApplyResult(Enum):
+    """Result of applying one receipt to a :class:`ReceiptProjection`.
+
+    Mirrors ``LazilyFormal.Receipt.ApplyResult``. Only ``RECORDED`` mutates the
+    authoritative terminal projection; the other variants are no-ops on the
+    terminal state (the receipt may still be retained as audit/debug data).
+    """
+
+    RECORDED = "recorded"
+    DUPLICATE = "duplicate"
+    STALE_GENERATION = "stale_generation"
+    TERMINAL_CONFLICT = "terminal_conflict"
+
+
+class ReceiptProjection:
+    """Authoritative outcome projection for one ``causation_id``.
+
+    A pure reducer that folds :class:`CausalReceipt` events into the current
+    outcome for a causation id, mirroring ``LazilyFormal.Receipt.apply``. The
+    rules from ``lazily-spec/protocol.md § Causal Receipts``:
+
+    * ``observed`` and ``accepted`` are **non-terminal**. They never complete
+      the causation and never conflict with a terminal outcome.
+    * ``applied`` and ``rejected`` are **terminal**. The first terminal receipt
+      for a generation fixes the outcome; a second terminal receipt with a
+      *different* outcome is a **terminal conflict** (fail closed, no winner).
+    * A receipt whose ``generation`` differs from the authority's current
+      generation is **stale** and ignored by the current projection.
+    * A duplicate ``receipt_id`` is an idempotent no-op.
+
+    The authority ``current_generation`` is supplied by the caller (the consumer
+    that knows the producer/editor generation for the causation id). When
+    projecting a frame without external authority, :meth:`from_receipts`
+    defaults ``current_generation`` to the maximum generation seen among the
+    receipts for the causation id — the natural choice that makes older
+    generations stale.
+    """
+
+    __slots__ = (
+        "_conflicts",
+        "_recorded",
+        "_seen",
+        "_stale",
+        "_terminal",
+        "causation_id",
+        "current_generation",
+    )
+
+    def __init__(self, causation_id: str, current_generation: int) -> None:
+        if not causation_id:
+            raise ValueError("causation_id must be a non-empty string")
+        if current_generation < 0:
+            raise ValueError(
+                f"current_generation must be >= 0, got {current_generation}"
+            )
+        self.causation_id = causation_id
+        self.current_generation = current_generation
+        self._seen: set[str] = set()
+        self._terminal: ReceiptOutcome | None = None
+        self._recorded: list[CausalReceipt] = []
+        self._stale: list[CausalReceipt] = []
+        self._conflicts: list[CausalReceipt] = []
+
+    @classmethod
+    def from_receipts(
+        cls,
+        causation_id: str,
+        receipts: Iterable[CausalReceipt],
+        current_generation: int | None = None,
+    ) -> ReceiptProjection:
+        """Build a projection by folding ``receipts`` for one causation id.
+
+        Only receipts whose ``causation_id`` matches are applied (others are
+        ignored). When ``current_generation`` is ``None`` it defaults to the
+        maximum generation among the matching receipts (or ``0`` when empty),
+        the natural authority for a frame-replay without external state.
+        """
+        matching = [r for r in receipts if r.causation_id == causation_id]
+        if current_generation is None:
+            current_generation = (
+                max((r.generation for r in matching), default=0) if matching else 0
+            )
+        projection = cls(causation_id, current_generation)
+        for receipt in matching:
+            projection.apply(receipt)
+        return projection
+
+    def apply(self, receipt: CausalReceipt) -> ReceiptApplyResult:
+        """Fold one receipt into the projection.
+
+        Returns the :class:`ReceiptApplyResult`. ``RECORDED`` updates the
+        authoritative projection (and the recorded/audit trail); every other
+        result leaves the terminal outcome untouched but still classifies the
+        receipt into the appropriate audit bucket (stale / conflict) so a caller
+        can retain it as debug data per the spec.
+        """
+        if receipt.receipt_id in self._seen:
+            return ReceiptApplyResult.DUPLICATE
+        self._seen.add(receipt.receipt_id)
+        if receipt.generation != self.current_generation:
+            self._stale.append(receipt)
+            return ReceiptApplyResult.STALE_GENERATION
+        if receipt.outcome.is_terminal:
+            if self._terminal is None:
+                self._terminal = receipt.outcome
+                self._recorded.append(receipt)
+                return ReceiptApplyResult.RECORDED
+            if self._terminal is receipt.outcome:
+                self._recorded.append(receipt)
+                return ReceiptApplyResult.RECORDED
+            self._conflicts.append(receipt)
+            return ReceiptApplyResult.TERMINAL_CONFLICT
+        self._recorded.append(receipt)
+        return ReceiptApplyResult.RECORDED
+
+    @property
+    def terminal_outcome(self) -> ReceiptOutcome | None:
+        """The current terminal outcome for the causation id, or ``None``."""
+        return self._terminal
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether a terminal outcome has been recorded for the causation id."""
+        return self._terminal is not None
+
+    @property
+    def in_conflict(self) -> bool:
+        """Whether a conflicting terminal outcome was observed (fail closed)."""
+        return bool(self._conflicts)
+
+    def recorded(self) -> list[CausalReceipt]:
+        """The receipts the authority projection retained (non-stale)."""
+        return list(self._recorded)
+
+    def nonterminal_outcomes(self) -> list[ReceiptOutcome]:
+        """Non-terminal outcomes currently recorded, in first-seen order."""
+        seen: set[ReceiptOutcome] = set()
+        ordered: list[ReceiptOutcome] = []
+        for receipt in self._recorded:
+            if not receipt.outcome.is_terminal and receipt.outcome not in seen:
+                seen.add(receipt.outcome)
+                ordered.append(receipt.outcome)
+        return ordered
+
+    def stale_receipt_ids(self) -> list[str]:
+        """``receipt_id`` s discarded as stale (audit/debug trail only)."""
+        return [r.receipt_id for r in self._stale]
+
+    def conflicting_receipt_ids(self) -> list[str]:
+        """``receipt_id`` s that hit a terminal conflict (audit trail only)."""
+        return [r.receipt_id for r in self._conflicts]

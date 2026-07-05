@@ -22,6 +22,8 @@ __all__ = [
     "AsyncSlot",
     "BaseSlot",
     "CapabilityHandshake",
+    "CausalReceipt",
+    "CausalReceipts",
     "Cell",
     "CellFamily",
     "CellMap",
@@ -52,6 +54,9 @@ __all__ = [
     "PeerId",
     "PeerPermissions",
     "PermissionDenied",
+    "ReceiptApplyResult",
+    "ReceiptOutcome",
+    "ReceiptProjection",
     "ReconcileOp",
     "RemoteOp",
     "ShmBlobArena",
@@ -83,7 +88,7 @@ __all__ = [
     "slot_def",
     "tree",
 ]
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 from . import async_slot, ffi, ipc, tree
 from .async_effect import AsyncEffect, EffectEvent, EffectState
@@ -107,6 +112,8 @@ from .ipc import (
     PROTOCOL_MAJOR_VERSION,
     SHM_BLOB_HEADER_LEN,
     CapabilityHandshake,
+    CausalReceipt,
+    CausalReceipts,
     CrdtOp,
     CrdtSync,
     Delta,
@@ -124,6 +131,9 @@ from .ipc import (
     PeerId,
     PeerPermissions,
     PermissionDenied,
+    ReceiptApplyResult,
+    ReceiptOutcome,
+    ReceiptProjection,
     RemoteOp,
     ShmBlobArena,
     ShmBlobArenaError,

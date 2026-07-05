@@ -1,5 +1,35 @@
 ## Unreleased
 
+## 0.15.0
+
+`lazily-spec` causal-receipt compliance. The receipt plane is the generic
+outcome projection for commands and effect requests keyed by a stable
+`causation_id` — deliberately **not** a transport ACK. This release ships the
+full `CausalReceipts` wire frame, the pure projection kernel that mirrors
+`LazilyFormal.Receipt`, and replays the canonical
+`lazily-spec/conformance/receipts/causal_receipts.json` fixture.
+
+* **Causal receipts** (`#lzreceipts`) — `CausalReceipt` / `CausalReceipts`
+  wire types (a standalone externally-tagged frame, not an `IpcMessage`
+  variant, matching `receipts.json`) plus `ReceiptOutcome`
+  (`observed`/`accepted` non-terminal, `applied`/`rejected` terminal).
+  `to_wire()`/`from_wire()`/`encode_json()`/`decode_json()` round-trip the
+  canonical fixture byte-for-byte.
+* **`ReceiptProjection`** — the pure reducer that folds receipts into the
+  authoritative outcome for one causation id, porting
+  `LazilyFormal.Receipt.apply`: duplicate `receipt_id`s are idempotent
+  no-ops, stale-generation receipts are discarded, non-terminal receipts
+  record without conflicting, the first terminal receipt fixes the outcome,
+  and a second *different* terminal outcome fails closed (no winner). The
+  authority `current_generation` is caller-supplied; `from_receipts`
+  defaults it to the max generation seen when replaying a frame without
+  external authority.
+* **Conformance + schema coverage** — `test_conformance.py` replays the
+  `causal_receipts.json` fixture (parse, round-trip, projection assertions);
+  `test_schema_compliance.py` proves lazily-py's `to_wire()` output validates
+  against the normative `receipts.json` schema; `test_receipt_properties.py`
+  replays every named `LazilyFormal.Receipt` theorem.
+
 ## 0.14.0
 
 Full `lazily-spec` compute-layer compliance + `lazily-formal` test-suite

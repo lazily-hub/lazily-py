@@ -27,12 +27,17 @@ from pathlib import Path
 import pytest
 
 from lazily.ipc import (
+    CausalReceipt,
+    CausalReceipts,
     DeltaOp_SlotValue,
     IpcMessage,
     IpcValue_SharedBlob,
     NodeState_Opaque,
     NodeState_Payload,
     NodeState_SharedBlob,
+    ReceiptApplyResult,
+    ReceiptOutcome,
+    ReceiptProjection,
     ShmBlobArena,
 )
 
@@ -256,3 +261,157 @@ def test_fixture_round_trips(name: str) -> None:
     message = parse_wire(fixture)
     assert message.to_wire() == fixture["wire"]
     assert IpcMessage.decode_json(message.encode_json()) == message
+
+
+# ---------------------------------------------------------------------------
+# Causal receipt fixture (outcome projection — NOT a transport ACK)
+# ---------------------------------------------------------------------------
+
+
+def test_conformance_causal_receipts() -> None:
+    fixture = load_fixture("receipts/causal_receipts.json")
+    assert fixture["kind"] == "Receipt"
+    assert fixture["model"] == "CausalReceipt"
+    a = fixture["assertions"]
+
+    frame = CausalReceipts.from_wire(fixture["wire"])
+    assert len(frame.receipts) == a["receipt_count"]
+
+    # Round-trip parity: re-serializing the parsed frame yields the same wire.
+    assert frame.to_wire() == fixture["wire"]
+    assert CausalReceipts.decode_json(frame.encode_json()) == frame
+
+    # The frame is not an IpcMessage variant; it is its own externally-tagged
+    # envelope, and survives a bytes round-trip.
+    assert set(frame.to_wire().keys()) == {"CausalReceipts"}
+
+    causation = a["causation_id"]
+    groups = frame.group_by_causation()
+    assert set(groups.keys()) == {causation}
+
+    # Default authority = max generation seen among the matching receipts,
+    # which makes the older generation stale (the fixture's invariant).
+    projection = ReceiptProjection.from_receipts(causation, frame.receipts)
+    assert projection.current_generation == a["current_generation"]
+    assert projection.terminal_outcome is ReceiptOutcome.APPLIED
+    assert projection.is_terminal
+    assert not projection.in_conflict
+    assert projection.stale_receipt_ids() == a["stale_receipt_ids"]
+    assert projection.nonterminal_outcomes() == [
+        ReceiptOutcome.OBSERVED,
+        ReceiptOutcome.ACCEPTED,
+    ]
+
+    # The fixture orders receipts observed -> accepted -> applied -> stale.
+    observed, accepted, applied, stale = frame.receipts
+    assert observed.outcome is ReceiptOutcome.OBSERVED
+    assert accepted.outcome is ReceiptOutcome.ACCEPTED
+    assert applied.outcome is ReceiptOutcome.APPLIED
+    assert applied.payload_hash is not None
+    assert applied.payload_hash.startswith("sha256:")
+    assert stale.outcome is ReceiptOutcome.REJECTED
+    assert stale.generation < projection.current_generation
+
+
+def test_receipt_projection_apply_kernel_matches_formal_model() -> None:
+    """Replays LazilyFormal.Receipt.apply named theorems as concrete cases."""
+    base = CausalReceipt(
+        receipt_id="r",
+        causation_id="c",
+        observer="o",
+        generation=3,
+        outcome=ReceiptOutcome.OBSERVED,
+    )
+
+    # duplicate_receipt_noop — same receipt_id is a no-op regardless of body.
+    proj = ReceiptProjection("c", 3)
+    assert proj.apply(base) is ReceiptApplyResult.RECORDED
+    dup = CausalReceipt(
+        receipt_id="r",
+        causation_id="c",
+        observer="o",
+        generation=3,
+        outcome=ReceiptOutcome.REJECTED,
+    )
+    assert proj.apply(dup) is ReceiptApplyResult.DUPLICATE
+    assert proj.terminal_outcome is None  # duplicate did not flip state
+
+    # stale_generation_discarded — older generation is ignored.
+    proj = ReceiptProjection("c", 3)
+    stale = CausalReceipt(
+        receipt_id="r2",
+        causation_id="c",
+        observer="o",
+        generation=2,
+        outcome=ReceiptOutcome.APPLIED,
+    )
+    assert proj.apply(stale) is ReceiptApplyResult.STALE_GENERATION
+    assert proj.terminal_outcome is None
+    assert proj.stale_receipt_ids() == ["r2"]
+
+    # nonterminal_records_without_terminal_conflict.
+    proj = ReceiptProjection("c", 3)
+    nt = CausalReceipt(
+        receipt_id="r3",
+        causation_id="c",
+        observer="o",
+        generation=3,
+        outcome=ReceiptOutcome.ACCEPTED,
+    )
+    assert proj.apply(nt) is ReceiptApplyResult.RECORDED
+    assert proj.terminal_outcome is None
+
+    # first_terminal_records.
+    proj = ReceiptProjection("c", 3)
+    term = CausalReceipt(
+        receipt_id="r4",
+        causation_id="c",
+        observer="o",
+        generation=3,
+        outcome=ReceiptOutcome.APPLIED,
+    )
+    assert proj.apply(term) is ReceiptApplyResult.RECORDED
+    assert proj.terminal_outcome is ReceiptOutcome.APPLIED
+
+    # distinct_terminal_conflicts — second different terminal outcome fails closed.
+    other = CausalReceipt(
+        receipt_id="r5",
+        causation_id="c",
+        observer="o",
+        generation=3,
+        outcome=ReceiptOutcome.REJECTED,
+    )
+    assert proj.apply(other) is ReceiptApplyResult.TERMINAL_CONFLICT
+    assert proj.terminal_outcome is ReceiptOutcome.APPLIED  # unchanged
+    assert proj.in_conflict
+    assert proj.conflicting_receipt_ids() == ["r5"]
+
+
+def test_receipt_projection_same_terminal_outcome_is_idempotent() -> None:
+    """A second terminal receipt with the SAME outcome re-records without conflict."""
+    proj = ReceiptProjection("c", 1)
+    first = CausalReceipt("a", "c", "o", 1, ReceiptOutcome.APPLIED)
+    second = CausalReceipt("b", "c", "o", 1, ReceiptOutcome.APPLIED)
+    assert proj.apply(first) is ReceiptApplyResult.RECORDED
+    assert proj.apply(second) is ReceiptApplyResult.RECORDED
+    assert proj.terminal_outcome is ReceiptOutcome.APPLIED
+    assert not proj.in_conflict
+
+
+def test_receipt_projection_ignores_other_causation_ids() -> None:
+    proj = ReceiptProjection.from_receipts(
+        "c1",
+        [
+            CausalReceipt("r1", "c1", "o", 5, ReceiptOutcome.APPLIED),
+            CausalReceipt("r2", "c2", "o", 5, ReceiptOutcome.REJECTED),
+        ],
+    )
+    assert proj.terminal_outcome is ReceiptOutcome.APPLIED
+    assert proj.current_generation == 5
+
+
+def test_causal_receipts_frame_round_trips() -> None:
+    fixture = load_fixture("receipts/causal_receipts.json")
+    frame = CausalReceipts.from_wire(fixture["wire"])
+    assert frame.to_wire() == fixture["wire"]
+    assert CausalReceipts.decode_json(frame.encode_json()) == frame
