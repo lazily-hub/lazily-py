@@ -1,5 +1,45 @@
 ## Unreleased
 
+## 0.16.0
+
+Full cross-language feature coverage. Every row in the `lazily-spec` Feature
+coverage table is now `✅` for Python, each pinned by its canonical
+`lazily-spec/conformance/` fixture and a property test.
+
+* **Reactive graph completed** — sync `Effect` (`lazily.effect`: a side-effecting
+  observer that reruns on dependency change, with cleanup-before-body and
+  terminal `dispose`) plus the top-level `batch(run)` / `batch_context()`
+  boundary (`lazily.batch`: coalesces cell writes into one invalidation + effect
+  flush at the outermost boundary). `Cell` now tracks auto-discovered parents by
+  identity (fixing a `functools.partial` non-deduplication fan-out leak) and
+  routes changes through the batch-aware `notify_change` hook.
+* **Cell-model layers** — `SemTree` (memoized semantic tree: ancestor-chain-only
+  recompute + memo equality guard), `stable_id` (manufactured identity for text:
+  anchors / content hashes / word-LCS alignment), `TextCrdt` (Fugue/RGA character
+  CRDT + `#lztextsync` delta sync — `version_vector` / `delta_since` /
+  `apply_delta`), `SeqCrdt` (move-aware sequence CRDT — single-LWW-reassignment
+  moves converge without duplication).
+* **CRDT registers** (`lazily.crdt_registers`) — `LwwRegister`, `MvRegister`
+  (causal-context multi-value), `PnCounter`, and `CellCrdt` (CRDT cell that
+  propagates into the reactive `Cell` plane, PartialEq-guarded after merge).
+* **Distributed CRDT plane** (`lazily.crdt_plane`) — `CrdtPlaneRuntime`
+  anti-entropy: state-based `CrdtOp` ingress, greatest-stamp-wins per
+  `(node, key)`, `(node, stamp)` op-log dedup (idempotent redelivery), per-peer
+  stamp frontier, and the causal-stability watermark.
+* **Signaling plane** (`lazily.signaling`) — `SignalingFrame` envelope +
+  `RoomCore` room state machine implementing the anti-spoof routing invariant
+  (server-stamped `from`, self-excluding `welcome` roster, `to`/`from` never
+  both present). `open` and `allowlist` permission modes.
+* **State projection / mirror** (`lazily.projection`) — `StateMirror` projects a
+  local reactive context onto the `Snapshot`/`Delta` wire plane with the
+  value-mirror default and `PeerPermissions` omission filtering.
+* **Instrumentation / benchmarks** (`lazily.benchmarks`) — `run_benchmarks()`
+  micro-benchmarks for the reactive core, keyed reconciliation, `CellMap`,
+  `TextCrdt`, and `CrdtPlaneRuntime`; runnable as `python -m lazily.benchmarks`.
+* **Coverage table** — all Python marks `✅` (including the Reactive graph row);
+  the table is regenerated from `lazily-spec/coverage.json` via
+  `sync-coverage.mjs`.
+
 ## 0.15.0
 
 `lazily-spec` causal-receipt compliance. The receipt plane is the generic

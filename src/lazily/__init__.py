@@ -12,32 +12,42 @@ remote observers across processes and languages.
 """
 
 __all__ = [
+    "ANCHOR_PREFIX",
+    "CONTENT_PREFIX",
     "FFI_HEADER_LEN",
     "NODE_KEY_MAX_LEN",
     "NODE_KEY_MAX_SEGMENTS",
     "PROTOCOL_ID",
     "PROTOCOL_MAJOR_VERSION",
+    "ROOT",
     "SHM_BLOB_HEADER_LEN",
+    "Alignment",
     "AsyncEffect",
     "AsyncSlot",
     "BaseSlot",
+    "Benchmark",
+    "BenchmarkResult",
     "CapabilityHandshake",
     "CausalReceipt",
     "CausalReceipts",
     "Cell",
+    "CellCrdt",
     "CellFamily",
     "CellMap",
     "CellSlot",
     "CellTree",
     "ChartDef",
     "CrdtOp",
+    "CrdtPlaneRuntime",
     "CrdtSync",
     "Delta",
     "DeltaApplyStatus",
     "DeltaOp",
     "EdgeSnapshot",
+    "Effect",
     "EffectEvent",
     "EffectState",
+    "Fold",
     "IpcMessage",
     "IpcValue",
     "LazilyCallable",
@@ -45,56 +55,114 @@ __all__ = [
     "LazilyFfiMessageKind",
     "LazilyFfiStatus",
     "Level",
+    "LwwRegister",
+    "MvRegister",
     "NodeId",
     "NodeKey",
     "NodeKeyError",
     "NodeSnapshot",
     "NodeState",
+    "OpId",
     "OpKind",
     "PeerId",
     "PeerPermissions",
     "PermissionDenied",
+    "PermissionMode",
+    "PlaneEntry",
+    "PnCounter",
     "ReceiptApplyResult",
     "ReceiptOutcome",
     "ReceiptProjection",
     "ReconcileOp",
     "RemoteOp",
+    "RoomCore",
+    "RoomError",
+    "SemNode",
+    "SemTree",
+    "SeqCrdt",
+    "SeqElement",
     "ShmBlobArena",
     "ShmBlobArenaError",
     "ShmBlobRef",
     "Signal",
+    "SignalingFrame",
+    "SignalingFrameKind",
     "Slot",
     "SlotEvent",
     "SlotState",
     "Snapshot",
     "StateChart",
     "StateMachine",
+    "StateMirror",
+    "TextCrdt",
+    "TextElement",
+    "TextOp",
     "ThreadSafeContext",
     "TreeNode",
     "WireStamp",
+    "align",
+    "assign_stable_keys",
     "async_slot",
+    "batch",
+    "batch_context",
+    "benchmarks",
+    "block_key",
     "cell",
     "cell_def",
+    "content_hash",
+    "count_positive_fold",
+    "crdt_plane",
+    "crdt_registers",
     "decode_message",
+    "effect",
     "encode_message",
     "ffi",
     "ffi_bytes_of",
+    "in_batch",
     "ipc",
     "kind_of",
+    "normalize_ws",
+    "projection",
     "reconcile_ops",
+    "run_benchmarks",
+    "seqcrdt",
     "signal",
     "signal_def",
+    "signaling",
+    "similarity",
     "slot",
     "slot_def",
+    "stable_id",
+    "sum_fold",
+    "textcrdt",
     "tree",
+    "word_lcs_len",
 ]
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
-from . import async_slot, ffi, ipc, tree
+from . import (
+    async_slot,
+    benchmarks,
+    crdt_plane,
+    crdt_registers,
+    ffi,
+    ipc,
+    projection,
+    seqcrdt,
+    signaling,
+    stable_id,
+    textcrdt,
+    tree,
+)
 from .async_effect import AsyncEffect, EffectEvent, EffectState
 from .async_slot import AsyncSlot, SlotEvent, SlotState
+from .batch import batch, batch_context, in_batch
+from .benchmarks import Benchmark, BenchmarkResult, run_benchmarks
 from .cell import Cell, CellSlot, cell, cell_def
 from .collection import CellFamily, CellMap
+from .crdt_plane import CrdtPlaneRuntime, PlaneEntry
+from .crdt_registers import CellCrdt, LwwRegister, MvRegister, PnCounter
+from .effect import Effect, effect
 from .ffi import (
     FFI_HEADER_LEN,
     LazilyFfiBytes,
@@ -141,11 +209,34 @@ from .ipc import (
     Snapshot,
     WireStamp,
 )
+from .projection import StateMirror
 from .reconciliation import Level, ReconcileOp, reconcile_ops
+from .semtree import Fold, SemNode, SemTree, count_positive_fold, sum_fold
+from .seqcrdt import SeqCrdt, SeqElement
 from .signal import Signal, signal, signal_def
+from .signaling import (
+    PermissionMode,
+    RoomCore,
+    RoomError,
+    SignalingFrame,
+    SignalingFrameKind,
+)
 from .slot import BaseSlot, Slot, slot, slot_def
+from .stable_id import (
+    ANCHOR_PREFIX,
+    CONTENT_PREFIX,
+    Alignment,
+    align,
+    assign_stable_keys,
+    block_key,
+    content_hash,
+    normalize_ws,
+    similarity,
+    word_lcs_len,
+)
 from .state_machine import StateMachine
 from .statechart import ChartDef, StateChart
+from .textcrdt import ROOT, OpId, TextCrdt, TextElement, TextOp
 from .thread_safe import ThreadSafeContext
 from .tree import CellTree, TreeNode
 from .types import LazilyCallable

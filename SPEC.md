@@ -102,6 +102,69 @@ yields an equal value suppresses the downstream cascade.
   materialized value; the puller is local execution state and is never
   serialized. See **lazily-spec Compliance** below.
 
+### Effect (sync)
+
+A side-effecting observer that reruns whenever a tracked dependency invalidates.
+An optional cleanup closure returned by the body runs before each rerun and on
+dispose (cleanup-before-body ordering). Disposal is terminal.
+
+**Types:**
+
+| Type | Purpose |
+|------|---------|
+| `Effect` | Sync reactive effect (extends `Slot` for dependency tracking) |
+| `effect(body)` | Register an effect; `body(ctx) -> cleanup \| None` |
+
+**Operations:**
+
+| Property/Method | Purpose |
+|-----------------|---------|
+| `effect(ctx)` | Run (or rerun) the body, auto-tracking dependencies |
+| `effect.dispose()` | Deschedule, drop edges, run cleanup; terminal |
+| `effect.disposed` | Whether `dispose()` has been called |
+
+**Semantics:**
+
+- **Auto-tracking:** pushes itself onto `slot_stack` during the body so every
+  Cell/Slot/Signal read registers a dependency — the same mechanism as `Slot`.
+- **Cleanup-before-body:** the previous run's cleanup closure completes before
+  the next body starts.
+- **Re-entrancy guard:** an invalidation fired while the body is executing
+  schedules no extra rerun.
+- **Batch coalescing:** inside a `batch`, reruns are queued for the coalesced
+  effect flush at the outermost boundary (at most one rerun per batch).
+
+The async counterpart (`AsyncEffect`) queues reruns at the batch boundary for
+`asyncio` reactors.
+
+### Batch
+
+A top-level boundary that coalesces several cell writes into one invalidation +
+effect flush. Multiple `Cell.value = x` writes inside a `batch` defer their
+`touch()` to the outermost boundary, so a dependent reached through many changed
+cells appears at most once per batch (the coalesced-frontier invariant).
+
+**Types:**
+
+| Type | Purpose |
+|------|---------|
+| `batch(run)` | Run `run`, queuing cell writes; flush one coalesced wave at exit |
+| `batch_context()` | Context-manager form of `batch` |
+| `in_batch()` | Whether the calling thread is currently inside a `batch` |
+
+**Semantics:**
+
+- **Coalesced cell touches:** writes inside the batch set the cell value but
+  defer `touch()` to the outermost boundary; each changed cell is touched once.
+- **Coalesced effect flush:** effects queued during the invalidation pass are
+  deduplicated by identity and rerun once at the boundary.
+- **Singleton refinement:** a one-write batch is observationally identical to a
+  plain `Cell.set` (the `!=` PartialEq guard applies).
+- **Nested:** only the outermost boundary flushes.
+
+The lock-serialized counterpart that also linearizes concurrent writers lives at
+`ThreadSafeContext.batch`.
+
 ## Dependency Tracking
 
 Uses a global `slot_stack: list[Slot]` (acts as thread-local execution context).
@@ -332,6 +395,78 @@ per delta" invariant. A singleton batch refines the single-threaded `Cell.set`.
 `CrdtSync`), `LazilyFfiBytes` (`ptr`/`len`), and `encode_message` /
 `decode_message` re-encoding an `IpcMessage` to canonical JSON bytes
 byte-compatible with the Rust/Zig FFI boundaries.
+
+### Cell-model layers (`lazily.semtree` / `stable_id` / `textcrdt` / `seqcrdt`)
+
+The `lazily-spec` cell-model § "Free-text CRDT", § "Move-aware sequence order",
+§ "Memoized semantic tree", and § "Manufactured identity" layers, each pinned by
+its `conformance/collections/*.json` fixture:
+
+- **`SemTree`** — memoized semantic tree. One memo slot per node folds
+  `(node value, child derived values)`; editing one node recomputes only its
+  ancestor chain (a sibling subtree stays cached), and a node edit that does not
+  change the folded result re-runs no downstream consumer (memo equality guard).
+- **`stable_id`** — manufactured identity for text. Three layers: in-band
+  anchors (`a:<anchor>`), content-derived hashes (`c:<hash>` over
+  whitespace-normalized text), and word-LCS similarity alignment
+  (`>= 0.5` ⇒ `Edited`/key-inherited; below ⇒ `Inserted`).
+- **`TextCrdt`** — Fugue/RGA-style character CRDT. Order is pre-order DFS of the
+  origin tree, siblings sorted DESCENDING by `OpId`; merge is
+  commutative/associative/idempotent. Delta sync (`version_vector` /
+  `delta_since` / `apply_delta`) preserves every character's `OpId` so a later
+  concurrent edit merges without duplication.
+- **`SeqCrdt`** — move-aware sequence CRDT. Each element is three independent
+  LWW registers (value, position, deleted); a move is a single LWW reassignment
+  of position so concurrent moves converge to the later stamp without
+  duplication. Order is the lexicographic total order on `(frac, peer)`.
+
+### CRDT registers (`lazily.crdt_registers`)
+
+The `merge: crdt` register kinds (`protocol.md § Cell register types`):
+`LwwRegister` (last-write-wins by HLC stamp; peer id is the final tiebreak),
+`MvRegister` (multi-value — surfaces concurrent writes via a causal-context
+`observed` set), `PnCounter` (positive-negative counter; per-peer `max` merge),
+and `CellCrdt` (a CRDT cell wrapping an `LwwRegister` and propagating into the
+reactive `Cell` plane, PartialEq-guarded after merge).
+
+### Distributed CRDT plane (`lazily.crdt_plane`)
+
+`CrdtPlaneRuntime` ingests state-based `CrdtOp`s and converges to the
+greatest-stamp winner per `(node, key)` regardless of delivery order;
+op-log dedup is keyed by `(node, stamp)` so re-delivering an already-seen frame
+applies 0 new ops (state-based CvRDT idempotence). The runtime maintains the
+per-peer stamp `frontier` and the causal-stability `watermark` (the `min` over
+frontier membership) that gates tombstone GC. `to_sync()` / `delta_sync()`
+publish anti-entropy `CrdtSync` frames.
+
+### Signaling plane (`lazily.signaling`)
+
+`SignalingFrame` is the typed envelope for the WebSocket signaling protocol;
+`RoomCore` is the room state machine that implements the anti-spoof routing
+invariant — a directed frame's `from` is the sender's server-registered peer id
+(never client-supplied), the `welcome` roster excludes the joining peer's own
+id, and `to`/`from` are never both present on one frame. `open` and `allowlist`
+permission modes are supported; a concrete WebRTC backend is a platform adapter
+behind the transport seam (the portable signaling stack + in-process loopback is
+conformance-tested).
+
+### State projection / mirror (`lazily.projection`)
+
+`StateMirror` projects one local reactive context onto the `Snapshot`/`Delta`
+wire plane. The value-mirror default resolves each invalidated allowlisted slot
+at flush so the delta carries concrete `SlotValue`s; an eager `Signal` whose
+value changed publishes a `SlotValue` for its backing slot; an equal recompute
+(memo guard) suppresses both `SlotValue` and downstream invalidation. A
+`PeerPermissions` boundary omits non-readable nodes entirely from both the
+snapshot and the delta.
+
+### Instrumentation / benchmarks (`lazily.benchmarks`)
+
+`run_benchmarks()` micro-benchmarks the reactive core (cached read + invalidate
+recompute), keyed reconciliation (LIS move-minimized diff), `CellMap` insertion,
+`TextCrdt` merge, and `CrdtPlaneRuntime` idempotent apply. Each entry reports
+sample count, total elapsed, and per-op time; runnable as `python -m
+lazily.benchmarks`.
 
 ### lazily-formal integration
 
