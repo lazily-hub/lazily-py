@@ -297,6 +297,30 @@ the `lazily-rs` `ShmBlobArena<B>` and byte-compatible with the Rust and Zig
 arenas. The module exports `ShmBlobArena`, `ShmBlobArenaError` (with its variant
 subclasses), and `SHM_BLOB_HEADER_LEN`.
 
+## Benchmarks
+
+Wall-clock benchmarks live in [`BENCHMARKS.md`](BENCHMARKS.md), covering both
+the in-library micro-suite (reactive core, keyed reconciliation, `CellMap`,
+`TextCrdt`, CRDT plane) and a large spreadsheet-shaped **scale** suite that
+mirrors the lazily-rs / lazily-go `scale` groups (`N` input cells + `N` formula
+slots, `formula[i] = input[i] + input[i-1]`). The scale suite is measured up to
+a full **10,000,000-cell Google Sheets workbook** (`N = 5,000,000`); a one-cell
+edit plus a 1,000-cell viewport read stays in the ~75 µs range regardless of
+sheet size, because the lazy pull model recomputes only the ~2 formulas that
+read the edited input.
+
+```bash
+make bench          # micro-suite
+make bench-scale    # scale suite (default N = 1,000,000)
+
+# or directly, with a custom size:
+uv run python -m lazily.benchmarks
+LAZILY_SCALE_N=5000000 uv run python -m lazily.scale_bench   # 10M-cell workbook
+```
+
+See [`BENCHMARKS.md`](BENCHMARKS.md) for the full results, hardware, and honest
+notes on CPython's per-node overhead.
+
 ## The lazily family
 
 `lazily-py` is one binding in a cross-language reactive family that shares the

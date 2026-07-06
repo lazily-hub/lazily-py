@@ -1,4 +1,4 @@
-.PHONY: init build test lint format type-check clean publish-test publish
+.PHONY: init build test lint format type-check clean publish-test publish bench bench-scale
 
 # Install development dependencies and package in editable mode
 init: PY_VERSION = $(shell [ -f .python-version ] && \
@@ -42,6 +42,16 @@ type-check:
 
 # Run all checks
 check: format lint type-check test
+
+# Run the micro-benchmark suite (see BENCHMARKS.md)
+bench:
+	uv run python -m lazily.benchmarks
+
+# Run the large spreadsheet-shaped scale suite (see BENCHMARKS.md).
+# Override size/viewport with LAZILY_SCALE_N / LAZILY_SCALE_VIEWPORT, e.g.:
+#   LAZILY_SCALE_N=5000000 make bench-scale   # Google Sheets 10M-cell workbook
+bench-scale:
+	uv run python -m lazily.scale_bench
 
 # Clean build artifacts
 clean:
