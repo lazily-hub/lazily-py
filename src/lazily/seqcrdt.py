@@ -190,9 +190,7 @@ class SeqCrdt[V]:
         """A single LWW reassignment of ``elem_id``'s position to just after
         ``anchor``. Concurrent moves converge to the later stamp."""
         ordered = self._ordered_alive()
-        anchor_idx = next(
-            (i for i, e in enumerate(ordered) if e.id == anchor), None
-        )
+        anchor_idx = next((i for i, e in enumerate(ordered) if e.id == anchor), None)
         if anchor_idx is None:
             return
         anchor_pos = ordered[anchor_idx].position

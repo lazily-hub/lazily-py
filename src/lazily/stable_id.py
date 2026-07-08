@@ -199,7 +199,10 @@ def align(old: list[dict[str, Any]], new: list[dict[str, Any]]) -> Alignment:
         # Find the next unmatched old block by position; Edited if similar,
         # otherwise this new block is a genuine insert.
         oi = next(uo_iter, None)
-        if oi is not None and similarity(new[ni]["text"], old[oi]["text"]) >= EDIT_SIMILARITY_MIN:
+        if (
+            oi is not None
+            and similarity(new[ni]["text"], old[oi]["text"]) >= EDIT_SIMILARITY_MIN
+        ):
             matched_old.add(oi)
             matches[ni] = f"Edited:{oi}"
         else:

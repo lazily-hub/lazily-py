@@ -311,9 +311,8 @@ class RoomCore:
                 )
             ]
         # Allowlist mode: require an explicit grant for the directed target.
-        if (
-            self.mode is PermissionMode.ALLOWLIST
-            and not self._is_allowed(sender.peer, target_peer)
+        if self.mode is PermissionMode.ALLOWLIST and not self._is_allowed(
+            sender.peer, target_peer
         ):
             return [
                 (

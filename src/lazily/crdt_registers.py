@@ -128,9 +128,7 @@ class MvRegister[V]:
         candidates: dict[tuple[int, int, int], tuple[V, WireStamp]] = {}
         for value, stamp in [*self.entries, *other.entries]:
             candidates[_stamp_key(stamp)] = (value, stamp)
-        kept = [
-            (v, s) for k, (v, s) in candidates.items() if k not in merged_observed
-        ]
+        kept = [(v, s) for k, (v, s) in candidates.items() if k not in merged_observed]
         kept.sort(key=lambda vs: _stamp_key(vs[1]))
         self.entries = kept
         self.observed = merged_observed
@@ -189,7 +187,9 @@ class CellCrdt[V]:
     __slots__ = ("_cell", "_register")
 
     def __init__(self, ctx: dict, register: LwwRegister[V] | None = None) -> None:
-        self._register: LwwRegister[V] = register if register is not None else LwwRegister()
+        self._register: LwwRegister[V] = (
+            register if register is not None else LwwRegister()
+        )
         seed = self._register.value
         self._cell: Cell[V | None] = Cell(ctx, seed)
 

@@ -1,5 +1,38 @@
 ## Unreleased
 
+## 0.17.0
+
+Completes the two remaining `lazily-spec` feature rows for Python — the lossless
+tree CRDT and the command / RPC message plane — so every row in the
+`lazily-spec` Feature coverage table is `✅` for Python. Each is pinned by its
+canonical `lazily-spec/conformance/` fixtures and a wire-schema compliance test.
+
+* **Lossless tree CRDT** (`lazily.lossless_tree_crdt`) — `LosslessTreeCrdt`, the
+  M1 syntax-agnostic core (#lzlosstree): a single rooted concrete-syntax tree
+  whose leaves own every rendered byte (`render(tree) == source_text` for valid,
+  invalid, and unknown source). Create / tombstone / intra-parent reorder /
+  leaf-edit / split-leaf / merge-adjacent-leaves; leaf text embeds `TextCrdt`
+  wholesale; child order is a fractional index (`key_between`); the clock is a
+  Lamport `TreeOpId`.
+  * **Dotted-frontier anti-entropy** — `TreeVersionFrontier` is a dot *set*
+    (contiguous prefix + sparse holes), never a per-peer max, so a missing
+    non-contiguous op stays representable and re-requestable (`diff` /
+    `apply_update` converge through delivery gaps). UTF-8 byte-offset leaf edits
+    (`byte_to_char`), idempotent + order-tolerant apply, and the externally-tagged
+    wire codec (`tree_update_to_wire` / `tree_update_from_wire`).
+  * **Concurrent merge convergence** — `Reorder` is LWW on `sort_stamp`;
+    `Tombstone` is sticky-min; concurrent inserts in the same gap survive with
+    byte-identical sort keys; incompatible shapes both survive (text
+    preservation wins over semantic shape).
+* **Command / RPC message plane** (`lazily.command`, `command-plane-v1`) — the
+  additive sibling to `Snapshot` / `Delta` / `CrdtSync`: `CommandSubmit` /
+  `CommandCancel` / `CommandEvents` / `CommandProjection`. The pure
+  `CommandProjection` reducer folds frames + terminal `CausalReceipt` authority;
+  `CommandRpcClient` is the derived RPC facade. Terminal authority is the receipt
+  (never a transport ACK / `accepted` / `started` event); generation guards,
+  idempotency, cancel-before-terminal-only, terminal-conflict-fails-closed, and
+  reconnect equivalence all hold.
+
 ## 0.16.0
 
 Full cross-language feature coverage. Every row in the `lazily-spec` Feature

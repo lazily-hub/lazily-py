@@ -186,11 +186,22 @@ class TextCrdt:
         dup = TextCrdt(self.peer)
         dup._counter = self._counter
         dup._by_id = {
-            key: TextElement(
-                e.id, e.ch, e.origin, e.deleted, e.delete_id
-            )
+            key: TextElement(e.id, e.ch, e.origin, e.deleted, e.delete_id)
             for key, e in self._by_id.items()
         }
+        return dup
+
+    def fork(self, peer: int) -> TextCrdt:
+        """A deep copy re-owned under ``peer`` — a new minting identity.
+
+        Existing element ids are retained (their ``(counter, peer)`` survives),
+        but the owning peer changes so the *next* local op mints a fresh id
+        under ``peer``. The lossless tree's leaf-edit path forks before editing
+        so concurrent edits from different replicas mint distinct char ids and
+        merge without collision.
+        """
+        dup = self.clone()
+        dup.peer = peer
         return dup
 
     # -- local ops ------------------------------------------------------ #
@@ -288,12 +299,9 @@ class TextCrdt:
             # delete id keeps the smaller one (causally-earlier delete wins).
             if other_elem.deleted and not existing.deleted:
                 existing.deleted = True
-                if (
-                    existing.delete_id is None
-                    or (
-                        other_elem.delete_id is not None
-                        and other_elem.delete_id < existing.delete_id
-                    )
+                if existing.delete_id is None or (
+                    other_elem.delete_id is not None
+                    and other_elem.delete_id < existing.delete_id
                 ):
                     existing.delete_id = other_elem.delete_id
                 changed = True
@@ -319,9 +327,7 @@ class TextCrdt:
 
     def text(self) -> str:
         """The visible text — non-deleted elements in deterministic order."""
-        return "".join(
-            e.ch for e in self._visible_ordered() if not e.deleted
-        )
+        return "".join(e.ch for e in self._visible_ordered() if not e.deleted)
 
     def __len__(self) -> int:
         """The visible character count (tombstones excluded)."""

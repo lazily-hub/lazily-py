@@ -283,14 +283,18 @@ class _SeqReplicas:
         for st in steps:
             if "fork" in st:
                 src = self.r.get("a")
-                self.r[st["fork"]] = src.clone() if src is not None else SeqCrdt(st["peer"])
+                self.r[st["fork"]] = (
+                    src.clone() if src is not None else SeqCrdt(st["peer"])
+                )
                 self.r[st["fork"]].peer = st["peer"]
                 continue
             if "clone" in st:
                 self.r[st["clone"]] = self.r[st["from"]].clone()
                 continue
             if "merge" in st:
-                self.r[st["merge"]["into"]].merge(self.r[st["merge"]["from"]], now=st.get("now", 0))
+                self.r[st["merge"]["into"]].merge(
+                    self.r[st["merge"]["from"]], now=st.get("now", 0)
+                )
                 continue
             if "on" in st:
                 self._op(self.r[st["on"]], st)
@@ -352,11 +356,15 @@ def test_seqcrdt_convergence_conformance() -> None:
             assert interp.r[pair[0]].order() == interp.r[pair[1]].order(), sc["name"]
         for who, items in exp.get("not_contains_on", {}).items():
             for item in items:
-                assert item not in interp.r[who], f"{sc['name']}: not_contains_on {who} {item}"
+                assert item not in interp.r[who], (
+                    f"{sc['name']}: not_contains_on {who} {item}"
+                )
         if "contains_all" in exp:
             for item in exp["contains_all"]:
                 for who in len_targets:
-                    assert item in interp.r[who], f"{sc['name']}: contains {item} on {who}"
+                    assert item in interp.r[who], (
+                        f"{sc['name']}: contains {item} on {who}"
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -395,8 +403,10 @@ def test_crdt_plane_anti_entropy_conformance() -> None:
                 e
                 for e in plane.converged()
                 if e.node == want["node"]
-                and ((e.key is None and not want.get("key"))
-                     or (e.key is not None and e.key.path == want.get("key")))
+                and (
+                    (e.key is None and not want.get("key"))
+                    or (e.key is not None and e.key.path == want.get("key"))
+                )
             ]
             assert matches, f"{sc['name']}: no converged entry for node {want['node']}"
             assert matches[0].state == bytes(want["state"]["Inline"]), (

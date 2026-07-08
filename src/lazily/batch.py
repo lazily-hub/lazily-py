@@ -85,10 +85,10 @@ def batch[R](run: Callable[[], R]) -> R:
 def batch_context():
     """Context-manager form of :func:`batch`::
 
-        with batch_context():
-            name.value = "x"
-            count.value = 2
-        # one coalesced invalidation wave fires here
+    with batch_context():
+        name.value = "x"
+        count.value = 2
+    # one coalesced invalidation wave fires here
     """
     _ensure_state()
     _state.depth += 1

@@ -176,7 +176,9 @@ class StateMirror:
     def _node_snapshot(self, node: NodeId) -> NodeSnapshot:
         entry = self._nodes[node]
         if entry.payload is None:
-            return NodeSnapshot(node=node, type_tag=entry.type_tag, state=NodeState_Opaque())
+            return NodeSnapshot(
+                node=node, type_tag=entry.type_tag, state=NodeState_Opaque()
+            )
         return NodeSnapshot(
             node=node,
             type_tag=entry.type_tag,
@@ -203,7 +205,9 @@ class StateMirror:
         for node in sorted(self._pending_cell_sets):
             payload = self._pending_cell_sets[node]
             entry = self._nodes.get(node)
-            if entry is None or (entry.last_published_epoch == self._epoch and entry.payload == payload):
+            if entry is None or (
+                entry.last_published_epoch == self._epoch and entry.payload == payload
+            ):
                 continue
             ops.append(DeltaOp.cell_set(node, payload))
             entry.last_published_epoch = self._epoch

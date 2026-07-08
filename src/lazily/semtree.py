@@ -239,9 +239,14 @@ class SemTree[IdLike, V]:
 
         Fixture shape::
 
-            { "id": "root", "value": 0,
-              "children": { "order": ["a","b"], "values": {
-                  "a": { "id": "a", "value": 1, "children": {...} } } } }
+            {
+                "id": "root",
+                "value": 0,
+                "children": {
+                    "order": ["a", "b"],
+                    "values": {"a": {"id": "a", "value": 1, "children": {...}}},
+                },
+            }
         """
         obj = cls(fold=fold)
 

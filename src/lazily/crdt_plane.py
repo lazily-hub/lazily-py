@@ -60,9 +60,7 @@ class PlaneEntry:
         if self.node != node:
             return False
         return (self.key is None and key is None) or (
-            self.key is not None
-            and key is not None
-            and self.key.path == key.path
+            self.key is not None and key is not None and self.key.path == key.path
         )
 
 
@@ -118,11 +116,7 @@ class CrdtPlaneRuntime:
         if cur is None or stamp_key(op.stamp) > stamp_key(cur):
             self._frontier[producer] = op.stamp
 
-        payload = (
-            op.state.data
-            if isinstance(op.state, IpcValue_Inline)
-            else b""
-        )
+        payload = op.state.data if isinstance(op.state, IpcValue_Inline) else b""
         entry = PlaneEntry(op.node, op.key, op.stamp, payload)
         idx = self._find(op.node, op.key)
         if idx is None:
