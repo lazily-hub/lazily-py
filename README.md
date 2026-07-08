@@ -48,9 +48,9 @@ notes and platform carve-outs lives in
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Lossless tree CRDT core (`LosslessTreeCrdt`, M1) | ✅ | — | ✅ | ✅ | — | — | — |
-| Lossless tree — dotted-frontier anti-entropy | ✅ | — | ✅ | ✅ | — | — | — |
-| Lossless tree — concurrent merge convergence | ✅ | — | ✅ | ✅ | — | — | — |
+| Lossless tree CRDT core (`LosslessTreeCrdt`, M1) | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
+| Lossless tree — dotted-frontier anti-entropy | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
+| Lossless tree — concurrent merge convergence | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
 | Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ~ | ~ | ✅ | ✅ |
@@ -58,11 +58,11 @@ notes and platform carve-outs lives in
 | Distributed plane — WebRTC transport + signaling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | State projection / mirror | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Causal receipts (`CausalReceipts` outcome projection) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Message-passing + RPC command plane (`command-plane-v1`) | ✅ | — | ✅ | ✅ | — | — | — |
+| Message-passing + RPC command plane (`command-plane-v1`) | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
 | C-ABI FFI boundary | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | Permission boundary (`PeerPermissions` / `RemoteOp`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Capability negotiation (`SessionHandshake`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Instrumentation / benchmarks | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
+| Instrumentation / benchmarks | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 <!-- coverage-table:end -->
 
 ## Installation
@@ -300,6 +300,92 @@ delta — non-allowlisted nodes are omitted entirely.
 the `lazily-rs` `ShmBlobArena<B>` and byte-compatible with the Rust and Zig
 arenas. The module exports `ShmBlobArena`, `ShmBlobArenaError` (with its variant
 subclasses), and `SHM_BLOB_HEADER_LEN`.
+
+## Lossless tree CRDT — `lazily.lossless_tree_crdt`
+
+`LosslessTreeCrdt` (#lzlosstree) is a single rooted concrete-syntax tree whose
+**leaves own every rendered byte** — `render(tree) == source_text` for valid,
+invalid, and unknown source alike. Where `TextCrdt` is a flat lossless floor,
+this is the structured tree that can itself be the wire authority. Element nodes
+own structure only; all text lives in leaf nodes tagged `Token` / `Trivia` /
+`Raw` / `Error`, so unknown/invalid spans round-trip exactly as `Raw`/`Error`
+leaves rather than being discarded.
+
+```python
+from lazily import LeafKind, LosslessTreeCrdt, SeedElement, SeedLeaf
+from lazily.lossless_tree_crdt import ROOT
+
+tree = LosslessTreeCrdt(peer=1)
+heading = tree.create_node(ROOT, None, SeedElement("heading"))
+tree.create_node(heading, None, SeedLeaf(LeafKind.TOKEN, "# "))
+title = tree.create_node(heading, None, SeedLeaf(LeafKind.RAW, "Título"))
+assert tree.render() == "# Título"
+
+# Op-based delta sync: fork, diverge, converge through a dotted frontier.
+other = tree.fork(peer=2)
+other.edit_leaf(title, 0, 0, "X")
+tree.apply_update(other.diff(tree.frontier()))
+assert tree.render() == other.render()
+```
+
+Leaf text embeds `TextCrdt` wholesale; child order is a fractional index
+(`key_between`); the clock is a Lamport `TreeOpId`. Anti-entropy is op-based over
+a **dotted, non-contiguous version frontier** (`TreeVersionFrontier`) — a dot
+*set* (contiguous prefix + sparse holes), never a per-peer max, so a missing
+interior op stays representable and re-requestable. Leaf-local wire offsets are
+UTF-8 bytes (`byte_to_char`). The wire codec (`tree_update_to_wire` /
+`tree_update_from_wire`) validates against `lazily-spec`'s
+`lossless-tree-delta.json`, and all nine `conformance/lossless-tree/` fixtures
+replay.
+
+## Command / RPC message plane — `lazily.command`
+
+`command-plane-v1` is an **additive sibling** to `Snapshot` / `Delta` /
+`CrdtSync`: four evented frames (`CommandSubmit` / `CommandCancel` /
+`CommandEvents` / `CommandProjection`) that carry command traffic, not cell
+state. lazily owns the envelope; the namespace owns the `IpcValue` payload, which
+lazily never decodes.
+
+The single hard rule: **terminal authority is the causal receipt.** A command is
+terminal only when a terminal `CausalReceipt` for its `command_id` folds in
+(`applied`, or `rejected` — including the `cancelled` / `superseded` /
+`timed_out` reasons). `observed` / `accepted` / `started` events are progress
+only; a transport ACK is never terminal.
+
+```python
+from lazily import (
+    CommandPolicy, CommandRpcClient, CommandSubmit, DedupePolicy,
+    applied_receipt,
+)
+from lazily.ipc import IpcValue
+
+class Transport:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, message):
+        self.sent.append(message)
+
+client = CommandRpcClient(Transport())
+cmd_id = client.submit(CommandSubmit(
+    command_id="cmd-1", causation_id="cmd-1", source="plugin",
+    target="controller", namespace="agent-doc", name="editor_route",
+    authority_generation=1, idempotency_key="doc:run", deadline_ms=0,
+    policy=CommandPolicy(DedupePolicy.SAME_IDEMPOTENCY_KEY, False, True),
+    payload_type="agent-doc.editor_route.v1", payload_hash="sha256:…",
+    payload=IpcValue.of(b"{…}"),
+    required_features=["command-plane-v1"],
+))
+# `call` resolves ONLY on a terminal receipt — never an ACK or `accepted`.
+client.ingest_receipt(applied_receipt("rcpt-1", cmd_id, "controller", 1))
+assert client.poll_call(cmd_id).kind.value == "resolved"
+```
+
+`CommandProjection` is the pure reducer (generation guards, idempotency,
+cancel-before-terminal-only, terminal-conflict-fails-closed, reconnect
+equivalence); `CommandRpcClient` is the derived RPC facade. The wire codec
+validates against `lazily-spec`'s `message-passing.json`, and all eight
+`conformance/message-passing/` fixtures replay.
 
 ## Benchmarks
 
