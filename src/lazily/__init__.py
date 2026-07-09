@@ -90,6 +90,11 @@ __all__ = [
     "PermissionMode",
     "PlaneEntry",
     "PnCounter",
+    "QueueCell",
+    "QueuePopError",
+    "QueuePushError",
+    "QueueReaderHandles",
+    "QueueStorage",
     "ReceiptApplyResult",
     "ReceiptOutcome",
     "ReceiptProjection",
@@ -130,6 +135,7 @@ __all__ = [
     "TreeOpId",
     "TreeUpdate",
     "TreeVersionFrontier",
+    "VecDequeStorage",
     "WireStamp",
     "align",
     "applied_receipt",
@@ -159,6 +165,7 @@ __all__ = [
     "lossless_tree_crdt",
     "normalize_ws",
     "projection",
+    "queue",
     "reconcile_ops",
     "rejected_receipt",
     "run_benchmarks",
@@ -177,7 +184,7 @@ __all__ = [
     "tree_update_to_wire",
     "word_lcs_len",
 ]
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
 from . import (
     async_slot,
@@ -189,6 +196,7 @@ from . import (
     ipc,
     lossless_tree_crdt,
     projection,
+    queue,
     seqcrdt,
     signaling,
     stable_id,
@@ -293,6 +301,14 @@ from .lossless_tree_crdt import (
     tree_update_to_wire,
 )
 from .projection import StateMirror
+from .queue import (
+    QueueCell,
+    QueuePopError,
+    QueuePushError,
+    QueueReaderHandles,
+    QueueStorage,
+    VecDequeStorage,
+)
 from .reconciliation import Level, ReconcileOp, reconcile_ops
 from .semtree import Fold, SemNode, SemTree, count_positive_fold, sum_fold
 from .seqcrdt import SeqCrdt, SeqElement

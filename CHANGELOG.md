@@ -1,5 +1,35 @@
 ## Unreleased
 
+## 0.18.0
+
+Adds the **reactive queue** (`QueueCell`) — the SPSC/MPSC reactive FIFO with a
+pluggable `QueueStorage` backend — so the `lazily-spec` feature-coverage table is
+`✅` across every row for Python. Pinned by the five canonical
+`lazily-spec/conformance/collections/queuecell_*.json` fixtures and the Lean
+`LazilyFormal.QueueCell` formal model.
+
+* **Reactive queue** (`lazily.queue`) — `QueueCell`, a FIFO collection composed
+  of reactive cells (not a new cell kind). SPSC primitive with an MPSC usage
+  rule (multiple producers push inside one `batch`); no separate
+  `MPSCQueueCell` type.
+  * **Reader-kind invalidation** — the shell owns five reader-kind version cells
+    (`head` / `len` / `is_empty` / `is_full` / `closed`) and invalidates by
+    reader kind. A push to a non-empty queue does NOT invalidate the `head`
+    reader; a pop does. This independence comes for free from the Cell `!=`
+    (PartialEq) guard — after each op the shell re-derives each reader-kind cell
+    from storage, and a cell whose value did not change is not invalidated.
+  * **Pluggable storage** — the shell / storage split (`QueueStorage` protocol)
+    keeps the reactive shell storage-agnostic. The default `VecDequeStorage`
+    (unbounded deque) is the reference backend; a bounded variant
+    (`with_capacity`) exposes reactive backpressure via `is_full`.
+  * **Bounded reactive backpressure** — when the backend is bounded, `is_full`
+    is a reactive read. A consumer's pop that transitions full → not-full
+    invalidates `is_full` readers, enabling push-side effects to react to
+    capacity recovery without polling.
+  * **Closure lifecycle** — pop on closed+non-empty drains; pop on closed+empty
+    returns `Closed` (distinct from `Empty`); push on closed is an error; close
+    is idempotent and terminal.
+
 ## 0.17.0
 
 Completes the two remaining `lazily-spec` feature rows for Python — the lossless

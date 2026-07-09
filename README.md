@@ -45,7 +45,7 @@ notes and platform carve-outs lives in
 | Keyed cell collections (`CellMap` / `CellTree`) + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | — | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+| Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -232,6 +232,10 @@ from its Lean formal model in [`lazily-formal`](https://github.com/lazily-hub/la
 
 - **`CellMap` / `CellFamily` / `CellTree`** — keyed reactive collections with
   independent value/membership/order signals and atomic move.
+- **`QueueCell`** — a reactive FIFO queue (SPSC primitive with an MPSC-via-`batch`
+  usage rule) with a pluggable `QueueStorage` backend. Reader-kind invalidation
+  (head/len/is_empty/is_full/closed), bounded reactive backpressure via `is_full`,
+  and the closure lifecycle (drain / Closed-distinct-from-Empty / idempotent).
 - **`reconcile_ops`** — move-minimized keyed reconciliation (LIS kernel).
 - **`AsyncSlot` / `AsyncEffect`** — the async slot lifecycle with stale-completion
   discard, and cleanup-before-body effect scheduling.
@@ -243,6 +247,53 @@ from its Lean formal model in [`lazily-formal`](https://github.com/lazily-hub/la
 The test suite gates on `lazily-formal`'s `lake build` (every theorem checks)
 and mirrors the named Lean theorems as property tests. See `SPEC.md` for the
 full compliance surface.
+
+## Reactive queue — `lazily.queue`
+
+`QueueCell` is a FIFO collection composed of reactive cells — **not a new cell
+kind** — that adds queue semantics (push to tail, pop from head) to the reactive
+graph. It is an SPSC primitive; MPSC is a *usage rule* on the same primitive —
+multiple producers push inside one `batch`, which serializes the pushes into a
+deterministic order. The reactive shell wraps a pluggable `QueueStorage` backend
+(default `VecDequeStorage`); the shell owns the reader-kind version cells and
+invalidates by reader kind — a push to a non-empty queue does NOT invalidate the
+`head` reader, a pop does.
+
+```python
+from lazily import QueueCell, QueuePopError, batch
+
+ctx = {}
+q: QueueCell[str] = QueueCell(ctx)
+
+q.try_push("a")
+q.try_push("b")
+assert q.head() == "a"
+assert q.len() == 2
+assert q.try_pop() == "a"
+
+# Bounded queue → reactive backpressure via is_full.
+bq = QueueCell[int].with_capacity(ctx, 2)
+bq.try_push(1)
+bq.try_push(2)
+assert bq.is_full()
+assert bq.try_push(3).label == "Full"   # reject at capacity
+assert bq.try_pop() == 1
+assert not bq.is_full()                  # pop freed a slot → is_full reader invalidated
+
+# MPSC: multiple producers push inside one batch → one invalidation pass.
+batch(lambda: (q.try_push("p1"), q.try_push("p2")))
+
+# Closure: pop on closed+empty returns Closed (distinct from Empty).
+q.close()
+assert q.is_closed()
+assert q.try_push("x").label == "Closed"
+```
+
+The reader-kind independence law (a push to a non-empty queue does not change
+`head`, so the `head` reader is not invalidated) comes for free from the Cell
+`!=` (PartialEq) guard: after each op the shell re-derives each reader-kind cell
+from storage and writes it back, and a cell whose value did not change is not
+invalidated.
 
 ## IPC — the `lazily-spec` wire protocol
 
