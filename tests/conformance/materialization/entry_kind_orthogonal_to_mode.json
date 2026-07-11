@@ -1,0 +1,21 @@
+{
+  "description": "ReactiveFamily entry kind (#lzmatmode) is orthogonal to materialization mode: a family's entries are input CELLS (EntryKind.cell — always materialized, any mode) or derived SLOTS (EntryKind.slot — materialized eagerly, or lazily on first read). `spec.entries` gives each key's kind and canonical value. Under lazy, cell entries are present at build (`lazy_present_at_build`) while slot entries stay absent until read; under eager, all entries are present. Reads are mode-independent. Proved as cell_entries_materialized_in_every_mode / slot_entries_deferred_under_lazy.",
+  "kind": "ReactiveFamily",
+  "model": "ReactiveFamily",
+  "spec": {
+    "entries": {
+      "in_a": { "kind": "cell", "val": 5 },
+      "in_b": { "kind": "cell", "val": 7 },
+      "der_x": { "kind": "slot", "val": 12 },
+      "der_y": { "kind": "slot", "val": 35 }
+    }
+  },
+  "reads": ["der_x"],
+  "expected": {
+    "default_mode": "eager",
+    "observe": { "in_a": 5, "in_b": 7, "der_x": 12, "der_y": 35 },
+    "eager_present": ["in_a", "in_b", "der_x", "der_y"],
+    "lazy_present_at_build": ["in_a", "in_b"],
+    "lazy_present_after_reads": ["in_a", "in_b", "der_x"]
+  }
+}

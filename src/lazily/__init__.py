@@ -72,6 +72,7 @@ __all__ = [
     "Effect",
     "EffectEvent",
     "EffectState",
+    "EntryKind",
     "Fold",
     "InProcessBackend",
     "IpcMessage",
@@ -84,6 +85,7 @@ __all__ = [
     "Level",
     "LosslessTreeCrdt",
     "LwwRegister",
+    "MaterializationMode",
     "MvRegister",
     "NodeId",
     "NodeKey",
@@ -104,6 +106,7 @@ __all__ = [
     "QueuePushError",
     "QueueReaderHandles",
     "QueueStorage",
+    "ReactiveFamily",
     "ReceiptApplyResult",
     "ReceiptOutcome",
     "ReceiptProjection",
@@ -198,7 +201,7 @@ __all__ = [
     "tree_update_to_wire",
     "word_lcs_len",
 ]
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 
 from . import (
     async_slot,
@@ -324,6 +327,7 @@ from .queue import (
     QueueStorage,
     VecDequeStorage,
 )
+from .reactive_family import EntryKind, MaterializationMode, ReactiveFamily
 from .reconciliation import Level, ReconcileOp, reconcile_ops
 from .semtree import Fold, SemNode, SemTree, count_positive_fold, sum_fold
 from .seqcrdt import SeqCrdt, SeqElement

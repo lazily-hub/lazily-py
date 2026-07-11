@@ -1,5 +1,44 @@
 ## Unreleased
 
+## 0.20.0
+
+Adds the **`ReactiveFamily`** vehicle and its **materialization mode**
+(`#lzmatmode`) — the unified keyed reactive family of which the keyed cell
+collection (`CellFamily`) is the input-cell specialization. This flips the
+`lazily-spec` feature-coverage row *Reactive family (`ReactiveFamily`) — keyed
+cell/slot family + materialization mode* to `✅` for Python, completing Python
+parity across every coverage row. Pinned by the three shared
+`lazily-spec/conformance/materialization/*.json` fixtures and the Lean
+`LazilyFormal.Materialization` formal model.
+
+* **`ReactiveFamily`** (`lazily.reactive_family`) — maps keys `K` to per-entry
+  reactive nodes, abstracting over the entry's **handle kind** (Rust's
+  `ReactiveFamily<K, V, H>`):
+  * **Cell entries** (`EntryKind.CELL`) are input `Cell` nodes — **always
+    materialized** regardless of mode (an input has no derivation to defer).
+    `CellFamily` is this input-cell specialization.
+  * **Slot entries** (`EntryKind.SLOT`) are derived `slot` nodes — what
+    materialization mode governs.
+* **`MaterializationMode`** — an axis orthogonal to entry kind that fixes *when*
+  a derived node is allocated, never its value:
+  * **`EAGER`** (default) — every derived node is allocated at build; a read is
+    a direct node access.
+  * **`LAZY`** (opt-in) — a derived node is allocated on its **first read**
+    ("materialize on pull"), addressed by key; a never-read derived cell is
+    never allocated. Lazy is a keyed overlay on the eager core, not a second
+    engine — the first read of key `k` builds the *same* node the eager build
+    would have, then caches it.
+* **Constructors** — `ReactiveFamily.eager` / `.lazy` / `.new` (eager alias),
+  plus `.cell_family` / `.slot_family`; reads via `get` (handle) / `observe`
+  (value); present-set introspection via `is_present` / `present_keys` /
+  `present_count` / `mode` / `entry_kind`.
+* **Observational transparency** — a lazy read returns the value an eager read
+  would (`observe_canonical`); materializing one node never changes another's
+  observed value; the present set only *grows* (deferral, not de-allocation) and
+  the lazy set is a subset of the eager set; reactivity (leaving off-viewport
+  derived cells dirty) is orthogonal to materialization. Mirrors the Lean
+  `Materialization` module and `lazily-rs/src/reactive_family.rs`.
+
 ## 0.19.0
 
 Adds the **cross-process zero-copy transport** (`#lzzcpy`) — the pluggable

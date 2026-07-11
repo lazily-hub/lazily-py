@@ -1,0 +1,48 @@
+{
+  "description": "Materialization mode (#lzmatmode) memory laws: lazy materialization only *grows* the present set — a materialized node is never silently dropped (materialize_present_monotone) — and the lazy present set is a subset of the eager present set (lazy_present_subset_eager). Materializing one node never changes another's observed value (materialize_preserves_observe — no churn from allocation). After the `reads` sequence, `present_after_each_read` gives the cumulative present-set size observed after each read (monotonically non-decreasing, unchanged by re-reads), and `lazy_present_after_reads` is the final present set — a subset of `eager_present`.",
+  "kind": "ReactiveFamily",
+  "model": "ReactiveFamily",
+  "spec": {
+    "val": {
+      "1": 2,
+      "2": 4,
+      "3": 6,
+      "4": 8,
+      "5": 10
+    }
+  },
+  "reads": [
+    "2",
+    "4",
+    "2",
+    "5"
+  ],
+  "expected": {
+    "default_mode": "eager",
+    "observe": {
+      "1": 2,
+      "2": 4,
+      "3": 6,
+      "4": 8,
+      "5": 10
+    },
+    "eager_present": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5"
+    ],
+    "present_after_each_read": [
+      1,
+      2,
+      2,
+      3
+    ],
+    "lazy_present_after_reads": [
+      "2",
+      "4",
+      "5"
+    ]
+  }
+}

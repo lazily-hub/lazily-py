@@ -1,0 +1,39 @@
+{
+  "description": "Materialization mode (#lzmatmode) observational transparency: a keyed family of derived cells built eager vs. lazy MUST return identical values for every key (observe_canonical / eager_lazy_observationally_equivalent). Mode changes allocation timing and memory, never observed values. `spec.val` is each derived key's canonical value; `reads` is the sequence a lazy session pulls. The eager build materializes every key up front (eager_materializes_all); the lazy build materializes only the read keys (lazy_defers_slots). The default mode is eager (default_mode_eager).",
+  "kind": "ReactiveFamily",
+  "model": "ReactiveFamily",
+  "spec": {
+    "val": {
+      "0": 0,
+      "1": 3,
+      "2": 6,
+      "5": 15,
+      "9": 27
+    }
+  },
+  "reads": [
+    "1",
+    "5"
+  ],
+  "expected": {
+    "default_mode": "eager",
+    "observe": {
+      "0": 0,
+      "1": 3,
+      "2": 6,
+      "5": 15,
+      "9": 27
+    },
+    "eager_present": [
+      "0",
+      "1",
+      "2",
+      "5",
+      "9"
+    ],
+    "lazy_present_after_reads": [
+      "1",
+      "5"
+    ]
+  }
+}
