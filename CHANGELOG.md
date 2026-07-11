@@ -1,5 +1,40 @@
 ## Unreleased
 
+## 0.21.0
+
+Completes the **execution-context flavors** of the keyed reactive family and the
+**family-granularity sync** layer, flipping the last three `lazily-spec`
+feature-coverage rows to `✅` for Python — full parity across every row. Pinned
+by the shared `lazily-spec/conformance/familysync/*.json` fixture and the Lean
+`LazilyFormal.Materialization` (confluence), `AsyncMaterialization` (eventual
+transparency), and `FamilySync` formal models.
+
+* **`ThreadSafeReactiveFamily`** (`lazily.thread_safe_reactive_family`) — the
+  `ThreadSafeContext` analog of `ReactiveFamily`. Keys map to per-entry `Cell`
+  inputs / `slot` derived nodes whose writes are serialized through an owning
+  `ThreadSafeContext`; the present set is guarded by its own lock. Carries the
+  same eager/lazy, present-set-monotone, transparency laws **plus
+  materialization confluence** — `_materialize_key` builds the node *outside* the
+  family lock, then commits **first-writer-wins**, so a raced key keeps a single
+  stable handle and any lock-admitted order yields the same present set and
+  observed values (`materialize_present_comm` / `materialize_observe_comm`).
+* **`AsyncReactiveFamily`** (`lazily.async_reactive_family`) — the async-context
+  analog. Cell entries are always-resolved `Cell`s; derived entries are
+  `AsyncSlot`s resolved asynchronously. The transparency law weakens to
+  **eventual**: non-blocking `observe` returns `None` while pending and the
+  canonical value once resolved (`await resolve(key)` drives it), never a stale
+  value (`observe_pending_is_none` / `eventual_transparency` /
+  `async_resolved_matches_sync`). The per-key factory stays the same sync
+  callable across all three flavors.
+* **Reactive family sync (`#lzfamilysync`)** — `CrdtPlaneRuntime` gains
+  `register_family_lww` / `family_set_lww` / `family_value_lww` / `family_keys` /
+  `membership_epoch`. A keyed op for a registered family whose entry is not yet
+  known now **materializes on ingest** (membership grows, the epoch bumps, the
+  value is adopted) instead of being dropped/mis-addressed — so a keyed family
+  syncs as a unit: membership propagates, a later last-writer-wins update
+  converges, re-ingest is idempotent, and a derived aggregate (count of `true`
+  entries) converges across replicas.
+
 ## 0.20.0
 
 Adds the **`ReactiveFamily`** vehicle and its **materialization mode**

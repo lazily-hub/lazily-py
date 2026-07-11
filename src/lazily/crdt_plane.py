@@ -39,6 +39,13 @@ from dataclasses import dataclass
 from .ipc import CrdtOp, CrdtSync, IpcValue_Inline, NodeId, NodeKey, WireStamp
 
 
+# Base node id for family entries materialized on first observation
+# (``#lzfamilysync``). Family entry nodes are locally-private — keyed ops resolve
+# by key path, never by raw node id — so this only needs to avoid colliding with
+# application-assigned node ids; the runtime skips any id already in use.
+FAMILY_NODE_BASE: NodeId = 1 << 48
+
+
 def stamp_key(stamp: WireStamp) -> tuple[int, int, int]:
     """The lexicographic ``(wall_time, logical, peer)`` total order on a stamp."""
     return (stamp.wall_time, stamp.logical, stamp.peer)
@@ -81,7 +88,13 @@ class CrdtPlaneRuntime:
     __slots__ = (
         "_applied",
         "_entries",
+        "_families",
+        "_family_epoch",
+        "_family_members",
         "_frontier",
+        "_key_to_node",
+        "_local_logical",
+        "_next_family_node",
         "_self_peer",
     )
 
@@ -92,6 +105,13 @@ class CrdtPlaneRuntime:
         self._applied: set[tuple[NodeId, tuple[int, int, int]]] = set()
         # Per-peer highest observed stamp (the frontier this runtime publishes).
         self._frontier: dict[int, WireStamp] = {}
+        # -- Family sync (#lzfamilysync) --
+        self._families: set[str] = set()
+        self._family_members: dict[str, list[str]] = {}
+        self._family_epoch = 0
+        self._next_family_node: NodeId = FAMILY_NODE_BASE
+        self._key_to_node: dict[str, NodeId] = {}
+        self._local_logical = 0
 
     # -- ingest --------------------------------------------------------- #
 
@@ -109,6 +129,12 @@ class CrdtPlaneRuntime:
         if dedup_key in self._applied:
             return False
         self._applied.add(dedup_key)
+
+        # Materialize-on-ingest (#lzfamilysync): a keyed op for a registered
+        # family whose entry is not yet known materializes it (membership grows +
+        # epoch bumps) instead of being dropped/mis-addressed.
+        if op.key is not None:
+            self._materialize_family_entry(op.key.path, op.node)
 
         # Frontier advance: observe the producer peer.
         producer = op.stamp.peer
@@ -148,6 +174,83 @@ class CrdtPlaneRuntime:
             if self.apply(op):
                 applied += 1
         return applied
+
+    # -- family sync (#lzfamilysync) ------------------------------------ #
+
+    def register_family_lww(self, namespace: str) -> CrdtPlaneRuntime:
+        """Register a last-writer-wins family under ``namespace``. An inbound keyed
+        op whose first key segment matches materializes a fresh entry on ingest
+        (instead of being dropped), so membership propagates and a derived
+        aggregate over the family converges. Returns ``self`` for chaining."""
+        self._families.add(namespace)
+        self._family_members.setdefault(namespace, [])
+        return self
+
+    def membership_epoch(self) -> int:
+        """The membership signal (``#lzfamilysync``): a monotonically-increasing
+        counter bumped whenever a family entry materializes. A derived aggregate
+        over the family reads it so a remote-added key forces a recompute."""
+        return self._family_epoch
+
+    def family_keys(self, namespace: str) -> list[str]:
+        """The materialized key paths of family ``namespace``, in
+        first-materialization order. Membership only grows."""
+        return list(self._family_members.get(namespace, []))
+
+    def family_value_lww(self, namespace: str, key_suffix: str) -> bool | None:
+        """The current converged boolean value of family entry
+        ``namespace/key_suffix``, or ``None`` if not materialized."""
+        path = f"{namespace}/{key_suffix}"
+        node = self._key_to_node.get(path)
+        if node is None:
+            return None
+        for entry in self._entries:
+            if entry.node == node and entry.key is not None and entry.key.path == path:
+                return len(entry.state) > 0 and entry.state[0] != 0
+        return None
+
+    def family_set_lww(
+        self, namespace: str, key_suffix: str, value: bool, now: int
+    ) -> CrdtOp | None:
+        """Insert or update local LWW family entry ``namespace/key_suffix`` to
+        boolean ``value``, returning the :class:`CrdtOp` to broadcast (or ``None``
+        for a value-preserving update). Materializes the entry (and bumps the
+        membership epoch) on first insert."""
+        path = f"{namespace}/{key_suffix}"
+        node = self._materialize_family_entry(path, None)
+        self._local_logical += 1
+        stamp = WireStamp(
+            wall_time=now, logical=self._local_logical, peer=self._self_peer
+        )
+        op = CrdtOp.keyed(node, NodeKey.new(path), stamp, bytes([1 if value else 0]))
+        return op if self.apply(op) else None
+
+    def _materialize_family_entry(self, path: str, node: NodeId | None) -> NodeId:
+        """Ensure ``path`` is a known family member. If its namespace is a
+        registered family and the key is unseen, mint (or adopt ``node``) a
+        locally-private node, record membership, and bump the epoch. Returns the
+        node bound to ``path`` (existing binding wins — first-writer-wins)."""
+        existing = self._key_to_node.get(path)
+        if existing is not None:
+            return existing
+        namespace = path.split("/", 1)[0]
+        if namespace not in self._families:
+            # Not a family key: caller supplies the node (or a fresh one).
+            return node if node is not None else self._mint_family_node()
+        bound = node if node is not None else self._mint_family_node()
+        self._key_to_node[path] = bound
+        members = self._family_members.setdefault(namespace, [])
+        if path not in members:
+            members.append(path)
+        self._family_epoch += 1
+        return bound
+
+    def _mint_family_node(self) -> NodeId:
+        while True:
+            candidate = self._next_family_node
+            self._next_family_node += 1
+            if all(entry.node != candidate for entry in self._entries):
+                return candidate
 
     # -- convergence ---------------------------------------------------- #
 

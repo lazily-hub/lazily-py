@@ -1,0 +1,59 @@
+{
+  "description": "Reactive family-granularity sync (#lzfamilysync). A keyed op for a family entry that is NOT registered locally MATERIALIZES the entry on ingest (seeded from the op's converged register) instead of being dropped — the gap the plain CRDT plane left. This makes a keyed family sync as a unit: membership propagates (a key added on one replica appears on the other), values are adopted, a later last-writer-wins update converges, re-ingest is idempotent, and a derived aggregate over the family (a count of entries whose value is true) converges across replicas. Proved in lazily-formal FamilySync.lean (applyOp_eq_merge, applyOp_present, applyOp_absent_adopts, present_merge, applyOp_idem, aggregate_converges). Each entry is a last-writer-wins register keyed by namespace/suffix; the aggregate `count_true` models a reactive derived count (e.g. a live-editor / open-document count).",
+  "kind": "FamilySync",
+  "model": "FamilySync",
+  "namespace": "live",
+  "value_type": "bool",
+  "scenarios": [
+    {
+      "name": "materialize remote keys and converge",
+      "origin_peer": 1,
+      "target_peer": 2,
+      "origin_sets": [
+        { "key": "2", "value": true, "now": 100 },
+        { "key": "3", "value": true, "now": 101 }
+      ],
+      "expect": {
+        "target_keys": ["2", "3"],
+        "target_values": { "2": true, "3": true },
+        "target_present_count": 2,
+        "target_count_true": 2,
+        "target_epoch_bumped": true
+      }
+    },
+    {
+      "name": "last-writer-wins update converges after materialize",
+      "origin_peer": 1,
+      "target_peer": 2,
+      "origin_sets": [
+        { "key": "2", "value": true, "now": 100 },
+        { "key": "3", "value": true, "now": 101 },
+        { "key": "2", "value": false, "now": 300 }
+      ],
+      "expect": {
+        "target_keys": ["2", "3"],
+        "target_values": { "2": false, "3": true },
+        "target_present_count": 2,
+        "target_count_true": 1,
+        "target_epoch_bumped": true
+      }
+    },
+    {
+      "name": "membership only grows and re-ingest is idempotent",
+      "origin_peer": 1,
+      "target_peer": 2,
+      "origin_sets": [
+        { "key": "7", "value": true, "now": 10 }
+      ],
+      "reingest": true,
+      "expect": {
+        "target_keys": ["7"],
+        "target_values": { "7": true },
+        "target_present_count": 1,
+        "target_count_true": 1,
+        "reingest_applied": 0,
+        "target_epoch_bumped": true
+      }
+    }
+  ]
+}

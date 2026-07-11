@@ -27,6 +27,7 @@ __all__ = [
     "Alignment",
     "ArrowBackend",
     "AsyncEffect",
+    "AsyncReactiveFamily",
     "AsyncSlot",
     "BaseSlot",
     "Benchmark",
@@ -141,6 +142,7 @@ __all__ = [
     "TextElement",
     "TextOp",
     "ThreadSafeContext",
+    "ThreadSafeReactiveFamily",
     "TreeError",
     "TreeNode",
     "TreeNodeId",
@@ -153,6 +155,7 @@ __all__ = [
     "align",
     "applied_receipt",
     "assign_stable_keys",
+    "async_reactive_family",
     "async_slot",
     "batch",
     "batch_context",
@@ -196,14 +199,16 @@ __all__ = [
     "stable_id",
     "sum_fold",
     "textcrdt",
+    "thread_safe_reactive_family",
     "tree",
     "tree_update_from_wire",
     "tree_update_to_wire",
     "word_lcs_len",
 ]
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 
 from . import (
+    async_reactive_family,
     async_slot,
     benchmarks,
     command,
@@ -218,9 +223,11 @@ from . import (
     signaling,
     stable_id,
     textcrdt,
+    thread_safe_reactive_family,
     tree,
 )
 from .async_effect import AsyncEffect, EffectEvent, EffectState
+from .async_reactive_family import AsyncReactiveFamily
 from .async_slot import AsyncSlot, SlotEvent, SlotState
 from .batch import batch, batch_context, in_batch
 from .benchmarks import Benchmark, BenchmarkResult, run_benchmarks
@@ -356,6 +363,7 @@ from .state_machine import StateMachine
 from .statechart import ChartDef, StateChart
 from .textcrdt import ROOT, OpId, TextCrdt, TextElement, TextOp
 from .thread_safe import ThreadSafeContext
+from .thread_safe_reactive_family import ThreadSafeReactiveFamily
 from .transport import (
     ARROW_DEFAULT_CAPACITY,
     IN_PROCESS_DEFAULT_CAPACITY,
