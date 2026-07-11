@@ -13,20 +13,28 @@ remote observers across processes and languages.
 
 __all__ = [
     "ANCHOR_PREFIX",
+    "ARROW_DEFAULT_CAPACITY",
     "CONTENT_PREFIX",
     "FFI_HEADER_LEN",
+    "IN_PROCESS_DEFAULT_CAPACITY",
     "NODE_KEY_MAX_LEN",
     "NODE_KEY_MAX_SEGMENTS",
     "PROTOCOL_ID",
     "PROTOCOL_MAJOR_VERSION",
     "ROOT",
     "SHM_BLOB_HEADER_LEN",
+    "SHM_DEFAULT_CAPACITY",
     "Alignment",
+    "ArrowBackend",
     "AsyncEffect",
     "AsyncSlot",
     "BaseSlot",
     "Benchmark",
     "BenchmarkResult",
+    "BlobBackend",
+    "BlobBackendKind",
+    "BlobRouter",
+    "BlobView",
     "CallState",
     "CallStateKind",
     "CapabilityHandshake",
@@ -65,6 +73,7 @@ __all__ = [
     "EffectEvent",
     "EffectState",
     "Fold",
+    "InProcessBackend",
     "IpcMessage",
     "IpcValue",
     "LazilyCallable",
@@ -108,6 +117,7 @@ __all__ = [
     "SemTree",
     "SeqCrdt",
     "SeqElement",
+    "ShmBackend",
     "ShmBlobArena",
     "ShmBlobArenaError",
     "ShmBlobRef",
@@ -168,6 +178,7 @@ __all__ = [
     "queue",
     "reconcile_ops",
     "rejected_receipt",
+    "resolve_value",
     "run_benchmarks",
     "seqcrdt",
     "signal",
@@ -176,6 +187,9 @@ __all__ = [
     "similarity",
     "slot",
     "slot_def",
+    "spill_message",
+    "spill_state",
+    "spill_value",
     "stable_id",
     "sum_fold",
     "textcrdt",
@@ -184,7 +198,7 @@ __all__ = [
     "tree_update_to_wire",
     "word_lcs_len",
 ]
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 
 from . import (
     async_slot,
@@ -252,6 +266,7 @@ from .ipc import (
     PROTOCOL_ID,
     PROTOCOL_MAJOR_VERSION,
     SHM_BLOB_HEADER_LEN,
+    BlobBackendKind,
     CapabilityHandshake,
     CausalReceipt,
     CausalReceipts,
@@ -337,5 +352,20 @@ from .state_machine import StateMachine
 from .statechart import ChartDef, StateChart
 from .textcrdt import ROOT, OpId, TextCrdt, TextElement, TextOp
 from .thread_safe import ThreadSafeContext
+from .transport import (
+    ARROW_DEFAULT_CAPACITY,
+    IN_PROCESS_DEFAULT_CAPACITY,
+    SHM_DEFAULT_CAPACITY,
+    ArrowBackend,
+    BlobBackend,
+    BlobRouter,
+    BlobView,
+    InProcessBackend,
+    ShmBackend,
+    resolve_value,
+    spill_message,
+    spill_state,
+    spill_value,
+)
 from .tree import CellTree, TreeNode
 from .types import LazilyCallable

@@ -25,6 +25,7 @@ __all__ = [
     "PROTOCOL_ID",
     "PROTOCOL_MAJOR_VERSION",
     "SHM_BLOB_HEADER_LEN",
+    "BlobBackendKind",
     "CapabilityHandshake",
     "CausalReceipt",
     "CausalReceipts",
@@ -231,37 +232,105 @@ class NodeKey:
 
 
 # ---------------------------------------------------------------------------
+# Blob backend discriminator (zero-copy transport)
+# ---------------------------------------------------------------------------
+
+
+class BlobBackendKind(Enum):
+    """Which pluggable blob backend holds a :class:`ShmBlobRef` descriptor's bytes.
+
+    The receiver routes descriptor resolution by this discriminator (a ``shm``
+    descriptor never resolves in an Arrow table and vice versa). Mirrors the
+    ``lazily-rs`` ``BlobBackendKind`` enum and the ``backend`` field of the
+    ``ShmBlobRef`` schema (``lazily-spec/schemas/defs.json``,
+    ``docs/zero-copy-transport.md``, ``#lzzcpy``).
+    """
+
+    #: POSIX shared-memory region (``shm_open`` + ``mmap``) — the default
+    #: cross-process backend (same host).
+    SHM = "shm"
+    #: Apache Arrow IPC stream / Flight-resolved buffer — columnar zero-copy.
+    ARROW = "arrow"
+    #: An in-process arena (single address space — the FFI host / an editor
+    #: plugin loaded in the same process).
+    IN_PROCESS = "in_process"
+
+    @classmethod
+    def from_wire(cls, value: str) -> BlobBackendKind:
+        """Parse a backend discriminator from its wire string.
+
+        Unknown strings fall back to :attr:`SHM` (the default) so a legacy or
+        forward-compatible descriptor never hard-fails resolution.
+        """
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.SHM
+
+    def is_default(self) -> bool:
+        """Whether this is the default backend (:attr:`SHM`).
+
+        Used to omit the field on the wire so legacy descriptors round-trip.
+        """
+        return self is BlobBackendKind.SHM
+
+
+# ---------------------------------------------------------------------------
 # Shared-memory blob descriptor
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ShmBlobRef:
-    """Descriptor for a payload stored in a shared-memory blob arena."""
+    """Descriptor for a payload stored in a blob backend (zero-copy transport).
+
+    The standard fields locate and integrity-check a byte range within the
+    backend's resolved buffer; :attr:`backend` selects which pluggable backend
+    resolves it. ``backend`` is optional and defaults to
+    :attr:`BlobBackendKind.SHM`, so every legacy descriptor validates unchanged —
+    the transport is a strict superset of the pre-existing shared-memory blob
+    path (see ``docs/zero-copy-transport.md``, ``#lzzcpy``).
+
+    The arena header itself is backend-agnostic and does not store ``backend`` —
+    the discriminator is wire-level routing, not arena storage.
+    """
 
     offset: int
     len: int
     generation: int
     epoch: int
     checksum: int
+    backend: BlobBackendKind = BlobBackendKind.SHM
 
-    def to_wire(self) -> dict[str, int]:
-        return {
+    def to_wire(self) -> dict[str, int | str]:
+        wire: dict[str, int | str] = {
             "offset": self.offset,
             "len": self.len,
             "generation": self.generation,
             "epoch": self.epoch,
             "checksum": self.checksum,
         }
+        # Omit the default backend so legacy descriptors and pre-`backend`
+        # conformance fixtures round-trip byte-for-byte.
+        if not self.backend.is_default():
+            wire["backend"] = self.backend.value
+        return wire
 
     @classmethod
     def from_wire(cls, d: dict[str, Any]) -> ShmBlobRef:
+        raw_backend = d.get("backend")
+        backend = (
+            BlobBackendKind.from_wire(raw_backend)
+            if raw_backend is not None
+            else BlobBackendKind.SHM
+        )
         return cls(
             offset=d["offset"],
             len=d["len"],
             generation=d["generation"],
             epoch=d["epoch"],
             checksum=d["checksum"],
+            backend=backend,
         )
 
 
@@ -522,6 +591,9 @@ class ShmBlobArena:
             raise ShmBlobDescriptorOutOfBounds(offset, length, capacity)
 
         header = _read_blob_header(self._buffer, offset)
+        # The arena header does not store `backend`; align it to the descriptor
+        # so a non-Shm descriptor validates against the backend-agnostic header.
+        header = replace(header, backend=descriptor.backend)
         if header != descriptor:
             raise ShmBlobDescriptorMismatch(_blob_mismatch_field(header, descriptor))
 
@@ -586,7 +658,7 @@ class NodeState_SharedBlob(NodeState):
 
     blob: ShmBlobRef
 
-    def to_wire(self) -> dict[str, dict[str, int]]:
+    def to_wire(self) -> dict[str, dict[str, int | str]]:
         return {"SharedBlob": self.blob.to_wire()}
 
 
@@ -648,7 +720,7 @@ class IpcValue_SharedBlob(IpcValue):
 
     blob: ShmBlobRef
 
-    def to_wire(self) -> dict[str, dict[str, int]]:
+    def to_wire(self) -> dict[str, dict[str, int | str]]:
         return {"SharedBlob": self.blob.to_wire()}
 
 

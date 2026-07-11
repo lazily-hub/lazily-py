@@ -1,5 +1,44 @@
 ## Unreleased
 
+## 0.19.0
+
+Adds the **cross-process zero-copy transport** (`#lzzcpy`) — the pluggable
+blob-backend adapter seam so large `Snapshot` / `Delta` / `CrdtSync` payloads
+cross the IPC plane as small **descriptors** instead of being copied through the
+wire codec. This flips the `lazily-spec` feature-coverage row *Cross-process
+zero-copy transport (`BlobBackend` / shm / arrow)* to `✅` for Python. Pinned by
+the shared `lazily-spec/conformance/delta_zero_copy_arrow.json` fixture and the
+Lean `LazilyFormal.ZeroCopyTransport` formal model.
+
+* **Pluggable blob backends** (`lazily.transport`) — the `BlobBackend` adapter
+  seam: a backend *mints* a descriptor via `write(bytes)` and *resolves* it
+  zero-copy via `read_view(descriptor)`. Three backends ship:
+  * **`InProcessBackend`** — wraps `ShmBlobArena` for the single-address-space
+    case (the FFI host / an editor plugin loaded in the same process).
+  * **`ArrowBackend`** — holds Apache Arrow IPC-stream bytes; the descriptor's
+    bytes *are* an Arrow IPC stream a columnar consumer imports zero-copy (bring
+    your own `pyarrow` around the resolved `memoryview`).
+  * **`ShmBackend`** — a named POSIX shared-memory region (via
+    `multiprocessing.shared_memory`, `shm_open` + `mmap`) resolvable across
+    processes on the same host: a second handle opened by name resolves a
+    descriptor minted by the creator with no copy.
+* **`backend` discriminator** — `ShmBlobRef` gains an optional `backend` field
+  (`BlobBackendKind`: `shm` / `arrow` / `in_process`). It defaults to `shm` and
+  is omitted on the wire when default, so every legacy descriptor validates and
+  round-trips unchanged — the transport is a strict superset of the pre-existing
+  shared-memory blob path. A receiver routes resolution by `backend`, so a `shm`
+  descriptor never resolves in an Arrow table and vice versa.
+* **Spill policy + `BlobRouter`** — `spill_message` replaces `Inline` /
+  `Payload` payloads above a session-defined threshold with a `SharedBlob`
+  descriptor across every message payload site (Snapshot node states, Delta
+  `CellSet` / `SlotValue` / `NodeAdd`, `CrdtSync` op states); sub-threshold
+  payloads stay inline. `BlobRouter` is the receiver-side multi-backend resolver
+  that routes a descriptor to the matching backend by its `backend` kind.
+* **Backend-agnostic guarantees** — the spill-then-resolve identity, backend
+  isolation, ABA generation safety, and checksum-integrity laws hold uniformly
+  for every backend that satisfies the contract (they are stated only over a
+  backend's issued-blob table), mirroring the Lean `ZeroCopyTransport` model.
+
 ## 0.18.0
 
 Adds the **reactive queue** (`QueueCell`) — the SPSC/MPSC reactive FIFO with a

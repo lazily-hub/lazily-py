@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from lazily.ipc import (
+    BlobBackendKind,
     CausalReceipt,
     CausalReceipts,
     DeltaOp_SlotValue,
@@ -203,7 +204,32 @@ def test_conformance_delta_shared_blob() -> None:
     assert op.payload.blob.offset == 40
     assert op.payload.blob.len == 17
     assert op.payload.blob.epoch == 9
+    # A `backend`-absent descriptor defaults to shm (backward compatibility).
+    assert op.payload.blob.backend is BlobBackendKind.SHM
 
+    assert_round_trip_json(message, fixture)
+
+
+def test_conformance_delta_zero_copy_arrow() -> None:
+    # Zero-copy transport (#lzzcpy): the SharedBlob descriptor carries the
+    # optional `backend` discriminator selecting a pluggable backend.
+    fixture = load_fixture("delta_zero_copy_arrow.json")
+    assert fixture["kind"] == "Delta"
+    a = fixture["assertions"]
+
+    message = parse_wire(fixture)
+    delta = message.delta
+    assert delta.base_epoch == a["base_epoch"]
+    assert delta.epoch == a["epoch"]
+    assert len(delta.ops) == a["op_count"]
+
+    op = delta.ops[0]
+    assert isinstance(op, DeltaOp_SlotValue)
+    assert isinstance(op.payload, IpcValue_SharedBlob)
+    assert op.payload.blob.backend is BlobBackendKind.ARROW
+    assert op.payload.blob.backend.value == a["first_op_payload_backend"]
+
+    # The `backend` discriminator survives a JSON round-trip byte-for-byte.
     assert_round_trip_json(message, fixture)
 
 
@@ -254,6 +280,7 @@ def test_conformance_arena_blob() -> None:
         "delta_sequential.json",
         "delta_non_sequential.json",
         "delta_shared_blob.json",
+        "delta_zero_copy_arrow.json",
     ],
 )
 def test_fixture_round_trips(name: str) -> None:

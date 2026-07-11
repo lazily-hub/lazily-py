@@ -1,0 +1,36 @@
+{
+  "description": "Zero-copy transport: Delta with a SlotValue payload spilled to an Apache Arrow blob backend. The SharedBlob descriptor carries backend='arrow', selecting the pluggable backend the receiver resolves zero-copy (vs the default 'shm'). Validates the optional `backend` discriminator added to ShmBlobRef (#lzzcpy).",
+  "protocol_version": 1,
+  "kind": "Delta",
+  "assertions": {
+    "base_epoch": 8,
+    "epoch": 9,
+    "op_count": 1,
+    "first_op_kind": "SlotValue",
+    "first_op_payload_kind": "SharedBlob",
+    "first_op_payload_backend": "arrow"
+  },
+  "wire": {
+    "Delta": {
+      "base_epoch": 8,
+      "epoch": 9,
+      "ops": [
+        {
+          "SlotValue": {
+            "node": 7,
+            "payload": {
+              "SharedBlob": {
+                "offset": 40,
+                "len": 17,
+                "generation": 2,
+                "epoch": 9,
+                "checksum": 987654321,
+                "backend": "arrow"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
