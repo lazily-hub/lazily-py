@@ -1,13 +1,14 @@
-"""Keyed reactive collections — CellMap / CellFamily independence laws.
+"""Keyed reactive collections — ``CellMap`` / ``SlotMap`` independence laws
+(``#reactivemap``).
 
 The Python counterpart of the Lean ``LazilyFormal.Collection`` formal model in
 ``lazily-formal``. Each test mirrors a named theorem (the three independent
-reactive signals + atomic-move identity preservation + per-key memoization).
+reactive signals + atomic-move identity preservation + per-key mint identity).
 """
 
 from __future__ import annotations
 
-from lazily import CellFamily, CellMap, slot
+from lazily import CellMap, SlotMap, slot
 
 
 # =================================================================================
@@ -20,12 +21,12 @@ from lazily import CellFamily, CellMap, slot
 def test_set_entry_value_preserves_membership_and_order() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
-    cm.insert("a", 1)
-    cm.insert("b", 2)
+    cm.entry("a", 1)
+    cm.entry("b", 2)
     m_before = cm.membership_signal.value
     o_before = cm.order_signal.value
 
-    cm.set_value("a", 99)
+    cm.set("a", 99)
 
     assert cm.membership_signal.value == m_before  # membership unchanged
     assert cm.order_signal.value == o_before  # order unchanged
@@ -35,9 +36,9 @@ def test_set_entry_value_preserves_membership_and_order() -> None:
 def test_set_entry_value_preserves_siblings() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
-    cm.insert("a", 1)
-    cm.insert("b", 2)
-    cm.set_value("a", 99)
+    cm.entry("a", 1)
+    cm.entry("b", 2)
+    cm.set("a", 99)
     assert cm.get("b") == 2  # sibling untouched
 
 
@@ -51,9 +52,9 @@ def test_set_entry_value_preserves_siblings() -> None:
 def test_move_to_preserves_membership_and_values() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
-    cm.insert("a", 1)
-    cm.insert("b", 2)
-    cm.insert("c", 3)
+    cm.entry("a", 1)
+    cm.entry("b", 2)
+    cm.entry("c", 3)
     m_before = cm.membership_signal.value
 
     cm.move_to("a", 2)  # [a,b,c] -> [b,c,a]
@@ -68,8 +69,8 @@ def test_move_to_preserves_membership_and_values() -> None:
 def test_move_to_advances_order_signal_only() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
-    cm.insert("a", 1)
-    cm.insert("b", 2)
+    cm.entry("a", 1)
+    cm.entry("b", 2)
     m_before = cm.membership_signal.value
     o_before = cm.order_signal.value
 
@@ -83,7 +84,7 @@ def test_move_before_and_move_after() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
     for k, v in [("a", 1), ("b", 2), ("c", 3), ("d", 4)]:
-        cm.insert(k, v)
+        cm.entry(k, v)
     cm.move_before("d", "b")  # [a,b,c,d] -> [a,d,b,c]
     assert cm.keys() == ["a", "d", "b", "c"]
     cm.move_after("a", "c")  # [a,d,b,c] -> [d,b,c,a]
@@ -98,26 +99,27 @@ def test_move_before_and_move_after() -> None:
 def test_add_key_advances_membership_and_order() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
-    cm.insert("a", 1)
+    cm.entry("a", 1)
     m0, o0 = cm.membership_signal.value, cm.order_signal.value
-    cm.insert("b", 2)
+    cm.entry("b", 2)
     assert cm.membership_signal.value == m0 + 1
     assert cm.order_signal.value == o0 + 1
-    # Idempotent: re-inserting a member is a no-op.
-    cm.insert("a", 99)
-    assert cm.get("a") == 1  # unchanged — insert of existing member is a no-op
+    # Idempotent: re-`entry`-ing a member is a no-op (default ignored).
+    cm.entry("a", 99)
+    assert cm.get("a") == 1  # unchanged — entry of existing member is a no-op
 
 
 def test_remove_key_advances_signals() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
-    cm.insert("a", 1)
-    cm.insert("b", 2)
+    cm.entry("a", 1)
+    cm.entry("b", 2)
     m0, o0 = cm.membership_signal.value, cm.order_signal.value
-    cm.remove("a")
+    assert cm.remove("a")
     assert "a" not in cm
     assert cm.membership_signal.value == m0 + 1
     assert cm.order_signal.value == o0 + 1
+    assert cm.remove("a") is False  # no-op on absent key
 
 
 # =================================================================================
@@ -128,8 +130,8 @@ def test_remove_key_advances_signals() -> None:
 def test_len_reader_not_invalidated_by_move() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
-    cm.insert("a", 1)
-    cm.insert("b", 2)
+    cm.entry("a", 1)
+    cm.entry("b", 2)
 
     @slot
     def length(_ctx: dict) -> int:
@@ -148,23 +150,37 @@ def test_len_reader_not_invalidated_by_move() -> None:
     cm.move_to("a", 1)  # pure reorder — membership unchanged
     assert watch(ctx) == 2
     assert runs[0] == 1  # len reader NOT invalidated by the move
-    cm.insert("c", 3)  # membership change
+    cm.entry("c", 3)  # membership change
     assert watch(ctx) == 3
     assert runs[0] == 2  # invalidated by the add
 
 
 # =================================================================================
-# Family.get_idempotent_after_first — per-key identity stability.
+# get_or_insert_with / entry — per-key mint identity stability.
 # =================================================================================
 
 
-def test_cell_family_get_idempotent_after_first() -> None:
+def test_cell_map_entry_idempotent_after_first() -> None:
     ctx: dict = {}
     cm = CellMap[str, int](ctx)
-    fam = CellFamily(cm)
-    c1 = fam.get("x", 1)
-    c2 = fam.get("x", 1)  # second request -> same cell
+    c1 = cm.entry("x", 1)
+    c2 = cm.entry("x", 1)  # second request -> same cell
     assert c1 is c2
-    assert fam.is_minted("x")
-    c3 = fam.get("y", 2)
+    assert cm.is_present("x")
+    c3 = cm.entry("y", 2)
     assert c3 is not c1
+
+
+def test_slot_map_get_or_insert_with_mints_once() -> None:
+    ctx: dict = {}
+    sm = SlotMap[str, int](ctx)
+    calls = [0]
+
+    def factory(k: str) -> int:
+        calls[0] += 1
+        return len(k)
+
+    assert sm.get_or_insert_with("abc", factory) == 3
+    assert sm.get_or_insert_with("abc", factory) == 3  # cached: factory not re-run
+    assert calls[0] == 1
+    assert sm.handle("abc") is sm.handle("abc")  # identity-stable handle

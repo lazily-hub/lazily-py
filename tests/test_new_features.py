@@ -348,7 +348,7 @@ def test_benchmarks_run_and_report() -> None:
 def test_cellmap_atomic_move_preserves_identity() -> None:
     ctx: dict = {}
     cmap = CellMap[int, int](ctx)
-    cmap.insert(1, 10)
+    cmap.entry(1, 10)
     cell_before = cmap.value_cell(1)
     cmap.move_to(1, 0)
     assert cmap.value_cell(1) is cell_before  # identity preserved

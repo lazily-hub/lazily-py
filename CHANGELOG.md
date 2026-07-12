@@ -1,5 +1,32 @@
 ## Unreleased
 
+## 0.22.0
+
+Unifies the keyed collections on **one** generic primitive `ReactiveMap[K, V, H]`
+over a handle-kind seam (`#reactivemap`), mirroring lazily-spec v0.27.0 and the
+`lazily-rs` reference. Two specializations are the concrete types a caller uses:
+
+* **`ReactiveMap`** — the generic keyed reactive collection: reactive
+  membership + order signals, `get_or_insert_with` (mint-on-access), `remove`,
+  and atomic `move_to`/`move_before`/`move_after`.
+* **`CellMap`** = `ReactiveMap` over the cell handle — adds cell-only `set` and
+  eager value-minting (`entry` / `entry_with`).
+* **`SlotMap`** = `ReactiveMap` over the slot handle — `get_or_insert_with` mints
+  a derived slot on first access (lazy materialization); `materialize_all`
+  pre-mints the keyset (eager). A slot's value is derived, so `SlotMap` has **no
+  `set`**. There is no eager/lazy mode flag — eager is a pre-mint loop, lazy is
+  mint-on-access.
+* Execution-context flavors follow the same shape: `ThreadSafeReactiveMap` /
+  `ThreadSafeCellMap` / `ThreadSafeSlotMap` (materialization confluence) and
+  `AsyncReactiveMap` / `AsyncCellMap` / `AsyncSlotMap` (eventual transparency).
+
+**BREAKING**: removes `ReactiveFamily`, `CellFamily`, `MaterializationMode` (and
+its `.mode()` accessor), and the `*ReactiveFamily` types; the `FamilyHandle` seam
+is renamed `MapHandle`. Behavior is unchanged — the three materialization
+conformance suites (sync/thread-safe/async) pass against the same lazily-spec
+fixtures (now `"model": "SlotMap"`). `CellMap` mutation is now `entry`/`set`
+(was `insert`/`set_value`). `EntryKind` is retained.
+
 ## 0.21.0
 
 Completes the **execution-context flavors** of the keyed reactive family and the

@@ -1,67 +1,178 @@
-"""Keyed reactive collections — ``CellMap`` and ``CellFamily``.
+"""Keyed reactive collections: the generic ``ReactiveMap`` and its ``CellMap`` /
+``SlotMap`` specializations (``#reactivemap``).
 
-The Python counterpart of the Lean ``LazilyFormal.Collection`` formal model in
-``lazily-formal`` and ``lazily-spec/cell-model.md`` § "Keyed cell collections".
-A ``CellMap`` is a hash collection whose **membership is itself reactive**, with
-one independently-tracked value cell per entry; ``CellFamily`` layers a value
-factory on top that lazily mints and caches one cell per key.
+The Python counterpart of ``lazily-rs/src/cell_family.rs``, the Lean
+``LazilyFormal.Collection`` / ``Materialization`` formal models in
+``lazily-formal``, and ``lazily-spec/cell-model.md`` § "Keyed cell collections".
+
+There is **one** keyed primitive, generic over the entry's **handle kind**
+(the axis Rust expresses as ``ReactiveMap<K, V, H>`` over the ``MapHandle``
+trait); the two specializations a binding exposes are the concrete types:
+
+- **:class:`CellMap` = ``ReactiveMap`` over the cell handle** — **input-cell**
+  entries. Adds cell-only :meth:`CellMap.set` (an input is settable) and eager
+  value-minting (:meth:`CellMap.entry` / :meth:`CellMap.entry_with`).
+- **:class:`SlotMap` = ``ReactiveMap`` over the slot handle** — **derived-slot**
+  entries. :meth:`ReactiveMap.get_or_insert_with` mints a slot on first access
+  (**lazy materialization**); :meth:`SlotMap.materialize_all` pre-mints the
+  keyset (**eager**). A slot's value is derived, so ``SlotMap`` has **no
+  ``set``**. There is **no eager/lazy mode flag** — eager is a pre-mint loop,
+  lazy is mint-on-access.
+
+The shared surface — ``get_or_insert_with`` / ``remove`` / ``move_*`` /
+membership / order / ``keys`` / ``len`` / ``contains`` — lives on the generic
+:class:`ReactiveMap`. ``set`` and eager value-minting are the ``CellMap``-only
+specialization; the pre-mint eager helper is the ``SlotMap``-only specialization.
 
 Three independent reactive signals are exposed, mirroring ``lazily-rs``'s
 ``membership`` and ``order_signal`` cells:
 
-- **per-entry value** — one ``Cell[V]`` per key (read via :meth:`CellMap.value_cell`);
-- **set-membership** — :meth:`CellMap.membership_signal` (a ``Cell[int]`` bumped
-  on add/remove only; ``len``/``contains`` readers subscribe here);
-- **order** — :meth:`CellMap.order_signal` (a ``Cell[int]`` bumped on add/remove
-  *and* on move; ``keys`` readers subscribe here).
+- **per-entry value** — one reactive node per key (read via :meth:`ReactiveMap.get`);
+- **set-membership** — :meth:`ReactiveMap.membership_signal` (bumped on add/remove
+  only; ``len``/``contains`` readers subscribe here);
+- **order** — :meth:`ReactiveMap.order_signal` (bumped on add/remove *and* on move;
+  ``keys`` readers subscribe here).
 
 The independence laws fixed by the formal model are observable here: a pure
-reorder (:meth:`CellMap.move_to`) bumps the order signal only — membership and
-every entry's value cell are untouched, so a ``len``/``contains`` reader is not
-invalidated (the wire-level "a pure reorder MUST NOT invalidate
-set-membership readers" invariant). An atomic move keeps each entry's cell
-identity (not remove + re-mint).
+reorder (:meth:`ReactiveMap.move_to`) bumps the order signal only — membership and
+every entry's value node are untouched, so a ``len``/``contains`` reader is not
+invalidated. An atomic move keeps each entry's handle identity (not remove +
+re-mint).
 """
 
 from __future__ import annotations
 
-
-__all__ = ["CellFamily", "CellMap"]
-
+from abc import ABC, abstractmethod
+from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
 from .cell import Cell
+from .slot import slot
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
+
+__all__ = ["CellMap", "EntryKind", "MapHandle", "ReactiveMap", "SlotMap"]
 
 K = TypeVar("K")
 V = TypeVar("V")
 
+#: A map entry's reactive handle: an input :class:`Cell` or a derived :class:`slot`.
+type MapHandle = Cell | slot
 
-class CellMap[K, V]:
-    """A keyed reactive collection — ``CellMap<K, V>``.
 
-    Membership is reactive: reading :meth:`len` or :meth:`contains` inside a
-    Slot/Signal subscribes to the membership signal; reading :meth:`keys`
-    subscribes to the order signal; reading one entry's value subscribes to
-    that entry's value cell alone. Editing one entry's value invalidates only
-    that entry's readers — never a sibling or a membership/order reader.
+class EntryKind(Enum):
+    """Which kind of reactive node a :class:`ReactiveMap` entry is — the
+    handle-kind axis the map abstracts over.
 
-    Mirrors ``lazily-rs/src/cell_family.rs`` and the Lean
-    ``LazilyFormal.Collection`` model.
+    Mirrors ``EntryKind`` in ``lazily-rs`` and ``lazily-formal``.
     """
 
-    __slots__ = ("_membership_signal", "_order", "_order_signal", "_value_cells", "ctx")
+    #: An **input** cell (:class:`Cell`) — always materialized on read.
+    CELL = "cell"
+    #: A **derived** slot (:class:`slot`) — materialized eagerly (pre-mint) or
+    #: lazily on first read.
+    SLOT = "slot"
+
+
+# ---------------------------------------------------------------------------
+# Sealed handle-kind seam (cell | slot only — bindings add no kinds)
+# ---------------------------------------------------------------------------
+
+
+class _HandleKind(ABC):
+    """The entry-handle axis a :class:`ReactiveMap` abstracts over. Sealed: only
+    :class:`_CellHandleKind` (input cells) and :class:`_SlotHandleKind` (derived
+    slots) — the two node kinds of the cell model — implement it, so a binding
+    does not add new kinds (mirrors Rust's sealed ``MapHandle`` trait)."""
+
+    KIND: EntryKind
+
+    @abstractmethod
+    def materialize(self, ctx: dict, compute: Callable[[], V]) -> MapHandle:
+        """Allocate the node for one entry in ``ctx``, with ``compute``
+        producing its canonical value. An input cell sets the value directly; a
+        derived slot wraps ``compute`` as its recomputation."""
+
+    @abstractmethod
+    def observe(self, ctx: dict, handle: MapHandle) -> V:
+        """Read the entry's value through ``ctx`` (subscribes the running
+        Slot/Effect, as any cell/slot read does)."""
+
+
+class _CellHandleKind(_HandleKind):
+    KIND = EntryKind.CELL
+
+    def materialize(self, ctx: dict, compute: Callable[[], V]) -> MapHandle:
+        # An input has no derivation: materialize by setting its value directly.
+        return Cell(ctx, compute())
+
+    def observe(self, ctx: dict, handle: MapHandle) -> V:
+        return handle.value  # type: ignore[union-attr]
+
+
+class _SlotHandleKind(_HandleKind):
+    KIND = EntryKind.SLOT
+
+    def materialize(self, ctx: dict, compute: Callable[[], V]) -> MapHandle:
+        # A derived node: the same node an eager pre-mint would allocate.
+        return slot(lambda _ctx: compute())
+
+    def observe(self, ctx: dict, handle: MapHandle) -> V:
+        return handle(ctx)  # type: ignore[operator]
+
+
+_CELL_HANDLE = _CellHandleKind()
+_SLOT_HANDLE = _SlotHandleKind()
+
+
+class ReactiveMap[K, V]:
+    """A keyed reactive collection generic over the entry handle kind: a hash map
+    of ``K -> handle`` with reactive membership and independently-tracked
+    per-entry nodes (``#reactivemap``).
+
+    Membership is reactive: reading :meth:`len` / ``len(map)`` or
+    :meth:`contains_key` / ``key in map`` inside a Slot/Signal subscribes to the
+    membership signal; reading :meth:`keys` subscribes to the order signal;
+    reading one entry's value subscribes to that entry's node alone. Editing one
+    entry's value invalidates only that entry's readers — never a sibling or a
+    membership/order reader.
+
+    Operations run against the owning ``ctx`` dict, like the rest of ``lazily``.
+    The two specializations a binding exposes are :class:`CellMap` (input cells)
+    and :class:`SlotMap` (derived slots). See the module docs.
+
+    Mirrors ``lazily-rs/src/cell_family.rs``'s ``ReactiveMap<K, V, H>``.
+    """
+
+    #: The entry handle kind — set by the :class:`CellMap` / :class:`SlotMap`
+    #: specialization. The generic base defaults to the cell handle.
+    _HANDLE: _HandleKind = _CELL_HANDLE
+
+    __slots__ = (
+        "_entries",
+        "_membership_signal",
+        "_order",
+        "_order_signal",
+        "_order_version",
+        "_version",
+        "ctx",
+    )
 
     def __init__(self, ctx: dict) -> None:
         self.ctx = ctx
-        self._value_cells: dict[K, Cell[V]] = {}
+        self._entries: dict[K, MapHandle] = {}
         self._order: list[K] = []
+        # Reactive membership (add/remove) and order (add/remove + move) signals.
         self._membership_signal: Cell[int] = Cell(ctx, 0)
         self._order_signal: Cell[int] = Cell(ctx, 0)
+        # Untracked mirrors so a mutator bumps the reactive cell without reading
+        # its `.value` (which would register a spurious dependency when a mint
+        # happens inside a running computation).
+        self._version = 0
+        self._order_version = 0
 
     # -- signals -------------------------------------------------------- #
 
@@ -77,128 +188,236 @@ class CellMap[K, V]:
 
     @property
     def order(self) -> list[K]:
-        """The authoritative insertion-ordered key list."""
+        """The authoritative insertion-ordered key list (non-reactive)."""
         return list(self._order)
 
-    # -- reads ---------------------------------------------------------- #
+    @property
+    def entry_kind(self) -> EntryKind:
+        """This map's entry kind (:attr:`EntryKind.CELL` for a :class:`CellMap`,
+        :attr:`EntryKind.SLOT` for a :class:`SlotMap`)."""
+        return self._HANDLE.KIND
 
-    def __len__(self) -> int:
-        # Touch the membership signal so a len() reader is invalidated on
-        # add/remove but NOT on a pure reorder (move_to).
-        _ = self._membership_signal.value
-        return len(self._order)
+    # -- internals ------------------------------------------------------ #
 
-    def __contains__(self, key: object) -> bool:
-        _ = self._membership_signal.value
-        return key in self._value_cells
+    def _bump_order(self) -> None:
+        # A pure move bumps only this; add/remove bump it via _bump_membership.
+        self._order_version += 1
+        self._order_signal.set(self._order_version)
+
+    def _bump_membership(self) -> None:
+        # Invalidate len/contains readers; the key set changed so order did too.
+        self._version += 1
+        self._membership_signal.set(self._version)
+        self._bump_order()
+
+    def _mint_with(self, key: K, compute: Callable[[], V]) -> MapHandle:
+        """Mint the entry node for ``key`` on first access, caching the handle
+        and bumping reactive membership. Re-minting an existing key returns the
+        cached handle."""
+        handle = self._entries.get(key)
+        if handle is not None:
+            return handle  # warm: already allocated.
+        handle = self._HANDLE.materialize(self.ctx, compute)
+        self._entries[key] = handle
+        self._order.append(key)
+        self._bump_membership()
+        return handle
+
+    # -- reads / mint-on-access ----------------------------------------- #
+
+    def get_or_insert_with(self, key: K, factory: Callable[[K], V]) -> V:
+        """Get the value at ``key``, minting the entry via ``factory(key)`` first
+        if absent — the mint-on-access recipe. For a :class:`SlotMap` this is the
+        **lazy materialization** pull; for a :class:`CellMap` it seeds an input
+        cell. Bumps reactive membership only on insert; an existing key returns
+        its current value without re-running the factory."""
+        handle = self._entries.get(key)
+        if handle is not None:
+            return self._HANDLE.observe(self.ctx, handle)
+        handle = self._mint_with(key, lambda: factory(key))
+        return self._HANDLE.observe(self.ctx, handle)
+
+    def handle(self, key: K) -> MapHandle | None:
+        """Return the existing entry handle for ``key``, or ``None``.
+        Non-reactive: does not subscribe the caller to membership."""
+        return self._entries.get(key)
+
+    #: Alias for :meth:`handle` (the entry's value node).
+    value_cell = handle
+
+    def get(self, key: K) -> V | None:
+        """Read the value at ``key`` if present, else ``None``. Reactive on that
+        entry only (a reader is invalidated when this entry changes, not when a
+        sibling changes)."""
+        handle = self._entries.get(key)
+        if handle is None:
+            return None
+        return self._HANDLE.observe(self.ctx, handle)
+
+    def remove(self, key: K) -> bool:
+        """Remove ``key``'s entry. Bumps reactive membership. Returns whether the
+        key was present. (No-op if ``key`` is not a member.)"""
+        if key not in self._entries:
+            return False
+        del self._entries[key]
+        self._order = [k for k in self._order if k != key]
+        self._bump_membership()
+        return True
+
+    # -- membership / order reads --------------------------------------- #
 
     def keys(self) -> list[K]:
+        """Reactive snapshot of the keys in their current order. Subscribes the
+        caller to **order** changes (add/remove **and** move/reorder), not to
+        per-entry value changes."""
         _ = self._order_signal.value
         return list(self._order)
 
-    def value_cell(self, key: K) -> Cell[V] | None:
-        return self._value_cells.get(key)
+    def present_keys(self) -> list[K]:
+        """The currently-materialized (present) keys, in first-materialization
+        order. Non-reactive; the present set only grows (deferral, not
+        de-allocation)."""
+        return list(self._order)
 
-    def get(self, key: K) -> V | None:
-        cell = self._value_cells.get(key)
-        return cell.value if cell is not None else None
+    def present_count(self) -> int:
+        """Number of currently-materialized (present) entries. Non-reactive."""
+        return len(self._order)
 
-    # -- mutators ------------------------------------------------------- #
+    def is_present(self, key: K) -> bool:
+        """Whether ``key`` is currently materialized (present). Non-reactive."""
+        return key in self._entries
 
-    def set_value(self, key: K, value: V) -> None:
-        """Update the value cell at ``key`` (which must be a member). Leaves the
-        membership and order signals untouched — only this entry's value readers
-        are invalidated. Mirrors ``setEntryValue``."""
-        cell = self._value_cells.get(key)
-        if cell is not None:
-            cell.set(value)
+    def position(self, key: K) -> int | None:
+        """Current 0-based position of ``key`` in the order, or ``None`` if
+        absent. Non-reactive."""
+        try:
+            return self._order.index(key)
+        except ValueError:
+            return None
 
-    def insert(self, key: K, value: V) -> None:
-        """Insert ``key`` as a new member at the end, minting its value cell.
-        Bumps both the membership and the order signal. (No-op if ``key`` is
-        already a member.) Mirrors ``addKey``."""
-        if key in self._value_cells:
-            return
-        self._value_cells[key] = Cell(self.ctx, value)
-        self._order.append(key)
-        self._membership_signal.set(self._membership_signal.value + 1)
-        self._order_signal.set(self._order_signal.value + 1)
+    def __len__(self) -> int:
+        # Touch membership so a len() reader is invalidated on add/remove but NOT
+        # on a pure reorder (move_to).
+        _ = self._membership_signal.value
+        return len(self._order)
 
-    def remove(self, key: K) -> None:
-        """Remove ``key`` from the collection. Bumps both the membership and the
-        order signal. (No-op if ``key`` is not a member.) Mirrors ``removeKey``."""
-        if key not in self._value_cells:
-            return
-        del self._value_cells[key]
-        self._order = [k for k in self._order if k != key]
-        self._membership_signal.set(self._membership_signal.value + 1)
-        self._order_signal.set(self._order_signal.value + 1)
+    def len(self) -> int:
+        """Reactive entry count. Subscribes the caller to membership changes."""
+        return len(self)
 
-    def move_to(self, key: K, index: int) -> None:
-        """A pure reorder: move ``key`` to position ``index``. Bumps **only** the
-        order signal; membership and every entry's value cell are untouched.
-        This is the formal counterpart of ``lazily-rs``'s ``CellMap::move_to``
-        (``#lzcellmove``). Mirrors ``moveKey``."""
-        if key not in self._value_cells:
-            return
-        self._order = [k for k in self._order if k != key]
-        clamped = min(index, len(self._order))
-        self._order.insert(clamped, key)
-        self._order_signal.set(self._order_signal.value + 1)
+    def is_empty(self) -> bool:
+        """Reactive emptiness check. Subscribes the caller to membership changes."""
+        return len(self) == 0
 
-    def move_before(self, key: K, before: K) -> None:
-        """Move ``key`` to immediately precede ``before`` (a pure reorder)."""
-        if before not in self._value_cells or key not in self._value_cells:
-            return
-        self._order = [k for k in self._order if k != key]
-        pos = self._order.index(before)
-        self._order.insert(pos, key)
-        self._order_signal.set(self._order_signal.value + 1)
+    def __contains__(self, key: object) -> bool:
+        _ = self._membership_signal.value
+        return key in self._entries
 
-    def move_after(self, key: K, after: K) -> None:
-        """Move ``key`` to immediately follow ``after`` (a pure reorder)."""
-        if after not in self._value_cells or key not in self._value_cells:
-            return
-        self._order = [k for k in self._order if k != key]
-        pos = self._order.index(after) + 1
-        self._order.insert(pos, key)
-        self._order_signal.set(self._order_signal.value + 1)
+    def contains_key(self, key: K) -> bool:
+        """Reactive membership test for ``key``. Subscribes the caller to
+        membership changes (add/remove of any key), not to value changes."""
+        return key in self
+
+    def len_untracked(self) -> int:
+        """Non-reactive count. Does not subscribe the caller to anything."""
+        return len(self._order)
+
+    # -- atomic ordered move (#lzcellmove) ------------------------------ #
+
+    def move_to(self, key: K, index: int) -> bool:
+        """Atomically move ``key`` to position ``index`` (``#lzcellmove``). The
+        entry keeps the **same** handle, dependents, and lineage (not remove +
+        re-mint). Bumps **only** the order signal, so ``keys`` readers recompute
+        but ``len``/``contains`` readers stay cached. ``index`` is clamped to
+        ``[0, len)``. Returns whether ``key`` was present."""
+        if key not in self._entries:
+            return False
+        from_pos = self._order.index(key)
+        to = min(index, len(self._order) - 1)
+        if from_pos == to:
+            return True  # no-op: do not invalidate readers needlessly.
+        self._order.pop(from_pos)
+        self._order.insert(to, key)
+        self._bump_order()
+        return True
+
+    def move_before(self, key: K, anchor: K) -> bool:
+        """Atomically move ``key`` to just before ``anchor`` (a pure reorder).
+        No-op returning ``False`` if either key is absent."""
+        if anchor not in self._entries or key not in self._entries:
+            return False
+        anchor_idx = self._order.index(anchor)
+        from_pos = self._order.index(key)
+        target = anchor_idx - 1 if from_pos < anchor_idx else anchor_idx
+        return self.move_to(key, target)
+
+    def move_after(self, key: K, anchor: K) -> bool:
+        """Atomically move ``key`` to just after ``anchor`` (a pure reorder).
+        No-op returning ``False`` if either key is absent."""
+        if anchor not in self._entries or key not in self._entries:
+            return False
+        anchor_idx = self._order.index(anchor)
+        from_pos = self._order.index(key)
+        target = anchor_idx if from_pos <= anchor_idx else anchor_idx + 1
+        return self.move_to(key, target)
 
 
-class CellFamily[K, V]:
-    """``CellFamily`` — a ``CellMap`` plus a per-key factory that lazily mints
-    and caches one cell per key on first access.
+class CellMap[K, V](ReactiveMap[K, V]):
+    """A keyed **input-cell** collection: every entry is a settable :class:`Cell`.
 
-    Mirrors ``lazily-rs/src/cell_family.rs`` (``CellFamily``). The universal
-    guarantee is identity stability: the same key resolves to the same value
-    cell across requests (:meth:`CellFamily.get` is idempotent after first
-    access).
+    The ``CellMap`` specialization of :class:`ReactiveMap` adds cell-only
+    :meth:`set` and eager value-minting (:meth:`entry` / :meth:`entry_with`) on
+    top of the shared reactive keyed surface. Mirrors ``lazily-rs``'s
+    ``CellMap<K, V> = ReactiveMap<K, V, CellHandle<V>>``.
     """
 
-    __slots__ = ("_coll", "_factory", "_minted")
+    __slots__ = ()
 
-    def __init__(
-        self, coll: CellMap[K, V], factory: Callable[[K], V] | None = None
-    ) -> None:
-        self._coll = coll
-        self._factory = factory
-        self._minted: set[K] = set()
+    _HANDLE = _CELL_HANDLE
 
-    @property
-    def collection(self) -> CellMap[K, V]:
-        return self._coll
+    def entry_with(self, key: K, default: Callable[[], V]) -> Cell[V]:
+        """Return the value cell for ``key``, minting it with ``default`` (called
+        lazily) on first access. Subsequent calls return the cached handle.
+        Adding a new key bumps reactive membership; re-fetching an existing key
+        does not. Cell-only: eager value-minting has no derived-slot analog."""
+        handle = self._entries.get(key)
+        if handle is not None:
+            return handle  # type: ignore[return-value]
+        return self._mint_with(key, default)  # type: ignore[return-value]
 
-    def get(self, key: K, value: V) -> Cell[V]:
-        """The lazy mint: if ``key`` has already been minted, return its
-        existing cell (identity-stable handle); otherwise mint it (via the
-        factory if one was supplied, else ``value``) and record it. Mirrors
-        ``Family.get`` — which always carries the entry value ``v``."""
-        if key in self._minted:
-            return self._coll._value_cells[key]
-        minted = self._factory(key) if self._factory is not None else value
-        self._coll.insert(key, minted)
-        self._minted.add(key)
-        return self._coll._value_cells[key]
+    def entry(self, key: K, default: V) -> Cell[V]:
+        """Return the value cell for ``key``, minting it with ``default`` on first
+        access. Convenience wrapper over :meth:`entry_with`."""
+        return self.entry_with(key, lambda: default)
 
-    def is_minted(self, key: K) -> bool:
-        return key in self._minted
+    def set(self, key: K, value: V) -> None:
+        """Set the value at ``key``, inserting a new entry (and bumping
+        membership) if it does not exist yet. Updating an existing entry leaves
+        membership untouched and invalidates only that entry's dependents.
+        Cell-only: an input is settable; a derived :class:`SlotMap` slot is not."""
+        handle = self._entries.get(key)
+        if handle is not None:
+            handle.set(value)  # type: ignore[union-attr]
+            return
+        self.entry_with(key, lambda: value)
+
+
+class SlotMap[K, V](ReactiveMap[K, V]):
+    """A keyed **derived-slot** collection: every entry is a :class:`slot` whose
+    value is derived. :meth:`ReactiveMap.get_or_insert_with` mints a slot on first
+    access (lazy materialization); :meth:`materialize_all` pre-mints the keyset
+    (eager). A slot's value is derived, so ``SlotMap`` has **no ``set``**. Mirrors
+    ``lazily-rs``'s ``SlotMap<K, V> = ReactiveMap<K, V, SlotHandle<V>>``.
+    """
+
+    __slots__ = ()
+
+    _HANDLE = _SLOT_HANDLE
+
+    def materialize_all(self, keys: Iterable[K], factory: Callable[[K], V]) -> None:
+        """**Eager materialization**: pre-mint a derived slot for every key in
+        ``keys`` via ``factory``, up front. Observationally identical to minting
+        each key lazily on first read — it only changes *when* the nodes are
+        allocated."""
+        for key in keys:
+            self.get_or_insert_with(key, factory)

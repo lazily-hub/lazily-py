@@ -1,12 +1,16 @@
-"""ReactiveFamily materialization-mode tests (``#lzmatmode``).
+"""``SlotMap`` / ``CellMap`` materialization tests (``#reactivemap``).
 
-Mirrors the ``lazily-rs`` ``reactive_family.rs`` unit tests and the
+Mirrors the ``lazily-rs`` ``cell_family.rs`` unit tests and the
 ``materialization_conformance.rs`` harness, driven by the canonical fixtures in
-``lazily-spec/conformance/materialization/``. Exercises the laws proved in
-``lazily-formal``'s ``Materialization`` module against the Python
-``ReactiveFamily`` vehicle: observational transparency (eager vs lazy),
-deferral-not-deallocation present-set monotonicity, and entry-kind orthogonal to
-mode (input cells always materialized / derived slots deferred under lazy).
+``lazily-spec/conformance/materialization/`` (now ``"model": "SlotMap"``).
+Exercises the laws proved in ``lazily-formal``'s ``Materialization`` module
+against the Python :class:`~lazily.SlotMap` specialization of
+:class:`~lazily.ReactiveMap`: observational transparency (eager pre-mint vs lazy
+mint-on-access), deferral-not-deallocation present-set monotonicity, and
+entry-kind orthogonal to strategy (input cells always materialized / derived
+slots deferred under lazy). There is no eager/lazy mode flag — eager is a
+pre-mint loop (``materialize_all``), lazy is mint-on-access
+(``get_or_insert_with``).
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from lazily.reactive_family import EntryKind, MaterializationMode, ReactiveFamily
+from lazily import CellMap, EntryKind, SlotMap
 
 
 _LOCAL_FIXTURES = Path(__file__).resolve().parent / "conformance" / "materialization"
@@ -35,77 +39,78 @@ def load_fixture(name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests (mirror reactive_family.rs)
+# Unit tests (mirror cell_family.rs)
 # ---------------------------------------------------------------------------
 
 
-def test_default_mode_is_eager() -> None:
-    assert MaterializationMode.default() is MaterializationMode.EAGER
-
-
-def test_eager_materializes_all_up_front() -> None:
-    fam = ReactiveFamily.eager({}, [0, 1, 2, 5, 9], lambda k: k * 3)
+def test_eager_slot_map_materializes_all_up_front() -> None:
+    fam: SlotMap[int, int] = SlotMap({})
+    fam.materialize_all([0, 1, 2, 5, 9], lambda k: k * 3)
     assert fam.present_count() == 5
     assert all(fam.is_present(k) for k in (0, 1, 2, 5, 9))
+    assert fam.entry_kind is EntryKind.SLOT
 
 
-def test_lazy_defers_slots_until_read() -> None:
-    fam = ReactiveFamily.lazy({}, [0, 1, 2, 5, 9], lambda k: k * 3)
+def test_lazy_slot_map_defers_until_read() -> None:
+    fam: SlotMap[int, int] = SlotMap({})
     assert fam.present_count() == 0
     assert not fam.is_present(5)
-    # First read materializes just that key ("materialize on pull").
-    assert fam.observe(5) == 15
+    # First read mints just that key ("materialize on pull").
+    assert fam.get_or_insert_with(5, lambda k: k * 3) == 15
     assert fam.is_present(5)
     assert fam.present_keys() == [5]
 
 
 def test_eager_and_lazy_observe_identically() -> None:
-    ctx: dict = {}
-    eager = ReactiveFamily.eager(ctx, [0, 1, 2, 5, 9], lambda k: k * 3)
-    lazy = ReactiveFamily.lazy(ctx, [0, 1, 2, 5, 9], lambda k: k * 3)
+    eager: SlotMap[int, int] = SlotMap({})
+    eager.materialize_all([0, 1, 2, 5, 9], lambda k: k * 3)
+    lazy: SlotMap[int, int] = SlotMap({})
     for k in (0, 1, 2, 5, 9):
-        assert eager.observe(k) == lazy.observe(k)
+        assert eager.get(k) == lazy.get_or_insert_with(k, lambda k: k * 3)
 
 
 def test_present_set_is_monotone_across_reads() -> None:
-    fam = ReactiveFamily.lazy({}, [1, 2, 3, 4, 5], lambda k: k * 2)
+    fam: SlotMap[int, int] = SlotMap({})
     sizes = []
     for k in (2, 4, 2, 5):
-        fam.observe(k)
+        fam.get_or_insert_with(k, lambda k: k * 2)
         sizes.append(fam.present_count())
     # Re-reading 2 does not re-materialize; sizes are non-decreasing.
     assert sizes == [1, 2, 2, 3]
     assert fam.present_keys() == [2, 4, 5]
 
 
-def test_cell_family_materialized_in_every_mode() -> None:
-    for mode in (MaterializationMode.EAGER, MaterializationMode.LAZY):
-        fam = ReactiveFamily.cell_family({}, ["a", "b", "c"], lambda _k: 0, mode=mode)
-        assert fam.entry_kind is EntryKind.CELL
-        # Cells are always present at build, even under lazy.
-        assert fam.present_count() == 3
+def test_get_or_insert_with_mints_once_then_returns_existing() -> None:
+    fam: SlotMap[str, int] = SlotMap({})
+    calls = [0]
+
+    def factory(_k: str) -> int:
+        calls[0] += 1
+        return 7
+
+    assert fam.get_or_insert_with("a", factory) == 7
+    assert fam.present_count() == 1
+    # Second access returns the existing value; factory is NOT called again.
+    assert fam.get_or_insert_with("a", lambda _k: 999) == 7
+    assert calls[0] == 1
 
 
-def test_cell_family_entries_are_writable_inputs() -> None:
-    fam = ReactiveFamily.cell_family({}, [7], lambda k: k)
-    handle = fam.get(7)
+def test_cell_map_entries_are_writable_inputs() -> None:
+    fam: CellMap[int, int] = CellMap({})
+    handle = fam.entry(7, 7)
     assert handle.get() == 7
+    assert fam.entry_kind is EntryKind.CELL
     handle.set(100)
-    assert fam.observe(7) == 100
+    assert fam.get(7) == 100
 
 
-def test_new_is_eager_alias() -> None:
-    fam = ReactiveFamily.new({}, [1, 2], lambda k: k)
-    assert fam.mode is MaterializationMode.EAGER
-    assert fam.present_count() == 2
-
-
-def test_slot_family_defers_under_lazy() -> None:
-    fam = ReactiveFamily.slot_family(
-        {}, [1, 2, 3], lambda k: k, mode=MaterializationMode.LAZY
-    )
-    assert fam.entry_kind is EntryKind.SLOT
-    assert fam.present_count() == 0
+def test_cell_map_set_seeds_and_updates() -> None:
+    fam: CellMap[str, int] = CellMap({})
+    fam.set("a", 1)
+    assert fam.present_count() == 1
+    fam.set("a", 42)  # existing entry: no membership change
+    assert fam.present_count() == 1
+    assert fam.get("a") == 42
 
 
 def test_observe_is_reactive_when_factory_reads_a_cell() -> None:
@@ -115,10 +120,11 @@ def test_observe_is_reactive_when_factory_reads_a_cell() -> None:
 
     ctx: dict = {}
     src = Cell(ctx, 10)
-    fam = ReactiveFamily.eager(ctx, [1], lambda k: src.value + k)
+    fam: SlotMap[int, int] = SlotMap(ctx)
+    fam.materialize_all([1], lambda k: src.value + k)
     seen = []
 
-    reader = slot(lambda c: fam.observe(1))
+    reader = slot(lambda c: fam.get(1))
     watcher = slot(lambda c: seen.append(reader(c)))
     watcher(ctx)
     assert seen == [11]
@@ -138,18 +144,19 @@ def _val_lookup(spec_val: dict) -> dict[str, int]:
 
 def _check_val_fixture(name: str) -> dict:
     fixture = load_fixture(name)
-    assert fixture["kind"] == "ReactiveFamily"
+    assert fixture["kind"] == "SlotMap"
     expected = fixture["expected"]
+    # default_mode_eager: eager is the default materialization strategy.
     assert expected["default_mode"] == "eager"
-    assert MaterializationMode.default() is MaterializationMode.EAGER
 
     vals = _val_lookup(fixture["spec"]["val"])
     keys = list(vals.keys())
     lookup = vals.__getitem__
 
-    ctx: dict = {}
-    eager = ReactiveFamily.eager(ctx, keys, lookup)
-    lazy = ReactiveFamily.lazy(ctx, keys, lookup)
+    # eager: pre-mint the whole keyset; lazy: empty, mint-on-access.
+    eager: SlotMap[str, int] = SlotMap({})
+    eager.materialize_all(keys, lookup)
+    lazy: SlotMap[str, int] = SlotMap({})
 
     # eager_materializes_all
     assert eager.present_count() == len(keys)
@@ -159,8 +166,8 @@ def _check_val_fixture(name: str) -> dict:
 
     # observe_canonical / eager_lazy_observationally_equivalent
     for k, want in expected["observe"].items():
-        assert eager.observe(k) == want
-        assert lazy.observe(k) == want
+        assert eager.get(k) == want
+        assert lazy.get_or_insert_with(k, lookup) == want
 
     return fixture
 
@@ -170,9 +177,9 @@ def test_conformance_observational_transparency() -> None:
     expected = fixture["expected"]
 
     vals = _val_lookup(fixture["spec"]["val"])
-    lazy = ReactiveFamily.lazy({}, list(vals.keys()), vals.__getitem__)
+    lazy: SlotMap[str, int] = SlotMap({})
     for k in fixture["reads"]:
-        lazy.observe(k)
+        lazy.get_or_insert_with(k, vals.__getitem__)
     assert set(lazy.present_keys()) == set(expected["lazy_present_after_reads"])
 
 
@@ -181,11 +188,11 @@ def test_conformance_deferral_not_deallocation() -> None:
     expected = fixture["expected"]
 
     vals = _val_lookup(fixture["spec"]["val"])
-    lazy = ReactiveFamily.lazy({}, list(vals.keys()), vals.__getitem__)
+    lazy: SlotMap[str, int] = SlotMap({})
 
     got_sizes = []
     for k in fixture["reads"]:
-        lazy.observe(k)
+        lazy.get_or_insert_with(k, vals.__getitem__)
         got_sizes.append(lazy.present_count())
     assert got_sizes == expected["present_after_each_read"]
 
@@ -205,44 +212,43 @@ def test_conformance_entry_kind_orthogonal_to_mode() -> None:
     vals = {k: int(e["val"]) for k, e in entries.items()}
     lookup = vals.__getitem__
 
-    ctx: dict = {}
-
-    # A single ReactiveFamily fixes one handle kind, so a mixed-kind fixture is
-    # modelled by a cell family over the cell entries and a slot family over the
-    # slot entries — sharing one logical key space.
-    eager_cells = ReactiveFamily.cell_family(ctx, cell_keys, lookup)
-    eager_slots = ReactiveFamily.slot_family(ctx, slot_keys, lookup)
+    # A single ReactiveMap fixes one handle kind, so a mixed-kind fixture is
+    # modelled by a CellMap over the cell entries and a SlotMap over the slot
+    # entries — sharing one logical key space.
+    eager_cells: CellMap[str, int] = CellMap({})
+    for k in cell_keys:
+        eager_cells.entry(k, lookup(k))
+    eager_slots: SlotMap[str, int] = SlotMap({})
+    eager_slots.materialize_all(slot_keys, lookup)
     assert eager_cells.entry_kind is EntryKind.CELL
     assert eager_slots.entry_kind is EntryKind.SLOT
     eager_present = set(eager_cells.present_keys()) | set(eager_slots.present_keys())
     assert eager_present == set(expected["eager_present"])
 
-    lazy_cells = ReactiveFamily.cell_family(
-        ctx, cell_keys, lookup, mode=MaterializationMode.LAZY
-    )
-    lazy_slots = ReactiveFamily.slot_family(
-        ctx, slot_keys, lookup, mode=MaterializationMode.LAZY
-    )
-    # Cells present at build, slots deferred.
+    # Lazy build: cells present at build (always materialized), slots deferred.
+    lazy_cells: CellMap[str, int] = CellMap({})
+    for k in cell_keys:
+        lazy_cells.entry(k, lookup(k))
+    lazy_slots: SlotMap[str, int] = SlotMap({})
     assert set(lazy_cells.present_keys()) == set(expected["lazy_present_at_build"])
     assert lazy_slots.present_keys() == []
 
     for k in fixture["reads"]:
         if k in slot_keys:
-            lazy_slots.observe(k)
+            lazy_slots.get_or_insert_with(k, lookup)
         else:
-            lazy_cells.observe(k)
+            lazy_cells.get_or_insert_with(k, lookup)
     lazy_after = set(lazy_cells.present_keys()) | set(lazy_slots.present_keys())
     assert lazy_after == set(expected["lazy_present_after_reads"])
 
     # Observational transparency across kinds.
     for k, want in expected["observe"].items():
         if k in cell_keys:
-            assert eager_cells.observe(k) == want
-            assert lazy_cells.observe(k) == want
+            assert eager_cells.get(k) == want
+            assert lazy_cells.get(k) == want
         else:
-            assert eager_slots.observe(k) == want
-            assert lazy_slots.observe(k) == want
+            assert eager_slots.get(k) == want
+            assert lazy_slots.get_or_insert_with(k, lookup) == want
 
 
 @pytest.mark.parametrize(
@@ -253,8 +259,8 @@ def test_conformance_entry_kind_orthogonal_to_mode() -> None:
         "entry_kind_orthogonal_to_mode.json",
     ],
 )
-def test_fixture_loads_and_is_reactive_family(name: str) -> None:
+def test_fixture_loads_and_is_slot_map(name: str) -> None:
     fixture = load_fixture(name)
-    assert fixture["kind"] == "ReactiveFamily"
-    assert fixture["model"] == "ReactiveFamily"
+    assert fixture["kind"] == "SlotMap"
+    assert fixture["model"] == "SlotMap"
     assert fixture["expected"]["default_mode"] == "eager"

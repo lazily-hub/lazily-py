@@ -237,8 +237,11 @@ self-transition to an equal state is accepted but suppressed by the Cell's
 lazily-py also implements the `lazily-spec` compute-layer `MUST`s, each ported
 from its Lean formal model in [`lazily-formal`](https://github.com/lazily-hub/lazily-formal):
 
-- **`CellMap` / `CellFamily` / `CellTree`** — keyed reactive collections with
-  independent value/membership/order signals and atomic move.
+- **`ReactiveMap` / `CellMap` / `SlotMap` / `CellTree`** — keyed reactive
+  collections (`#reactivemap`) with independent value/membership/order signals and
+  atomic move. One generic `ReactiveMap` over a handle kind; `CellMap` (input
+  cells, adds `set` + eager `entry`) and `SlotMap` (derived slots, lazy
+  `get_or_insert_with` + eager `materialize_all`) are its specializations.
 - **`QueueCell`** — a reactive FIFO queue (SPSC primitive with an MPSC-via-`batch`
   usage rule) with a pluggable `QueueStorage` backend. Reader-kind invalidation
   (head/len/is_empty/is_full/closed), bounded reactive backpressure via `is_full`,

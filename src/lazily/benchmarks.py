@@ -124,7 +124,7 @@ def _bench_cellmap_insert(n: int) -> BenchmarkResult:
     def step() -> None:
         cmap = CellMap({})
         for i in range(50):
-            cmap.insert(i, i)
+            cmap.set(i, i)
 
     return time_op("cellmap.insert_50", step, n)
 

@@ -26,9 +26,11 @@ __all__ = [
     "SHM_DEFAULT_CAPACITY",
     "Alignment",
     "ArrowBackend",
+    "AsyncCellMap",
     "AsyncEffect",
-    "AsyncReactiveFamily",
+    "AsyncReactiveMap",
     "AsyncSlot",
+    "AsyncSlotMap",
     "BaseSlot",
     "Benchmark",
     "BenchmarkResult",
@@ -43,7 +45,6 @@ __all__ = [
     "CausalReceipts",
     "Cell",
     "CellCrdt",
-    "CellFamily",
     "CellMap",
     "CellSlot",
     "CellTree",
@@ -86,7 +87,6 @@ __all__ = [
     "Level",
     "LosslessTreeCrdt",
     "LwwRegister",
-    "MaterializationMode",
     "MvRegister",
     "NodeId",
     "NodeKey",
@@ -107,7 +107,7 @@ __all__ = [
     "QueuePushError",
     "QueueReaderHandles",
     "QueueStorage",
-    "ReactiveFamily",
+    "ReactiveMap",
     "ReceiptApplyResult",
     "ReceiptOutcome",
     "ReceiptProjection",
@@ -130,6 +130,7 @@ __all__ = [
     "SignalingFrameKind",
     "Slot",
     "SlotEvent",
+    "SlotMap",
     "SlotState",
     "Snapshot",
     "SortKey",
@@ -141,8 +142,10 @@ __all__ = [
     "TextCrdt",
     "TextElement",
     "TextOp",
+    "ThreadSafeCellMap",
     "ThreadSafeContext",
-    "ThreadSafeReactiveFamily",
+    "ThreadSafeReactiveMap",
+    "ThreadSafeSlotMap",
     "TreeError",
     "TreeNode",
     "TreeNodeId",
@@ -205,7 +208,7 @@ __all__ = [
     "tree_update_to_wire",
     "word_lcs_len",
 ]
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 
 from . import (
     async_reactive_family,
@@ -227,12 +230,12 @@ from . import (
     tree,
 )
 from .async_effect import AsyncEffect, EffectEvent, EffectState
-from .async_reactive_family import AsyncReactiveFamily
+from .async_reactive_family import AsyncCellMap, AsyncReactiveMap, AsyncSlotMap
 from .async_slot import AsyncSlot, SlotEvent, SlotState
 from .batch import batch, batch_context, in_batch
 from .benchmarks import Benchmark, BenchmarkResult, run_benchmarks
 from .cell import Cell, CellSlot, cell, cell_def
-from .collection import CellFamily, CellMap
+from .collection import CellMap, EntryKind, ReactiveMap, SlotMap
 from .command import (
     COMMAND_PLANE_FEATURE,
     CallState,
@@ -334,7 +337,6 @@ from .queue import (
     QueueStorage,
     VecDequeStorage,
 )
-from .reactive_family import EntryKind, MaterializationMode, ReactiveFamily
 from .reconciliation import Level, ReconcileOp, reconcile_ops
 from .semtree import Fold, SemNode, SemTree, count_positive_fold, sum_fold
 from .seqcrdt import SeqCrdt, SeqElement
@@ -363,7 +365,11 @@ from .state_machine import StateMachine
 from .statechart import ChartDef, StateChart
 from .textcrdt import ROOT, OpId, TextCrdt, TextElement, TextOp
 from .thread_safe import ThreadSafeContext
-from .thread_safe_reactive_family import ThreadSafeReactiveFamily
+from .thread_safe_reactive_family import (
+    ThreadSafeCellMap,
+    ThreadSafeReactiveMap,
+    ThreadSafeSlotMap,
+)
 from .transport import (
     ARROW_DEFAULT_CAPACITY,
     IN_PROCESS_DEFAULT_CAPACITY,

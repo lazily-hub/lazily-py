@@ -350,17 +350,25 @@ Beyond the wire protocol, lazily-py implements the `lazily-spec` compute-layer
 `MUST`s, each ported from its Lean formal model in `lazily-formal` and covered
 by property tests that mirror the named Lean theorems.
 
-### Keyed reactive collections (`CellMap` / `CellFamily` / `CellTree`)
+### Keyed reactive collections (`ReactiveMap` / `CellMap` / `SlotMap` / `CellTree`)
+
+One generic keyed primitive `ReactiveMap` over a handle kind (`#reactivemap`),
+with two specializations: `CellMap` (input-cell entries — adds cell-only `set`
+and eager value-minting `entry`/`entry_with`) and `SlotMap` (derived-slot entries
+— `get_or_insert_with` mints a slot on first access for lazy materialization,
+`materialize_all` pre-mints the keyset for eager; no `set`). No eager/lazy mode
+flag — eager is a pre-mint loop, lazy is mint-on-access.
 
 Three independent reactive signals: per-entry value, set-membership, and order.
 A pure reorder (`move_to`) bumps the order signal only — `len`/`contains` readers
-are not invalidated; an atomic move keeps each entry's cell identity (not remove
-+ re-mint). `CellFamily` lazily mints and caches one cell per key (identity
-stability across requests). `CellTree` extends the model to an ordered keyed
-tree with per-node value and per-level membership/order reactivity.
+are not invalidated; an atomic move keeps each entry's handle identity (not remove
++ re-mint). A key resolves to a stable handle across requests (identity
+stability). `CellTree` extends the model to an ordered keyed tree with per-node
+value and per-level membership/order reactivity.
 
-- `CellMap.set_value` / `.insert` / `.remove` / `.move_to` / `.move_before` /
-  `.move_after`; `membership_signal` / `order_signal`; `CellFamily.get(key, value)`.
+- `ReactiveMap.get_or_insert_with` / `.remove` / `.move_to` / `.move_before` /
+  `.move_after`; `membership_signal` / `order_signal`; `CellMap.entry` / `.set`;
+  `SlotMap.materialize_all`.
 - `CellTree.set_node_value` / `.insert_child` / `.move_child`.
 
 ### Keyed reconciliation (`reconcile_ops`)
