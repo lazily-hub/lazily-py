@@ -1,0 +1,76 @@
+{
+  "description": "OR-set / LWW liveness cells on the CrdtSync plane (protocol.md § Reliable Sync, #lzsync-liveness). Cross-process editor liveness — '(doc, pid) is open' and 'pid alive' / owner lease — is carried as CRDT cells, not a bespoke frame, so it inherits idempotent, frontier-resumable, re-delivery-safe convergence (proven ReliableSync.crdt_liveness_convergence_under_retry, building on the CRDT lattice proofs). Open-set membership is an observed-remove set (add wins over a concurrent stale remove); per-pid `alive` and the lease are HLC-stamped LWW registers. Derived authority 'doc Y is live' = any present (doc,pid) whose alive[pid] is true — a derived aggregate over the liveness family (#lzfamilysync). One alive[pid]=false fans out to every doc that pid held (whole-editor-death cascade). Keys are namespaced by document_hash so a stale overlay for doc B cannot flip doc A. Ops ride schemas/distributed.json (CrdtSync); this fixture pins the derived liveness aggregate, not a new frame.",
+  "protocol_version": 1,
+  "kind": "ReliableSync",
+  "model": "LivenessCells",
+  "scenarios": [
+    {
+      "name": "open_set_add_wins_over_stale_remove",
+      "description": "OR-set observed-remove: a re-open (add tag t3) concurrent with a lagging close (remove observing only the earlier add tag t1) keeps the doc open. The remove shadows only the adds it observed.",
+      "register_kind": "orset",
+      "key": "docA/pid100",
+      "ops": [
+        { "op": "add",    "tag": "t1", "stamp": { "wall_time": 10, "logical": 0, "peer": 1 } },
+        { "op": "remove", "observed_tags": ["t1"], "stamp": { "wall_time": 12, "logical": 0, "peer": 2 } },
+        { "op": "add",    "tag": "t3", "stamp": { "wall_time": 11, "logical": 0, "peer": 1 } }
+      ],
+      "expect": {
+        "present": true,
+        "reason": "add_tag_t3_not_observed_by_remove",
+        "order_independent": true,
+        "redeliver_applied_count": 0
+      }
+    },
+    {
+      "name": "lww_alive_highest_stamp_wins",
+      "description": "Per-pid alive is a LWW register: the OS process-exit write (alive=false at a higher stamp) wins; a stale re-assert (alive=true at a lower stamp) is dominated.",
+      "register_kind": "lww",
+      "key": "alive/pid100",
+      "ops": [
+        { "value": true,  "stamp": { "wall_time": 20, "logical": 0, "peer": 1 } },
+        { "value": false, "stamp": { "wall_time": 25, "logical": 0, "peer": 1 } },
+        { "value": true,  "stamp": { "wall_time": 22, "logical": 0, "peer": 1 } }
+      ],
+      "expect": {
+        "value": false,
+        "resolution": "max_stamp",
+        "order_independent": true
+      }
+    },
+    {
+      "name": "whole_editor_death_cascades",
+      "description": "pid 100 has docA and docB open. One alive[100]=false write recomputes the derived live aggregate for BOTH docs to not-live — the derived slot fans out over every (doc,pid) the pid held. Per-doc close stays a separate open-set remove.",
+      "open_set": [
+        { "key": "docA/pid100", "present": true },
+        { "key": "docB/pid100", "present": true },
+        { "key": "docC/pid200", "present": true }
+      ],
+      "alive_before": { "100": true, "200": true },
+      "op": { "register_kind": "lww", "key": "alive/pid100", "value": false, "stamp": { "wall_time": 30, "logical": 0, "peer": 1 } },
+      "expect": {
+        "live_docs_before": ["docA", "docB", "docC"],
+        "live_docs_after": ["docC"],
+        "cascade": true,
+        "note": "docA and docB both drop live because pid100 died; docC (pid200) unaffected"
+      }
+    },
+    {
+      "name": "derived_live_doc_aggregate_converges_under_retry",
+      "description": "Two replicas exchange the same liveness ops in different orders and with re-delivery; the derived per-doc live aggregate converges identically (semilattice join). Re-ingesting a seen op applies 0 new ops.",
+      "replicas": ["r1", "r2"],
+      "ops": [
+        { "register_kind": "orset", "key": "docA/pid100", "op": "add", "tag": "a1", "stamp": { "wall_time": 40, "logical": 0, "peer": 1 } },
+        { "register_kind": "lww",   "key": "alive/pid100", "value": true, "stamp": { "wall_time": 41, "logical": 0, "peer": 1 } },
+        { "register_kind": "orset", "key": "docB/pid100", "op": "add", "tag": "b1", "stamp": { "wall_time": 42, "logical": 0, "peer": 1 } }
+      ],
+      "reverse_order_equivalent": true,
+      "redeliver": true,
+      "expect": {
+        "converged_live_docs": ["docA", "docB"],
+        "order_independent": true,
+        "redeliver_applied_count": 0,
+        "per_doc_isolation": true
+      }
+    }
+  ]
+}

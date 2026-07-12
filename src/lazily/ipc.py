@@ -56,6 +56,7 @@ __all__ = [
     "NodeState_Payload",
     "NodeState_SharedBlob",
     "OpKind",
+    "OutboxAck",
     "PeerId",
     "PeerPermissions",
     "PermissionDenied",
@@ -63,6 +64,7 @@ __all__ = [
     "ReceiptOutcome",
     "ReceiptProjection",
     "RemoteOp",
+    "ResyncRequest",
     "ShmBlobArena",
     "ShmBlobArenaError",
     "ShmBlobCapacityTooSmall",
@@ -1257,18 +1259,66 @@ class CrdtSync:
 
 
 # ---------------------------------------------------------------------------
-# IpcMessage (externally-tagged enum: Snapshot | Delta | CrdtSync)
+# Reliable sync (#lzsync): reverse-channel control frames
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ResyncRequest:
+    """Reliable-sync reverse-channel control frame: request a covering
+    :class:`Snapshot` on a detected gap (``#lzsync``, spec § ResyncCoordinator).
+
+    Carries no node content, so it is permission-filter- and blob-spill-
+    transparent. The requesting receiver's ``from_epoch`` is its ``last_epoch``;
+    the sender replies with a ``Snapshot { epoch >= from_epoch }``.
+    """
+
+    from_epoch: int
+
+    def to_wire(self) -> dict[str, int]:
+        return {"from_epoch": self.from_epoch}
+
+    @classmethod
+    def from_wire(cls, d: dict[str, Any]) -> ResyncRequest:
+        return cls(from_epoch=d["from_epoch"])
+
+
+@dataclass(frozen=True)
+class OutboxAck:
+    """Reliable-sync reverse-channel control frame: prove receipt through
+    ``through_epoch`` (``#lzsync``, spec § DurableOutbox).
+
+    Advances the sender's outbox retention cursor and doubles as the reconnect
+    resume cursor. Carries no node content.
+    """
+
+    through_epoch: int
+
+    def to_wire(self) -> dict[str, int]:
+        return {"through_epoch": self.through_epoch}
+
+    @classmethod
+    def from_wire(cls, d: dict[str, Any]) -> OutboxAck:
+        return cls(through_epoch=d["through_epoch"])
+
+
+# ---------------------------------------------------------------------------
+# IpcMessage (externally-tagged enum:
+#   Snapshot | Delta | CrdtSync | ResyncRequest | OutboxAck)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class IpcMessage:
-    """Tagged IPC protocol message — a :class:`Snapshot`, :class:`Delta`, or
-    :class:`CrdtSync`."""
+    """Tagged IPC protocol message — a :class:`Snapshot`, :class:`Delta`,
+    :class:`CrdtSync`, or a reliable-sync control frame (:class:`ResyncRequest`
+    / :class:`OutboxAck`)."""
 
     snapshot: Snapshot | None = None
     delta: Delta | None = None
     crdt_sync: CrdtSync | None = None
+    resync_request: ResyncRequest | None = None
+    outbox_ack: OutboxAck | None = None
 
     @classmethod
     def of_snapshot(cls, snapshot: Snapshot) -> IpcMessage:
@@ -1282,6 +1332,14 @@ class IpcMessage:
     def of_crdt_sync(cls, crdt_sync: CrdtSync) -> IpcMessage:
         return cls(crdt_sync=crdt_sync)
 
+    @classmethod
+    def of_resync_request(cls, resync_request: ResyncRequest) -> IpcMessage:
+        return cls(resync_request=resync_request)
+
+    @classmethod
+    def of_outbox_ack(cls, outbox_ack: OutboxAck) -> IpcMessage:
+        return cls(outbox_ack=outbox_ack)
+
     @property
     def is_snapshot(self) -> bool:
         return self.snapshot is not None
@@ -1294,6 +1352,21 @@ class IpcMessage:
     def is_crdt_sync(self) -> bool:
         return self.crdt_sync is not None
 
+    @property
+    def is_resync_request(self) -> bool:
+        return self.resync_request is not None
+
+    @property
+    def is_outbox_ack(self) -> bool:
+        return self.outbox_ack is not None
+
+    @property
+    def is_control(self) -> bool:
+        """Whether this is a reliable-sync reverse-channel control frame
+        (:class:`ResyncRequest` / :class:`OutboxAck`) — no node content, so
+        permission filtering and blob spilling are the identity on it."""
+        return self.resync_request is not None or self.outbox_ack is not None
+
     def to_wire(self) -> dict[str, Any]:
         if self.snapshot is not None:
             return {"Snapshot": self.snapshot.to_wire()}
@@ -1301,7 +1374,14 @@ class IpcMessage:
             return {"Delta": self.delta.to_wire()}
         if self.crdt_sync is not None:
             return {"CrdtSync": self.crdt_sync.to_wire()}
-        raise ValueError("IpcMessage carries neither a Snapshot, Delta, nor CrdtSync")
+        if self.resync_request is not None:
+            return {"ResyncRequest": self.resync_request.to_wire()}
+        if self.outbox_ack is not None:
+            return {"OutboxAck": self.outbox_ack.to_wire()}
+        raise ValueError(
+            "IpcMessage carries no Snapshot, Delta, CrdtSync, "
+            "ResyncRequest, nor OutboxAck"
+        )
 
     @classmethod
     def from_wire(cls, value: Any) -> IpcMessage:
@@ -1314,6 +1394,10 @@ class IpcMessage:
             return cls(delta=Delta.from_wire(body))
         if tag == "CrdtSync":
             return cls(crdt_sync=CrdtSync.from_wire(body))
+        if tag == "ResyncRequest":
+            return cls(resync_request=ResyncRequest.from_wire(body))
+        if tag == "OutboxAck":
+            return cls(outbox_ack=OutboxAck.from_wire(body))
         raise ValueError(f"unknown IpcMessage variant: {tag!r}")
 
     def encode_json(self) -> bytes:

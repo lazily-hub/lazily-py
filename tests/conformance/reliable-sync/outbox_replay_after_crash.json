@@ -1,0 +1,48 @@
+{
+  "description": "DurableOutbox at-least-once across a crash/reconnect (protocol.md § Reliable Sync, #durable-outbox). Every frame is durably appended BEFORE it is sent, retained until the peer proves receipt (OutboxAck), and replayed from the peer's cursor on reconnect. A send that fails (or a process death between append and confirmed send) leaves the frame in the outbox; replay_from(cursor) re-sends every retained frame with epoch > cursor in order. Combined with the receiver's idempotent Ignore of already-applied deltas, replay delivers every op at least once and idempotent apply makes the net effect exactly-once (proven ReliableSync.outbox_at_least_once_exactly_once_effect). ack_through(e) is a retention signal only (safe to prune <= e), never a domain delivery authority.",
+  "protocol_version": 1,
+  "kind": "ReliableSync",
+  "model": "DurableOutbox",
+  "scenarios": [
+    {
+      "name": "crash_between_append_and_ack_replays_on_reconnect",
+      "description": "Sender appends+sends deltas at epochs 41,42,43. The peer acks through 41 (OutboxAck{through_epoch:41}); the outbox may prune <= 41. The sender crashes and restarts; 42 and 43 are still durably in the outbox (append-before-send). On reconnect the peer advertises its cursor (last applied = 41); replay_from(41) re-sends 42 then 43 in order. The receiver applies 42 (base_epoch 41 == last_epoch) then 43. Exactly-once effect: no op lost (42,43 delivered), none doubled (41 already pruned/Ignored).",
+      "appended": [
+        { "epoch": 41, "frame": { "Delta": { "base_epoch": 40, "epoch": 41, "ops": [ { "CellSet": { "node": 1, "payload": { "Inline": [10] } } } ] } } },
+        { "epoch": 42, "frame": { "Delta": { "base_epoch": 41, "epoch": 42, "ops": [ { "CellSet": { "node": 2, "payload": { "Inline": [20] } } } ] } } },
+        { "epoch": 43, "frame": { "Delta": { "base_epoch": 42, "epoch": 43, "ops": [ { "CellSet": { "node": 3, "payload": { "Inline": [30] } } } ] } } }
+      ],
+      "ack_through": 41,
+      "crash": true,
+      "reconnect_cursor": 41,
+      "expect": {
+        "retained_after_ack": [42, 43],
+        "replayed_from_cursor": [42, 43],
+        "replay_order": [42, 43],
+        "receiver_applies": [42, 43],
+        "receiver_last_epoch_after": 43,
+        "ops_lost": 0,
+        "ops_doubled": 0,
+        "exactly_once_effect": true
+      }
+    },
+    {
+      "name": "send_failure_retains_frame_for_next_tick",
+      "description": "A send error does not unwind the driver and does not lose the frame: append succeeded, the send failed, so the frame stays in the outbox and is retried from the outbox on a later tick. (Contrast the pre-outbox bug: the out-epoch was bumped before the send, so a failed send left a permanent gap.)",
+      "appended": [
+        { "epoch": 44, "frame": { "Delta": { "base_epoch": 43, "epoch": 44, "ops": [ { "CellSet": { "node": 4, "payload": { "Inline": [40] } } } ] } } }
+      ],
+      "send_fails_first_attempt": true,
+      "ack_through": null,
+      "expect": {
+        "frame_retained_after_failed_send": true,
+        "retained": [44],
+        "resent_on_next_tick": [44],
+        "permanent_gap": false
+      }
+    }
+  ],
+  "wire": {
+    "OutboxAck": { "through_epoch": 41 }
+  }
+}

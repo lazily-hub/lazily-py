@@ -1,0 +1,43 @@
+{
+  "description": "ResyncCoordinator gap recovery + convergence (protocol.md § Reliable Sync, #resync-coord). A receiver drops an arbitrary suffix of deltas, detects the gap on the next delta (base_epoch > last_epoch), emits ResyncRequest, applies the covering Snapshot, and reaches the SAME graph state as a receiver that saw every delta — gap recovery is state-equivalent, not lossy (proven ReliableSync.resync_convergence). The decision function is the ResyncCoordinator.ingest table: base_epoch == last_epoch -> Apply; base_epoch < last_epoch -> Ignore (re-delivery); base_epoch > last_epoch -> RequestSnapshot { from: last_epoch }. ResyncRequest / Snapshot `wire` frames validate against schemas/reliable-sync.json and schemas/snapshot.json.",
+  "protocol_version": 1,
+  "kind": "ReliableSync",
+  "model": "ResyncCoordinator",
+  "scenarios": [
+    {
+      "name": "drop_suffix_then_resync_converges",
+      "description": "Receiver A applies epochs 1,2 then MISSES the delta 2->3 (dropped). The next inbound delta 3->4 has base_epoch=3 > last_epoch=2 -> gap. A emits ResyncRequest{from:2}, the sender replies Snapshot{epoch:4}, A applies it. A's final graph equals receiver B's, which saw every delta 1->2->3->4.",
+      "start_last_epoch": 1,
+      "inbound": [
+        { "frame": { "Delta": { "base_epoch": 1, "epoch": 2, "ops": [ { "CellSet": { "node": 1, "payload": { "Inline": [10] } } } ] } }, "expect_action": "Apply", "last_epoch_after": 2 },
+        { "dropped": true, "note": "delta 2->3 (CellSet node 2 = 20) never arrives at receiver A" },
+        { "frame": { "Delta": { "base_epoch": 3, "epoch": 4, "ops": [ { "CellSet": { "node": 3, "payload": { "Inline": [30] } } } ] } }, "expect_action": "RequestSnapshot", "request_from": 2, "last_epoch_after": 2 },
+        { "frame": { "Snapshot": { "epoch": 4, "nodes": [ { "node": 1, "type_tag": "u64", "state": { "Payload": [10] } }, { "node": 2, "type_tag": "u64", "state": { "Payload": [20] } }, { "node": 3, "type_tag": "u64", "state": { "Payload": [30] } } ], "edges": [], "roots": [1, 2, 3] } }, "expect_action": "Apply", "last_epoch_after": 4 }
+      ],
+      "expect": {
+        "final_last_epoch": 4,
+        "resync_requests_emitted": 1,
+        "converged_nodes": { "1": [10], "2": [20], "3": [30] },
+        "equals_no_drop_receiver": true
+      }
+    },
+    {
+      "name": "single_request_per_gap",
+      "description": "While resyncing (request outstanding, covering Snapshot not yet applied), further ahead-of-cursor deltas are Ignored and do NOT emit duplicate ResyncRequests. Bounds request storms under a burst.",
+      "start_last_epoch": 2,
+      "inbound": [
+        { "frame": { "Delta": { "base_epoch": 3, "epoch": 4, "ops": [] } }, "expect_action": "RequestSnapshot", "request_from": 2, "last_epoch_after": 2 },
+        { "frame": { "Delta": { "base_epoch": 4, "epoch": 5, "ops": [] } }, "expect_action": "Ignore", "reason": "resyncing_suppress_duplicate_request", "last_epoch_after": 2 },
+        { "frame": { "Delta": { "base_epoch": 5, "epoch": 6, "ops": [] } }, "expect_action": "Ignore", "reason": "resyncing_suppress_duplicate_request", "last_epoch_after": 2 },
+        { "frame": { "Snapshot": { "epoch": 6, "nodes": [], "edges": [], "roots": [] } }, "expect_action": "Apply", "last_epoch_after": 6 }
+      ],
+      "expect": {
+        "final_last_epoch": 6,
+        "resync_requests_emitted": 1
+      }
+    }
+  ],
+  "wire": {
+    "ResyncRequest": { "from_epoch": 2 }
+  }
+}

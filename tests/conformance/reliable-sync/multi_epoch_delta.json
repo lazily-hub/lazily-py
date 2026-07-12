@@ -1,0 +1,64 @@
+{
+  "description": "Multi-epoch-span Delta (protocol.md § Multi-epoch-span delta, #lzsync). A Delta MAY advance more than one epoch in a single frame (epoch > base_epoch + 1) when the producer's epoch is a cumulative accepted-event count that coalesces several events into one flush. Normative: applying one Delta { base_epoch, epoch, ops } equals applying the same ops in order as a run of unit deltas advancing last_epoch from base_epoch to epoch (batch = fold, proven ReliableSync.multi_epoch_apply_eq_fold); last_epoch advances atomically to epoch only after the whole op list applies; the gap rule (base_epoch == last_epoch) is unchanged. The span-1 case (epoch == base_epoch + 1) is the ordinary Delta, so every existing Delta fixture stays valid. The `wire` frame validates against schemas/delta.json.",
+  "protocol_version": 1,
+  "kind": "ReliableSync",
+  "model": "MultiEpochDelta",
+  "assertions": {
+    "base_epoch": 40,
+    "epoch": 43,
+    "span": 3,
+    "is_multi_epoch": true,
+    "op_count": 3
+  },
+  "scenarios": [
+    {
+      "name": "span_3_applies_equal_to_unit_fold",
+      "description": "A receiver at last_epoch=40 applying this one span-3 delta reaches the same graph and the same last_epoch=43 as a receiver that applied three unit deltas (40->41, 41->42, 42->43) carrying the same ops in order.",
+      "receiver_last_epoch": 40,
+      "delta": {
+        "base_epoch": 40,
+        "epoch": 43,
+        "ops": [
+          { "CellSet": { "node": 1, "payload": { "Inline": [10] } } },
+          { "CellSet": { "node": 2, "payload": { "Inline": [20] } } },
+          { "SlotValue": { "node": 3, "payload": { "Inline": [30] } } }
+        ]
+      },
+      "equivalent_unit_fold": [
+        { "base_epoch": 40, "epoch": 41, "ops": [ { "CellSet": { "node": 1, "payload": { "Inline": [10] } } } ] },
+        { "base_epoch": 41, "epoch": 42, "ops": [ { "CellSet": { "node": 2, "payload": { "Inline": [20] } } } ] },
+        { "base_epoch": 42, "epoch": 43, "ops": [ { "SlotValue": { "node": 3, "payload": { "Inline": [30] } } } ] }
+      ],
+      "expect": {
+        "action": "Apply",
+        "applied": true,
+        "receiver_last_epoch_after": 43,
+        "atomic_advance": true,
+        "fold_equivalent": true
+      }
+    },
+    {
+      "name": "gap_rule_unchanged_under_span",
+      "description": "A span-3 delta whose base_epoch != last_epoch is still a gap; the span does not relax gap detection.",
+      "receiver_last_epoch": 39,
+      "delta": { "base_epoch": 40, "epoch": 43, "ops": [] },
+      "expect": {
+        "action": "RequestSnapshot",
+        "request_from": 39,
+        "applied": false,
+        "receiver_last_epoch_after": 39
+      }
+    }
+  ],
+  "wire": {
+    "Delta": {
+      "base_epoch": 40,
+      "epoch": 43,
+      "ops": [
+        { "CellSet": { "node": 1, "payload": { "Inline": [10] } } },
+        { "CellSet": { "node": 2, "payload": { "Inline": [20] } } },
+        { "SlotValue": { "node": 3, "payload": { "Inline": [30] } } }
+      ]
+    }
+  }
+}

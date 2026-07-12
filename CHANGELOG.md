@@ -1,5 +1,27 @@
 ## Unreleased
 
+## 0.23.0
+
+Adds **Reliable Sync** (`#lzsync` + `#sync-driver`), the delivery-reliability
+layer over the `Snapshot`/`Delta`/`CrdtSync` planes (lazily-spec § Reliable
+Sync), matching the `lazily-rs` / `lazily-js` reference bindings:
+
+* **`ResyncCoordinator`** — receiver-side decision function (`Apply` /
+  `RequestSnapshot` / `Ignore`) over the inbound frame stream, multi-epoch-span
+  aware; single-request-per-gap resync suppression.
+* **`DurableOutbox`** (ABC) + **`InMemoryOutbox`** — sender-side at-least-once
+  contract: append-before-send, `ack_through` retention, `replay_from` cursor.
+* **`OrSet`** / **`WireLwwRegister`** — the OR-set (add-wins) and LWW liveness
+  cells that ride the CrdtSync plane.
+* **`SyncDriver`** + `IpcSink`/`IpcSource`/`Clock`/`SnapshotProvider` seams —
+  the full-duplex loop (drain → retain-on-fail → receive/route → advertise ack).
+* **`ResyncRequest`** / **`OutboxAck`** — two new `IpcMessage` control frames
+  (FFI message kinds 4 / 5), JSON round-tripping like the state frames.
+
+Replays the five canonical `conformance/reliable-sync/` fixtures plus the
+SyncDriver loop-shape tests. Full parity — Python is now ✅ on both reliable-sync
+coverage rows.
+
 ## 0.22.0
 
 Unifies the keyed collections on **one** generic primitive `ReactiveMap[K, V, H]`

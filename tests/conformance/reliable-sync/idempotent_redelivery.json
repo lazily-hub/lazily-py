@@ -1,0 +1,39 @@
+{
+  "description": "Idempotent re-delivery (protocol.md § Reliable Sync, #resync-coord + #durable-outbox). A Delta whose base_epoch < the receiver's last_epoch is a frame the receiver already folded (re-sent by the DurableOutbox on reconnect / retry). The ResyncCoordinator Ignores it, so at-least-once delivery yields exactly-once effect: net state is unchanged and last_epoch does not move. This is the receiver-side half of ReliableSync.outbox_at_least_once_exactly_once_effect. The OutboxAck `wire` frame validates against schemas/reliable-sync.json.",
+  "protocol_version": 1,
+  "kind": "ReliableSync",
+  "model": "ResyncCoordinator",
+  "scenarios": [
+    {
+      "name": "replayed_delta_is_ignored",
+      "description": "Receiver at last_epoch=42 receives a re-delivered delta 40->41 (base_epoch=40 < 42). It is Ignored; state and last_epoch are unchanged.",
+      "start_last_epoch": 42,
+      "state_before": { "1": [10] },
+      "inbound": [
+        { "frame": { "Delta": { "base_epoch": 40, "epoch": 41, "ops": [ { "CellSet": { "node": 1, "payload": { "Inline": [99] } } } ] } }, "expect_action": "Ignore", "reason": "base_epoch_below_last_epoch_already_applied", "last_epoch_after": 42 }
+      ],
+      "expect": {
+        "final_last_epoch": 42,
+        "state_after": { "1": [10] },
+        "net_effect_unchanged": true
+      }
+    },
+    {
+      "name": "duplicate_current_head_is_ignored",
+      "description": "An exact re-delivery of the last-applied delta (base_epoch below head) is also Ignored — a duplicate never double-applies.",
+      "start_last_epoch": 41,
+      "state_before": { "1": [10] },
+      "inbound": [
+        { "frame": { "Delta": { "base_epoch": 40, "epoch": 41, "ops": [ { "CellSet": { "node": 1, "payload": { "Inline": [10] } } } ] } }, "expect_action": "Ignore", "reason": "base_epoch_below_last_epoch_already_applied", "last_epoch_after": 41 }
+      ],
+      "expect": {
+        "final_last_epoch": 41,
+        "state_after": { "1": [10] },
+        "net_effect_unchanged": true
+      }
+    }
+  ],
+  "wire": {
+    "OutboxAck": { "through_epoch": 42 }
+  }
+}

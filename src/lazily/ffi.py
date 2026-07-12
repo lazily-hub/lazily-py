@@ -61,6 +61,8 @@ class LazilyFfiMessageKind(IntEnum):
     Snapshot = 1
     Delta = 2
     CrdtSync = 3
+    ResyncRequest = 4
+    OutboxAck = 5
 
 
 # A fixed-length header prefix for an FFI byte buffer: a small, stable preamble
@@ -100,6 +102,10 @@ def kind_of(message: IpcMessage) -> LazilyFfiMessageKind:
         return LazilyFfiMessageKind.Delta
     if "CrdtSync" in wire:
         return LazilyFfiMessageKind.CrdtSync
+    if "ResyncRequest" in wire:
+        return LazilyFfiMessageKind.ResyncRequest
+    if "OutboxAck" in wire:
+        return LazilyFfiMessageKind.OutboxAck
     return LazilyFfiMessageKind.Unknown
 
 
