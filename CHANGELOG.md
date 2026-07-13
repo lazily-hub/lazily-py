@@ -1,5 +1,21 @@
 ## Unreleased
 
+## 0.26.0
+
+### Added
+
+- **RelayCell — Phases 2–6 (`#relaycell`).** The algebra-typed conflating relay,
+  ported from lazily-rs: `RelayCell` (hot head under a `MergePolicy`, reactive
+  `BackpressurePolicy`, `Overflow` block/drop-newest/drop-oldest/conflate/spill,
+  demand-driven `depth`/`is_full`/`is_empty` slots; rejects `Conflate` for a
+  non-conflating policy), `SpillStore` paged durable tail (`reconstruct`
+  spill_lossless, `replay_unacked` idempotent replay, ack-before-reclaim),
+  `Transport` protocol (`InProcTransport`/`FramedTransport`), `Outbox`/`Inbox`
+  role facades (producer backpressure via `is_full`; remote credit meter), and
+  the Phase-6 policies `RatePolicy`/`WindowPolicy`/`ExpiryPolicy`/
+  `PriorityStorage`/`KeyedRelay`. Completes RelayCell parity across all 8
+  bindings.
+
 ## 0.25.0
 
 ### Added
