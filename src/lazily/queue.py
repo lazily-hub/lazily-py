@@ -77,11 +77,14 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .batch import batch
 from .cell import Cell
+from .slot import slot
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
+
+    from .slot import Slot
 
 
 class QueuePushError:
@@ -152,12 +155,17 @@ class QueueStorage[T](Protocol):
     """Pluggable FIFO storage backend for a :class:`QueueCell`.
 
     The shell / storage split keeps the reactive shell storage-agnostic: the
-    shell owns the reader-kind version cells and invalidation logic, the backend
+    shell owns the demand-driven reader-kinds and invalidation logic, the backend
     owns the actual FIFO data structure. The default backend is
     :class:`VecDequeStorage` (unbounded deque); future backends include a
     consensus-backed store or external-broker adapters.
 
-    A conforming backend MUST:
+    **Minimal required contract:** ``try_push`` / ``try_pop`` / ``len`` /
+    ``is_closed`` / ``close``. ``peek`` and ``capacity`` are **optional
+    capabilities** — a raw-channel-style backend that satisfies only the five
+    required methods is fully conforming; it simply has no ``head`` reader (no
+    ``peek``) and no ``is_full`` reader (unbounded). A conforming backend MUST
+    also:
 
     1. **FIFO order** — ``try_pop`` returns elements in ``try_push`` order.
     2. **Cardinality compatibility** — its native producer/consumer shape is a
@@ -182,17 +190,18 @@ class QueueStorage[T](Protocol):
         ...
 
     def peek(self) -> Any:
-        """Peek the current head element without removing it. ``None`` when
-        empty. The shell reads this to materialize its ``head`` reader-kind
-        cell."""
+        """**Optional capability.** Peek the current head element without
+        removing it, ``None`` when empty. The shell derives its ``head`` reader
+        from this; a backend without ``peek`` has no ``head`` reader."""
         ...
 
     def len(self) -> int:
-        """Current number of buffered elements."""
+        """Current number of buffered elements. **Required.**"""
         ...
 
     def capacity(self) -> int | None:
-        """Bounded capacity, or ``None`` for an unbounded backend."""
+        """**Optional capability.** Bounded capacity, or ``None`` for an
+        unbounded backend (the default when the method is absent)."""
         ...
 
     def is_closed(self) -> bool:
@@ -272,17 +281,18 @@ class VecDequeStorage[T]:
 
 
 class QueueReaderHandles[T]:
-    """Handles to all five reader-kind cells of a :class:`QueueCell`, for effects
-    that need to subscribe to several reader kinds at once."""
+    """Handles to all five reader-kinds of a :class:`QueueCell`, for effects that
+    need to subscribe to several reader kinds at once. The four derived
+    reader-kinds are demand-driven Slots; ``closed`` is a Cell (a direct input)."""
 
     __slots__ = ("closed", "head", "is_empty", "is_full", "len")
 
     def __init__(
         self,
-        head: Cell[T | None],
-        len: Cell[int],
-        is_empty: Cell[bool],
-        is_full: Cell[bool],
+        head: Slot[dict, dict, T | None],
+        len: Slot[dict, dict, int],
+        is_empty: Slot[dict, dict, bool],
+        is_full: Slot[dict, dict, bool],
         closed: Cell[bool],
     ) -> None:
         self.head = head
@@ -308,7 +318,16 @@ class QueueCell[T]:
     their reader kind changes (reader-kind independence).
     """
 
-    __slots__ = ("_closed", "_head", "_is_empty", "_is_full", "_len", "_storage", "ctx")
+    __slots__ = (
+        "_capacity",
+        "_closed",
+        "_head",
+        "_is_empty",
+        "_is_full",
+        "_len",
+        "_storage",
+        "ctx",
+    )
 
     ctx: dict
 
@@ -323,18 +342,32 @@ class QueueCell[T]:
         self._storage: QueueStorage[T] = (
             storage if storage is not None else VecDequeStorage(capacity=capacity)
         )
-        # Reader-kind version cells — initialized from the backend's current
-        # state. The `!=` (PartialEq) guard on `Cell.value` means a cell whose
-        # value does not change on a subsequent write is not invalidated — this
-        # is what implements reader-kind independence for free.
-        len_val = self._storage.len()
-        cap = self._storage.capacity()
-        is_full_val = cap is not None and len_val >= cap
-        self._head: Cell[T | None] = Cell(ctx, self._storage.peek())
-        self._len: Cell[int] = Cell(ctx, len_val)
-        self._is_empty: Cell[bool] = Cell(ctx, len_val == 0)
-        self._is_full: Cell[bool] = Cell(ctx, is_full_val)
-        self._closed: Cell[bool] = Cell(ctx, self._storage.is_closed())
+        storage_ = self._storage
+        # `capacity` and `peek` are optional storage capabilities (Phase 0
+        # #relaycell): a raw-channel backend exposes neither. Cache capacity once
+        # (it is contractually fixed) and resolve `peek` to a no-op when absent.
+        cap_fn = getattr(storage_, "capacity", None)
+        self._capacity: int | None = cap_fn() if cap_fn is not None else None
+        peek_fn = getattr(storage_, "peek", None)
+
+        # Reader-kinds are demand-driven memoized Slots (were eagerly-set Cells):
+        # each derives from storage on first read after invalidation and is reset
+        # only on an op that provably changes it (see `_invalidate_readers`). This
+        # gives reader-kind independence without deriving anything eagerly — an
+        # unobserved op does no derivation. `closed` stays a Cell (it is a direct
+        # input, set by `close`, not a derived value). py's Slot `reset` is lazy
+        # (pop cache + notify), so a reader with no Effect subscriber pays no
+        # eager work — store-without-cascade is inherent in the Slot model.
+        capacity_ = self._capacity
+        self._head: Slot[dict, dict, T | None] = slot(
+            lambda _ctx: peek_fn() if peek_fn is not None else None
+        )
+        self._len: Slot[dict, dict, int] = slot(lambda _ctx: storage_.len())
+        self._is_empty: Slot[dict, dict, bool] = slot(lambda _ctx: storage_.len() == 0)
+        self._is_full: Slot[dict, dict, bool] = slot(
+            lambda _ctx: capacity_ is not None and storage_.len() >= capacity_
+        )
+        self._closed: Cell[bool] = Cell(ctx, storage_.is_closed())
 
     @classmethod
     def with_capacity(cls, ctx: dict, capacity: int) -> QueueCell[T]:
@@ -350,26 +383,39 @@ class QueueCell[T]:
         state."""
         return cls(ctx, storage=storage)
 
-    def _sync_content(self) -> None:
-        """Re-derive the reader-kind cells from storage and write them back, in
-        one atomic invalidation pass (a :func:`~lazily.batch` groups the writes
-        so an observer never sees a partial state). The ``!=`` guard on
-        ``Cell.value`` suppresses invalidation for any cell whose value did not
-        change — this is the reader-kind independence law. ``closed`` is
-        intentionally NOT touched here: it only changes via :meth:`close`."""
-        len_val = self._storage.len()
-        cap = self._storage.capacity()
-        head_val = self._storage.peek()
-        is_empty_val = len_val == 0
-        is_full_val = cap is not None and len_val >= cap
+    def _invalidate_readers(
+        self, len_before: int, len_after: int, head_changed: bool
+    ) -> None:
+        """Reset exactly the reader-kind Slots whose derived value changed on a
+        successful op that took the queue from ``len_before`` to ``len_after``.
+        No reader value is derived here — a reset only pops the Slot's cache (and
+        notifies its subscribers), so each re-derives lazily on its next read;
+        an unobserved reader with no subscriber pays effectively nothing.
 
-        def writes() -> None:
-            self._head.value = head_val
-            self._len.value = len_val
-            self._is_empty.value = is_empty_val
-            self._is_full.value = is_full_val
+        ``head_changed`` is passed by the caller because head depends on op
+        *direction*, not just ``len`` (a pop always changes head; a push changes
+        it only from empty) — so head invalidation needs no ``peek``. ``closed``
+        is never touched here: it changes only via :meth:`close`.
+        """
+        ctx = self.ctx
+        cap = self._capacity
 
-        batch(writes)
+        def resets() -> None:
+            # `len` always changes on a successful op.
+            self._len.reset(ctx)
+            if (len_before == 0) != (len_after == 0):
+                self._is_empty.reset(ctx)
+            if cap is not None and (len_before >= cap) != (len_after >= cap):
+                self._is_full.reset(ctx)
+            if head_changed:
+                self._head.reset(ctx)
+
+        # Batch the resets: a push/pop is a single atomic op, so its reader-kinds
+        # must transition together. `batch` coalesces subscribing Effects'
+        # reruns to the boundary so an observer never sees a partial state (e.g.
+        # `len` bumped before `is_full` flips). Outside a batch nothing eager
+        # runs (Slot reset is lazy); only Effect subscribers rerun, once.
+        batch(resets)
 
     # -- mutators ------------------------------------------------------- #
 
@@ -381,9 +427,11 @@ class QueueCell[T]:
         ``None`` on success. On error the queue state is unchanged and no reader
         is invalidated.
         """
+        len_before = self._storage.len()
         result = self._storage.try_push(value)
         if result is None:
-            self._sync_content()
+            # Head changes on a push only when the queue was empty.
+            self._invalidate_readers(len_before, len_before + 1, len_before == 0)
         return result
 
     def try_pop(self) -> T | QueuePopError:
@@ -393,9 +441,11 @@ class QueueCell[T]:
         :attr:`QueuePopError.Closed` if closed and empty. Pop on a closed
         *non-empty* queue drains (returns the next element).
         """
+        len_before = self._storage.len()
         result = self._storage.try_pop()
         if not isinstance(result, QueuePopError):
-            self._sync_content()
+            # A successful pop always advances head and decrements len.
+            self._invalidate_readers(len_before, len_before - 1, True)
         return result
 
     def close(self) -> None:
@@ -413,25 +463,26 @@ class QueueCell[T]:
     def head(self) -> T | None:
         """Reactive read of the current head value. ``None`` when the queue is
         empty. A reader is invalidated when the head value *changes* — every
-        pop, and a push only when transitioning from empty."""
-        return self._head.value
+        pop, and a push only when transitioning from empty. Trivially ``None``
+        when the backend has no ``peek`` capability."""
+        return self._head(self.ctx)
 
     def len(self) -> int:
         """Reactive read of the number of buffered elements. Invalidated
         whenever the count changes (every successful push/pop)."""
-        return self._len.value
+        return self._len(self.ctx)
 
     def is_empty(self) -> bool:
         """Reactive emptiness check. Invalidated only on the empty ↔ non-empty
         transition."""
-        return self._is_empty.value
+        return self._is_empty(self.ctx)
 
     def is_full(self) -> bool:
         """Reactive fullness check (only meaningful when the backend is bounded).
         Invalidated on the full ↔ not-full transition — this is the backpressure
         signal. For an unbounded backend this is always ``False`` and never
         invalidates."""
-        return self._is_full.value
+        return self._is_full(self.ctx)
 
     def is_closed(self) -> bool:
         """Reactive read of the closed flag. Invalidated only on the open →
@@ -441,8 +492,9 @@ class QueueCell[T]:
     # -- reader-kind cell handles (advanced wiring) --------------------- #
 
     def reader_handles(self) -> QueueReaderHandles[T]:
-        """Handles to the reader-kind cells, for effects that subscribe to
-        multiple reader kinds at once."""
+        """Handles to the reader-kinds, for effects that subscribe to multiple
+        reader kinds at once. The four derived reader-kinds are demand-driven
+        Slots; ``closed`` is a Cell (a direct input)."""
         return QueueReaderHandles(
             head=self._head,
             len=self._len,
@@ -454,8 +506,9 @@ class QueueCell[T]:
     # -- non-reactive storage access ------------------------------------ #
 
     def capacity(self) -> int | None:
-        """The backend's capacity, or ``None`` if unbounded."""
-        return self._storage.capacity()
+        """The backend's capacity, or ``None`` if unbounded. Cached at
+        construction (capacity is a fixed backend property)."""
+        return self._capacity
 
     def elements(self) -> list[T]:
         """Snapshot the buffered elements in FIFO order. Non-reactive — for

@@ -364,15 +364,17 @@ def test_reader_handles_expose_all_cells() -> None:
     ctx: dict = {}
     q: QueueCell[int] = QueueCell(ctx)
     handles: QueueReaderHandles[int] = q.reader_handles()
-    assert handles.head.value is None
-    assert handles.len.value == 0
-    assert handles.is_empty.value is True
-    assert handles.is_full.value is False
+    # head/len/is_empty/is_full are demand-driven Slots (call with ctx);
+    # closed stays a Cell (a direct input).
+    assert handles.head(ctx) is None
+    assert handles.len(ctx) == 0
+    assert handles.is_empty(ctx) is True
+    assert handles.is_full(ctx) is False
     assert handles.closed.value is False
 
     q.try_push(7)
-    assert handles.head.value == 7
-    assert handles.len.value == 1
+    assert handles.head(ctx) == 7
+    assert handles.len(ctx) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -406,3 +408,85 @@ def test_vecdeque_storage_with_capacity_classmethod() -> None:
     assert s.capacity() == 3
     s.try_push("x")
     assert s.elements() == ["x"]
+
+
+# ---------------------------------------------------------------------------
+# Minimal contract (Phase 0, #relaycell): a raw-channel-style backend that
+# implements ONLY try_push / try_pop / len / is_closed / close — no peek, no
+# capacity — is fully conforming; it just has no head/is_full reader.
+# ---------------------------------------------------------------------------
+
+
+class MinimalFifoStorage:
+    """Raw-channel-style backend: only the five required methods."""
+
+    def __init__(self) -> None:
+        self._elements: deque = deque()
+        self._closed = False
+
+    def try_push(self, value):
+        if self._closed:
+            return QueuePushError.Closed
+        self._elements.append(value)
+        return None
+
+    def try_pop(self):
+        if self._elements:
+            return self._elements.popleft()
+        return QueuePopError.Closed if self._closed else QueuePopError.Empty
+
+    def len(self) -> int:
+        return len(self._elements)
+
+    def is_closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        self._closed = True
+
+    # NB: no peek(), no capacity().
+
+
+def test_raw_channel_backend_conforms_to_minimal_contract() -> None:
+    ctx: dict = {}
+    q: QueueCell[int] = QueueCell(ctx, storage=MinimalFifoStorage())
+
+    assert q.is_empty() is True
+    assert q.try_push(1) is None
+    assert q.try_push(2) is None
+    assert q.len() == 2
+    assert q.is_empty() is False
+
+    # No peek capability → head is trivially None; no capacity → never full.
+    assert q.head() is None
+    assert q.is_full() is False
+    assert q.capacity() is None
+
+    # FIFO drain from try_pop alone.
+    assert q.try_pop() == 1
+    assert q.try_pop() == 2
+    assert q.is_empty() is True
+
+    # Closure lifecycle: Closed distinct from Empty; push-after-close rejected.
+    q.close()
+    assert q.is_closed() is True
+    assert q.try_push(3) == QueuePushError.Closed
+    assert q.try_pop() == QueuePopError.Closed
+
+
+def test_raw_channel_reader_kinds_stay_reactive() -> None:
+    ctx: dict = {}
+    q: QueueCell[int] = QueueCell(ctx, storage=MinimalFifoStorage())
+
+    log: list[int] = []
+
+    @effect
+    def len_watch(ctx) -> None:
+        log.append(q.len())
+
+    len_watch(ctx)
+    assert log == [0]
+    q.try_push(10)
+    assert log == [0, 1]
+    q.try_pop()
+    assert log == [0, 1, 0]
