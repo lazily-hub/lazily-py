@@ -51,6 +51,7 @@ notes and platform carve-outs lives in
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Broadcast topic (`TopicCell`) — independent cursors + durable replay + safe GC (`#lztopiccell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Competing-consumer work queue (`WorkQueueCell`) — exclusive leases + ack/nack + redelivery + DLQ (`#lzworkqueue`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Merge algebra + `MergeCell` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ MergeCell<KeepLatest>`, `Reactive`/`Source` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -302,6 +303,22 @@ batch(lambda: (q.try_push("p1"), q.try_push("p2")))
 q.close()
 assert q.is_closed()
 assert q.try_push("x").label == "Closed"
+```
+
+### Competing-consumer work queue
+
+`WorkQueueCell` provides exclusive FIFO claims with visibility deadlines,
+worker-scoped acknowledgements, tail retries, and bounded dead-letter handling.
+Item ids survive retries while each claim gets a fresh delivery id.
+
+```python
+from lazily import WorkQueueCell
+
+work = WorkQueueCell[str](ctx, visibility_timeout=10, max_deliveries=3)
+work.push("job")
+delivery = work.claim("worker-a", 100)
+assert delivery is not None
+assert work.ack("worker-a", delivery.delivery_id)
 ```
 
 The reader-kind independence law (a push to a non-empty queue does not change

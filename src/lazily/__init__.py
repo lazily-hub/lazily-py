@@ -201,6 +201,12 @@ __all__ = [
     "WindowPolicy",
     "WireLwwRegister",
     "WireStamp",
+    "WorkQueueCell",
+    "WorkQueueDeadLetter",
+    "WorkQueueDeadLetterReason",
+    "WorkQueueDelivery",
+    "WorkQueueItem",
+    "WorkQueueReaderHandles",
     "align",
     "applied_receipt",
     "assign_stable_keys",
@@ -498,3 +504,11 @@ from .transport import (
 )
 from .tree import CellTree, TreeNode
 from .types import LazilyCallable
+from .work_queue import (
+    WorkQueueCell,
+    WorkQueueDeadLetter,
+    WorkQueueDeadLetterReason,
+    WorkQueueDelivery,
+    WorkQueueItem,
+    WorkQueueReaderHandles,
+)
