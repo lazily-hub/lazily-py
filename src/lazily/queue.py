@@ -69,10 +69,17 @@ __all__ = [
     "QueuePushError",
     "QueueReaderHandles",
     "QueueStorage",
+    "TopicCell",
+    "TopicDurability",
+    "TopicSnapshot",
+    "TopicSubscribeOutcome",
+    "TopicSubscriptionSnapshot",
     "VecDequeStorage",
 ]
 
 from collections import deque
+from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .batch import batch
@@ -525,3 +532,194 @@ class QueueCell[T]:
             "`elements()` snapshot; use a VecDequeStorage-backed QueueCell for fixture "
             "verification"
         )
+
+
+class TopicDurability(str, Enum):
+    """Whether a subscription survives disconnect and participates in GC."""
+
+    Durable = "durable"
+    Ephemeral = "ephemeral"
+
+
+class TopicSubscribeOutcome(str, Enum):
+    """Result of subscribing a stable subscriber id."""
+
+    Subscribed = "subscribed"
+    Reconnected = "reconnected"
+    AlreadySubscribed = "already_subscribed"
+
+
+@dataclass(frozen=True, slots=True)
+class TopicSubscriptionSnapshot:
+    """Serializable absolute cursor state for one topic subscriber."""
+
+    subscriber_id: str
+    cursor: int
+    durability: TopicDurability
+    connected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TopicSnapshot[T]:
+    """Serializable retained log and subscription state."""
+
+    base_offset: int
+    elements: tuple[T, ...]
+    subscriptions: tuple[TopicSubscriptionSnapshot, ...]
+
+
+@dataclass(slots=True)
+class _TopicSubscription:
+    cursor: int
+    durability: TopicDurability
+    connected: bool
+
+
+class TopicCell[T]:
+    """Broadcast log with an independent reactive cursor per subscriber."""
+
+    def __init__(self, ctx: dict, snapshot: TopicSnapshot[T] | None = None) -> None:
+        self._ctx = ctx
+        self._base_offset = 0 if snapshot is None else snapshot.base_offset
+        self._elements: deque[T] = deque(() if snapshot is None else snapshot.elements)
+        self._subscriptions: dict[str, _TopicSubscription] = {}
+        self._readers: dict[str, slot[dict, list[T]]] = {}
+        if snapshot is not None:
+            tail = self.tail_offset
+            for saved in snapshot.subscriptions:
+                if not self._base_offset <= saved.cursor <= tail:
+                    raise ValueError(
+                        "topic subscription cursor is outside the retained log"
+                    )
+                self._subscriptions[saved.subscriber_id] = _TopicSubscription(
+                    saved.cursor, saved.durability, saved.connected
+                )
+                self._ensure_reader(saved.subscriber_id)
+
+    @property
+    def base_offset(self) -> int:
+        return self._base_offset
+
+    @property
+    def tail_offset(self) -> int:
+        return self._base_offset + len(self._elements)
+
+    def _ensure_reader(self, subscriber_id: str) -> slot[dict, list[T]]:
+        reader = self._readers.get(subscriber_id)
+        if reader is None:
+            reader = slot(lambda _ctx, sid=subscriber_id: self.read_untracked(sid))
+            self._readers[subscriber_id] = reader
+        return reader
+
+    def _reset_readers(self, subscriber_ids: list[str]) -> None:
+        readers = [self._readers[sid] for sid in subscriber_ids if sid in self._readers]
+        if readers:
+            batch(lambda: [reader.reset(self._ctx) for reader in readers])
+
+    def subscribe(
+        self,
+        subscriber_id: str,
+        durability: TopicDurability = TopicDurability.Durable,
+    ) -> TopicSubscribeOutcome:
+        existing = self._subscriptions.get(subscriber_id)
+        if existing is not None:
+            if existing.connected:
+                return TopicSubscribeOutcome.AlreadySubscribed
+            if existing.durability is not TopicDurability.Durable:
+                raise ValueError("only durable subscriptions can reconnect")
+            existing.connected = True
+            self._reset_readers([subscriber_id])
+            return TopicSubscribeOutcome.Reconnected
+        self._subscriptions[subscriber_id] = _TopicSubscription(
+            self.tail_offset, durability, True
+        )
+        self._ensure_reader(subscriber_id)
+        return TopicSubscribeOutcome.Subscribed
+
+    def reconnect(self, subscriber_id: str) -> None:
+        subscription = self._subscriptions[subscriber_id]
+        if subscription.durability is not TopicDurability.Durable:
+            raise ValueError("only durable subscriptions can reconnect")
+        if not subscription.connected:
+            subscription.connected = True
+            self._reset_readers([subscriber_id])
+
+    def disconnect(self, subscriber_id: str) -> None:
+        subscription = self._subscriptions[subscriber_id]
+        if not subscription.connected:
+            return
+        subscription.connected = False
+        if subscription.durability is TopicDurability.Ephemeral:
+            del self._subscriptions[subscriber_id]
+        self._reset_readers([subscriber_id])
+
+    def publish(self, value: T) -> int:
+        """Append a value and invalidate every connected reader independently."""
+
+        offset = self.tail_offset
+        self._elements.append(value)
+        self._reset_readers(
+            [sid for sid, sub in self._subscriptions.items() if sub.connected]
+        )
+        return offset
+
+    def read_untracked(self, subscriber_id: str) -> list[T]:
+        subscription = self._subscriptions[subscriber_id]
+        start = subscription.cursor - self._base_offset
+        return list(self._elements)[start:]
+
+    def read_stream(self, subscriber_id: str) -> list[T]:
+        return self._ensure_reader(subscriber_id)(self._ctx)
+
+    def read(self, subscriber_id: str) -> T | None:
+        stream = self.read_stream(subscriber_id)
+        return stream[0] if stream else None
+
+    def advance(self, subscriber_id: str, count: int = 1) -> int:
+        if count < 0:
+            raise ValueError("advance count must be non-negative")
+        subscription = self._subscriptions[subscriber_id]
+        new_cursor = subscription.cursor + count
+        if new_cursor > self.tail_offset:
+            raise ValueError("cannot advance beyond the topic tail")
+        if new_cursor != subscription.cursor:
+            subscription.cursor = new_cursor
+            self._reset_readers([subscriber_id])
+        return new_cursor
+
+    def gc(self) -> int:
+        durable_cursors = [
+            sub.cursor
+            for sub in self._subscriptions.values()
+            if sub.durability is TopicDurability.Durable
+        ]
+        frontier = min(durable_cursors, default=self.tail_offset)
+        removed = frontier - self._base_offset
+        for _ in range(removed):
+            self._elements.popleft()
+        self._base_offset = frontier
+        return removed
+
+    def restart(self) -> None:
+        """Model a process restart; persisted state and readers are unchanged."""
+
+    def elements(self) -> list[T]:
+        return list(self._elements)
+
+    def subscription(self, subscriber_id: str) -> TopicSubscriptionSnapshot | None:
+        sub = self._subscriptions.get(subscriber_id)
+        if sub is None:
+            return None
+        return TopicSubscriptionSnapshot(
+            subscriber_id, sub.cursor, sub.durability, sub.connected
+        )
+
+    def reader_handle(self, subscriber_id: str) -> slot[dict, list[T]]:
+        return self._ensure_reader(subscriber_id)
+
+    def snapshot(self) -> TopicSnapshot[T]:
+        subscriptions = tuple(
+            TopicSubscriptionSnapshot(sid, sub.cursor, sub.durability, sub.connected)
+            for sid, sub in sorted(self._subscriptions.items())
+        )
+        return TopicSnapshot(self._base_offset, tuple(self._elements), subscriptions)

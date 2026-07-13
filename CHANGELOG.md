@@ -1,5 +1,14 @@
 ## Unreleased
 
+## 0.27.0
+
+### Added
+
+- **`TopicCell` broadcast topics (`#lztopiccell`).** Independent absolute
+  subscriber cursors, durable offline replay, ephemeral disconnect lifecycle,
+  per-subscriber reactive invalidation, snapshot restore, and safe prefix GC at
+  the slowest durable cursor.
+
 ## 0.26.0
 
 ### Added

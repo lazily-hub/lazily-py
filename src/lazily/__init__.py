@@ -390,6 +390,11 @@ from .queue import (
     QueuePushError,
     QueueReaderHandles,
     QueueStorage,
+    TopicCell,
+    TopicDurability,
+    TopicSnapshot,
+    TopicSubscribeOutcome,
+    TopicSubscriptionSnapshot,
     VecDequeStorage,
 )
 from .reconciliation import Level, ReconcileOp, reconcile_ops
