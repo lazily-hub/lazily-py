@@ -29,10 +29,12 @@ through the JSON codec like the state frames.
 
 from __future__ import annotations
 
+import sqlite3
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from .ipc import Delta, IpcMessage, OutboxAck, ResyncRequest, WireStamp
@@ -47,12 +49,17 @@ __all__ = [
     "DriverError",
     "DurableOutbox",
     "InMemoryOutbox",
+    "InMemoryStore",
     "OrSet",
+    "Outbox",
+    "OutboxStore",
     "Progress",
     "ResyncAction",
     "ResyncActionKind",
     "ResyncCoordinator",
     "SnapshotProvider",
+    "SqliteOutbox",
+    "SqliteStore",
     "SyncDriver",
     "WireLwwRegister",
 ]
@@ -229,36 +236,179 @@ class DurableOutbox(ABC):
         diagnostics/tests."""
 
 
-class InMemoryOutbox(DurableOutbox):
-    """In-memory :class:`DurableOutbox` — correct within a process lifetime;
-    the default."""
+class OutboxStore(Protocol):
+    """Dumb ordered byte storage for :class:`Outbox`.
 
-    __slots__ = ("_acked_through", "_entries")
+    Serialization, cursor monotonicity, pruning, and replay ordering stay in the
+    shared protocol; persistent adapters implement only these five operations.
+    """
 
-    def __init__(self) -> None:
-        self._entries: list[tuple[int, IpcMessage]] = []
-        self._acked_through = 0
+    def put(self, epoch: int, frame: bytes) -> None: ...
+
+    def delete_through(self, epoch: int) -> None: ...
+
+    def scan_after(self, cursor: int) -> list[tuple[int, bytes]]: ...
+
+    def load_cursor(self) -> int: ...
+
+    def save_cursor(self, epoch: int) -> None: ...
+
+
+class Outbox[S: OutboxStore](DurableOutbox):
+    """Storage-independent append/ack/prune/replay protocol."""
+
+    __slots__ = ("_acked_through", "_store")
+
+    def __init__(self, store: S) -> None:
+        self._store = store
+        self._acked_through = store.load_cursor()
 
     @property
     def acked_through(self) -> int:
-        """The highest acked epoch (retention cursor)."""
+        """The highest peer acknowledgement loaded or observed."""
         return self._acked_through
 
+    @property
+    def store(self) -> S:
+        return self._store
+
     def append(self, epoch: int, msg: IpcMessage) -> None:
-        self._entries.append((epoch, msg))
+        self._store.put(epoch, msg.encode_json())
 
     def ack_through(self, epoch: int) -> None:
         if epoch > self._acked_through:
             self._acked_through = epoch
-        self._entries = [(e, m) for (e, m) in self._entries if e > self._acked_through]
+            self._store.save_cursor(epoch)
+        self._store.delete_through(self._acked_through)
 
     def replay_from(self, cursor: int) -> list[tuple[int, IpcMessage]]:
-        out = [(e, m) for (e, m) in self._entries if e > cursor]
-        out.sort(key=lambda pair: pair[0])
-        return out
+        effective_cursor = max(cursor, self._acked_through)
+        return [
+            (epoch, IpcMessage.decode_json(frame))
+            for epoch, frame in self._store.scan_after(effective_cursor)
+        ]
 
     def retained_epochs(self) -> list[int]:
-        return sorted(e for (e, _) in self._entries)
+        return [epoch for epoch, _frame in self._store.scan_after(self._acked_through)]
+
+
+class InMemoryStore:
+    """Ordered process-local :class:`OutboxStore`."""
+
+    __slots__ = ("_cursor", "_entries")
+
+    def __init__(self) -> None:
+        self._entries: dict[int, bytes] = {}
+        self._cursor = 0
+
+    def put(self, epoch: int, frame: bytes) -> None:
+        self._entries[epoch] = bytes(frame)
+
+    def delete_through(self, epoch: int) -> None:
+        self._entries = {e: frame for e, frame in self._entries.items() if e > epoch}
+
+    def scan_after(self, cursor: int) -> list[tuple[int, bytes]]:
+        return [
+            (epoch, self._entries[epoch])
+            for epoch in sorted(self._entries)
+            if epoch > cursor
+        ]
+
+    def load_cursor(self) -> int:
+        return self._cursor
+
+    def save_cursor(self, epoch: int) -> None:
+        self._cursor = max(self._cursor, epoch)
+
+
+class InMemoryOutbox(Outbox[InMemoryStore]):
+    """The default outbox, durable for the current process lifetime."""
+
+    def __init__(self) -> None:
+        super().__init__(InMemoryStore())
+
+
+OUTBOX_SCHEMA = """
+CREATE TABLE IF NOT EXISTS reliable_sync_outbox (
+    document_hash TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    frame_json BLOB NOT NULL,
+    PRIMARY KEY (document_hash, epoch)
+);
+CREATE TABLE IF NOT EXISTS reliable_sync_outbox_cursor (
+    document_hash TEXT PRIMARY KEY,
+    acked_through INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+class SqliteStore:
+    """SQLite :class:`OutboxStore`, namespaced by document hash."""
+
+    __slots__ = ("_connection", "document_hash")
+
+    def __init__(self, path: str | Path, document_hash: str) -> None:
+        path = Path(path)
+        if str(path) != ":memory:":
+            path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(path)
+        self.document_hash = document_hash
+        self._connection.executescript(OUTBOX_SCHEMA)
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def put(self, epoch: int, frame: bytes) -> None:
+        with self._connection:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO reliable_sync_outbox "
+                "(document_hash, epoch, frame_json) VALUES (?, ?, ?)",
+                (self.document_hash, epoch, frame),
+            )
+
+    def delete_through(self, epoch: int) -> None:
+        with self._connection:
+            self._connection.execute(
+                "DELETE FROM reliable_sync_outbox "
+                "WHERE document_hash = ? AND epoch <= ?",
+                (self.document_hash, epoch),
+            )
+
+    def scan_after(self, cursor: int) -> list[tuple[int, bytes]]:
+        rows = self._connection.execute(
+            "SELECT epoch, frame_json FROM reliable_sync_outbox "
+            "WHERE document_hash = ? AND epoch > ? ORDER BY epoch ASC",
+            (self.document_hash, cursor),
+        )
+        return [(int(epoch), bytes(frame)) for epoch, frame in rows]
+
+    def load_cursor(self) -> int:
+        row = self._connection.execute(
+            "SELECT acked_through FROM reliable_sync_outbox_cursor "
+            "WHERE document_hash = ?",
+            (self.document_hash,),
+        ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def save_cursor(self, epoch: int) -> None:
+        with self._connection:
+            self._connection.execute(
+                "INSERT INTO reliable_sync_outbox_cursor "
+                "(document_hash, acked_through) VALUES (?, ?) "
+                "ON CONFLICT(document_hash) DO UPDATE SET "
+                "acked_through = MAX(acked_through, excluded.acked_through)",
+                (self.document_hash, epoch),
+            )
+
+
+class SqliteOutbox(Outbox[SqliteStore]):
+    """Durable SQLite outbox ready for restart/reconnect replay."""
+
+    def __init__(self, path: str | Path, document_hash: str) -> None:
+        super().__init__(SqliteStore(path, document_hash))
+
+    def close(self) -> None:
+        self.store.close()
 
 
 # ---------------------------------------------------------------------------

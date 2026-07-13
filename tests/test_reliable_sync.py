@@ -13,7 +13,6 @@ backstop lazily-formal ``ReliableSync.lean``.
 from __future__ import annotations
 
 import json
-import tempfile
 from collections import deque
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from lazily import (
     Delta,
     DriverError,
     InMemoryOutbox,
+    InMemoryStore,
     IpcMessage,
     OrSet,
     OutboxAck,
@@ -28,16 +28,21 @@ from lazily import (
     ResyncCoordinator,
     ResyncRequest,
     Snapshot,
+    SqliteOutbox,
+    SqliteStore,
     SyncDriver,
     WireLwwRegister,
     WireStamp,
 )
-from lazily.reliable_sync import DurableOutbox
+from lazily.reliable_sync import Outbox
 
 
 _LOCAL_FIXTURES = Path(__file__).resolve().parent / "conformance" / "reliable-sync"
 _SPEC_FIXTURES = (
-    Path(__file__).resolve().parents[2] / "lazily-spec" / "conformance" / "reliable-sync"
+    Path(__file__).resolve().parents[2]
+    / "lazily-spec"
+    / "conformance"
+    / "reliable-sync"
 )
 
 
@@ -108,7 +113,9 @@ def test_multi_epoch_delta() -> None:
 
     gap = _scenario(fx, "gap_rule_unchanged_under_span")
     gc = ResyncCoordinator(gap["receiver_last_epoch"])
-    res = gc.ingest_delta(Delta.new(gap["delta"]["base_epoch"], gap["delta"]["epoch"], []))
+    res = gc.ingest_delta(
+        Delta.new(gap["delta"]["base_epoch"], gap["delta"]["epoch"], [])
+    )
     assert res.is_request_snapshot
     assert res.from_epoch == gap["expect"]["request_from"]
     assert gc.last_epoch == gap["receiver_last_epoch"]
@@ -166,54 +173,6 @@ def test_idempotent_redelivery() -> None:
         assert coord.last_epoch == sc["expect"]["final_last_epoch"]
 
 
-# ---------------------------------------------------------------------------
-# a reference file-backed durable outbox (crash-replay test helper)
-# ---------------------------------------------------------------------------
-
-
-class FileOutbox(DurableOutbox):
-    """Reference file-backed :class:`DurableOutbox`: one JSON ``[epoch, wire]``
-    record per line. Reopened from disk to model a crash/restart."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.acked_through = 0
-        if not path.exists():
-            path.write_text("")
-
-    def _read_all(self) -> list[tuple[int, IpcMessage]]:
-        out: list[tuple[int, IpcMessage]] = []
-        for line in self.path.read_text().splitlines():
-            if not line.strip():
-                continue
-            epoch, wire = json.loads(line)
-            out.append((epoch, IpcMessage.from_wire(wire)))
-        return out
-
-    def append(self, epoch: int, msg: IpcMessage) -> None:
-        with self.path.open("a") as fh:
-            fh.write(json.dumps([epoch, msg.to_wire()], separators=(",", ":")) + "\n")
-
-    def ack_through(self, epoch: int) -> None:
-        if epoch > self.acked_through:
-            self.acked_through = epoch
-        retained = [(e, m) for (e, m) in self._read_all() if e > self.acked_through]
-        self.path.write_text(
-            "".join(
-                json.dumps([e, m.to_wire()], separators=(",", ":")) + "\n"
-                for (e, m) in retained
-            )
-        )
-
-    def replay_from(self, cursor: int) -> list[tuple[int, IpcMessage]]:
-        out = [(e, m) for (e, m) in self._read_all() if e > cursor]
-        out.sort(key=lambda pair: pair[0])
-        return out
-
-    def retained_epochs(self) -> list[int]:
-        return sorted(e for (e, _) in self._read_all())
-
-
 def _frames_of(sc: dict, key: str) -> list[tuple[int, IpcMessage]]:
     return [(e["epoch"], IpcMessage.from_wire(e["frame"])) for e in sc[key]]
 
@@ -223,39 +182,40 @@ def _frames_of(sc: dict, key: str) -> list[tuple[int, IpcMessage]]:
 # ---------------------------------------------------------------------------
 
 
-def test_outbox_replay_after_crash() -> None:
+def test_outbox_replay_after_crash(tmp_path: Path) -> None:
     fx = _load_fixture("outbox_replay_after_crash.json")
     sc = _scenario(fx, "crash_between_append_and_ack_replays_on_reconnect")
     appended = _frames_of(sc, "appended")
     ack = sc["ack_through"]
     cursor = sc["reconnect_cursor"]
 
-    with tempfile.TemporaryDirectory(prefix="lz_outbox_py_") as directory:
-        path = Path(directory) / "outbox.jsonl"
+    path = tmp_path / "outbox.sqlite3"
 
-        mem = InMemoryOutbox()
-        file = FileOutbox(path)
-        for e, m in appended:
-            mem.append(e, m)
-            file.append(e, m)
-        mem.ack_through(ack)
-        file.ack_through(ack)
+    mem = InMemoryOutbox()
+    durable = SqliteOutbox(path, "doc")
+    for e, m in appended:
+        mem.append(e, m)
+        durable.append(e, m)
+    mem.ack_through(ack)
+    durable.ack_through(ack)
 
-        assert mem.retained_epochs() == sc["expect"]["retained_after_ack"]
-        assert file.retained_epochs() == sc["expect"]["retained_after_ack"]
+    assert mem.retained_epochs() == sc["expect"]["retained_after_ack"]
+    assert durable.retained_epochs() == sc["expect"]["retained_after_ack"]
+    durable.close()
 
-        # "crash": reopen the durable file outbox from disk.
-        file = FileOutbox(path)
-        replay = file.replay_from(cursor)
-        assert [e for (e, _) in replay] == sc["expect"]["replayed_from_cursor"]
+    # "crash": reopen the durable SQLite outbox from disk.
+    durable = SqliteOutbox(path, "doc")
+    replay = durable.replay_from(cursor)
+    assert [e for (e, _) in replay] == sc["expect"]["replayed_from_cursor"]
 
-        coord = ResyncCoordinator(cursor)
-        applied: list[int] = []
-        for _e, m in replay:
-            if coord.ingest(m).is_apply:
-                applied.append(coord.last_epoch)
-        assert applied == sc["expect"]["receiver_applies"]
-        assert coord.last_epoch == sc["expect"]["receiver_last_epoch_after"]
+    coord = ResyncCoordinator(cursor)
+    applied: list[int] = []
+    for _e, m in replay:
+        if coord.ingest(m).is_apply:
+            applied.append(coord.last_epoch)
+    assert applied == sc["expect"]["receiver_applies"]
+    assert coord.last_epoch == sc["expect"]["receiver_last_epoch_after"]
+    durable.close()
 
     # send_failure_retains_frame_for_next_tick
     sc2 = _scenario(fx, "send_failure_retains_frame_for_next_tick")
@@ -263,9 +223,62 @@ def test_outbox_replay_after_crash() -> None:
     for e, m in _frames_of(sc2, "appended"):
         mem2.append(e, m)
     assert mem2.retained_epochs() == sc2["expect"]["retained"]
-    assert [
-        e for (e, _) in mem2.replay_from(sc2["expect"]["retained"][0] - 1)
-    ] == sc2["expect"]["retained"]
+    assert [e for (e, _) in mem2.replay_from(sc2["expect"]["retained"][0] - 1)] == sc2[
+        "expect"
+    ]["retained"]
+
+
+def test_outbox_store_protocol(tmp_path: Path) -> None:
+    fixture = _load_fixture("outbox_store_protocol.json")
+    ordered = _scenario(fixture, "unordered puts replay in ascending epoch order")
+    store = InMemoryStore()
+    for epoch in ordered["put_epochs"]:
+        store.put(epoch, str(epoch).encode())
+    assert [e for e, _ in store.scan_after(ordered["scan_after"])] == ordered["expect"][
+        "epochs"
+    ]
+
+    monotone = _scenario(fixture, "ack cursor is monotone and prune-safe")
+    outbox = Outbox(InMemoryStore())
+    for epoch in monotone["put_epochs"]:
+        outbox.append(epoch, IpcMessage.of_delta(Delta.new(epoch - 1, epoch, [])))
+    for epoch in monotone["ack_through"]:
+        outbox.ack_through(epoch)
+    assert outbox.acked_through == monotone["expect"]["cursor"]
+    assert outbox.retained_epochs() == monotone["expect"]["retained"]
+    assert [e for e, _ in outbox.replay_from(0)] == monotone["expect"][
+        "replay_from_zero"
+    ]
+
+    restart = _scenario(fixture, "restart reloads cursor and unacked suffix")
+    path = tmp_path / "protocol.sqlite3"
+    first = SqliteOutbox(path, "doc")
+    for epoch in restart["put_epochs"]:
+        first.append(epoch, IpcMessage.of_delta(Delta.new(epoch - 1, epoch, [])))
+    for epoch in restart["ack_through"]:
+        first.ack_through(epoch)
+    first.close()
+
+    reopened = SqliteOutbox(path, "doc")
+    assert reopened.acked_through == restart["expect"]["loaded_cursor"]
+    assert reopened.retained_epochs() == restart["expect"]["retained"]
+    assert [e for e, _ in reopened.replay_from(0)] == restart["expect"]["replay"]
+    reopened.close()
+
+
+def test_sqlite_cursor_update_is_serialized_monotone(tmp_path: Path) -> None:
+    """A stale writer cannot overwrite a newer cursor persisted by another handle."""
+    path = tmp_path / "cursor.sqlite3"
+    stale = SqliteStore(path, "doc")
+    current = SqliteStore(path, "doc")
+    current.save_cursor(9)
+    stale.save_cursor(3)
+    stale.close()
+    current.close()
+
+    reopened = SqliteStore(path, "doc")
+    assert reopened.load_cursor() == 9
+    reopened.close()
 
 
 # ---------------------------------------------------------------------------

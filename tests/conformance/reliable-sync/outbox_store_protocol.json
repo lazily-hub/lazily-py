@@ -1,0 +1,27 @@
+{
+  "description": "Storage-independent Outbox<S: OutboxStore> protocol (#lzdurableoutbox). Backends provide ordered byte CRUD only; the shared protocol owns cursor monotonicity, prune safety, ascending replay, and crash reload.",
+  "protocol_version": 1,
+  "kind": "ReliableSync",
+  "model": "OutboxStore",
+  "scenarios": [
+    {
+      "name": "unordered puts replay in ascending epoch order",
+      "put_epochs": [3, 1, 2],
+      "scan_after": 0,
+      "expect": { "epochs": [1, 2, 3] }
+    },
+    {
+      "name": "ack cursor is monotone and prune-safe",
+      "put_epochs": [1, 2, 3, 4],
+      "ack_through": [2, 1, 3],
+      "expect": { "cursor": 3, "retained": [4], "replay_from_zero": [4] }
+    },
+    {
+      "name": "restart reloads cursor and unacked suffix",
+      "put_epochs": [10, 11, 12],
+      "ack_through": [10],
+      "restart": true,
+      "expect": { "loaded_cursor": 10, "retained": [11, 12], "replay": [11, 12] }
+    }
+  ]
+}

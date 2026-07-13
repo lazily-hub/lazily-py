@@ -1,5 +1,17 @@
 ## Unreleased
 
+## 0.28.0
+
+### Added
+
+- **`CrdtTree` (`#lzcrdttree`).** A runtime-checkable lossless document CRDT
+  protocol implemented by `TextCrdt`, with one identity-preserving delta format
+  for snapshots, incremental sync, and merge.
+- **Storage-independent durable outbox (`#lzdurableoutbox`).** `OutboxStore`
+  exposes five ordered-byte operations, `Outbox` owns monotonic cursors and
+  replay semantics, and `SqliteStore` / `SqliteOutbox` provide crash-safe
+  ecosystem persistence using the Python standard library.
+
 ## 0.27.0
 
 ### Added

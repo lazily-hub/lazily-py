@@ -1,0 +1,32 @@
+{
+  "description": "CrdtTree contract (#lzcrdttree): the document join and delta fold are commutative, associative, and idempotent; delta_since(empty) is the identity-preserving snapshot; delta_since(own frontier) is empty.",
+  "kind": "CrdtTree",
+  "model": "TextCrdt",
+  "scenarios": [
+    {
+      "name": "merge algebra is order and duplication independent",
+      "seed": { "peer": 1, "text": "root\n" },
+      "replicas": [
+        { "name": "a", "peer": 2, "insert": "a" },
+        { "name": "b", "peer": 3, "insert": "b" },
+        { "name": "c", "peer": 4, "insert": "c" }
+      ],
+      "merge_orders": [["a", "b", "c"], ["c", "a", "b"], ["b", "b", "c", "a"]],
+      "expect": { "texts_equal": true, "version_vectors_equal": true }
+    },
+    {
+      "name": "empty frontier snapshot preserves lineage",
+      "seed": { "peer": 7, "text": "snapshot\n" },
+      "snapshot": "delta_since({})",
+      "restore_peer": 8,
+      "then_concurrent_edit": true,
+      "expect": { "restored_text_equal": true, "op_ids_equal": true, "later_merge_duplicates": 0 }
+    },
+    {
+      "name": "own frontier emits an empty delta",
+      "seed": { "peer": 9, "text": "steady\n" },
+      "frontier": "version_vector()",
+      "expect": { "delta": [], "apply_changed": false }
+    }
+  ]
+}

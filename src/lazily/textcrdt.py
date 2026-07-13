@@ -329,6 +329,14 @@ class TextCrdt:
         """The visible text — non-deleted elements in deterministic order."""
         return "".join(e.ch for e in self._visible_ordered() if not e.deleted)
 
+    def value(self) -> str:
+        """The visible lossless-tree value."""
+        return self.text()
+
+    def merge_from(self, other: TextCrdt) -> bool:
+        """Join ``other`` using the :class:`~lazily.CrdtTree` contract."""
+        return self.merge(other)
+
     def __len__(self) -> int:
         """The visible character count (tombstones excluded)."""
         return sum(1 for e in self._visible_ordered() if not e.deleted)

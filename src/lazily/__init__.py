@@ -69,6 +69,7 @@ __all__ = [
     "CrdtOp",
     "CrdtPlaneRuntime",
     "CrdtSync",
+    "CrdtTree",
     "DedupePolicy",
     "Delta",
     "DeltaApplyStatus",
@@ -84,6 +85,7 @@ __all__ = [
     "Fold",
     "FramedTransport",
     "InMemoryOutbox",
+    "InMemoryStore",
     "InProcTransport",
     "InProcessBackend",
     "Inbox",
@@ -115,6 +117,7 @@ __all__ = [
     "OrSet",
     "Outbox",
     "OutboxAck",
+    "OutboxStore",
     "Overflow",
     "PeerId",
     "PeerPermissions",
@@ -169,10 +172,13 @@ __all__ = [
     "SpillMode",
     "SpillPage",
     "SpillStore",
+    "SqliteOutbox",
+    "SqliteStore",
     "StaleGeneration",
     "StateChart",
     "StateMachine",
     "StateMirror",
+    "StoredOutbox",
     "Sum",
     "SyncDriver",
     "TerminalConflict",
@@ -212,6 +218,7 @@ __all__ = [
     "count_positive_fold",
     "crdt_plane",
     "crdt_registers",
+    "crdt_tree",
     "decode_message",
     "effect",
     "encode_message",
@@ -250,7 +257,7 @@ __all__ = [
     "tree_update_to_wire",
     "word_lcs_len",
 ]
-__version__ = "0.26.0"
+__version__ = "0.28.0"
 
 from . import (
     async_reactive_family,
@@ -259,6 +266,7 @@ from . import (
     command,
     crdt_plane,
     crdt_registers,
+    crdt_tree,
     ffi,
     ipc,
     lossless_tree_crdt,
@@ -305,6 +313,7 @@ from .command import (
 )
 from .crdt_plane import CrdtPlaneRuntime, PlaneEntry
 from .crdt_registers import CellCrdt, LwwRegister, MvRegister, PnCounter
+from .crdt_tree import CrdtTree
 from .effect import Effect, effect
 from .ffi import (
     FFI_HEADER_LEN,
@@ -424,14 +433,21 @@ from .reliable_sync import (
     DriverError,
     DurableOutbox,
     InMemoryOutbox,
+    InMemoryStore,
     OrSet,
+    OutboxStore,
     Progress,
     ResyncAction,
     ResyncActionKind,
     ResyncCoordinator,
     SnapshotProvider,
+    SqliteOutbox,
+    SqliteStore,
     SyncDriver,
     WireLwwRegister,
+)
+from .reliable_sync import (
+    Outbox as StoredOutbox,
 )
 from .semtree import Fold, SemNode, SemTree, count_positive_fold, sum_fold
 from .seqcrdt import SeqCrdt, SeqElement
