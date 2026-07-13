@@ -584,12 +584,25 @@ class TopicCell[T]:
         self._elements: deque[T] = deque(() if snapshot is None else snapshot.elements)
         self._subscriptions: dict[str, _TopicSubscription] = {}
         self._readers: dict[str, slot[dict, list[T]]] = {}
+        if self._base_offset < 0:
+            raise ValueError("topic base offset must be non-negative")
         if snapshot is not None:
             tail = self.tail_offset
             for saved in snapshot.subscriptions:
                 if not self._base_offset <= saved.cursor <= tail:
                     raise ValueError(
                         "topic subscription cursor is outside the retained log"
+                    )
+                if not isinstance(saved.durability, TopicDurability):
+                    raise ValueError("invalid topic subscription durability")
+                if not isinstance(saved.connected, bool):
+                    raise ValueError("topic connected flag must be boolean")
+                if (
+                    saved.durability is TopicDurability.Ephemeral
+                    and not saved.connected
+                ):
+                    raise ValueError(
+                        "disconnected ephemeral topic subscription must be removed"
                     )
                 self._subscriptions[saved.subscriber_id] = _TopicSubscription(
                     saved.cursor, saved.durability, saved.connected
@@ -621,6 +634,8 @@ class TopicCell[T]:
         subscriber_id: str,
         durability: TopicDurability = TopicDurability.Durable,
     ) -> TopicSubscribeOutcome:
+        if not isinstance(durability, TopicDurability):
+            raise ValueError("invalid topic subscription durability")
         existing = self._subscriptions.get(subscriber_id)
         if existing is not None:
             if existing.connected:
@@ -664,7 +679,9 @@ class TopicCell[T]:
         return offset
 
     def read_untracked(self, subscriber_id: str) -> list[T]:
-        subscription = self._subscriptions[subscriber_id]
+        subscription = self._subscriptions.get(subscriber_id)
+        if subscription is None or not subscription.connected:
+            return []
         start = subscription.cursor - self._base_offset
         return list(self._elements)[start:]
 
@@ -679,6 +696,8 @@ class TopicCell[T]:
         if count < 0:
             raise ValueError("advance count must be non-negative")
         subscription = self._subscriptions[subscriber_id]
+        if not subscription.connected or subscription.cursor == self.tail_offset:
+            return subscription.cursor
         new_cursor = subscription.cursor + count
         if new_cursor > self.tail_offset:
             raise ValueError("cannot advance beyond the topic tail")

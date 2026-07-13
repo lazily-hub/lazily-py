@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from lazily import TopicCell, TopicDurability, TopicSubscribeOutcome
+import pytest
+
+from lazily import (
+    TopicCell,
+    TopicDurability,
+    TopicSnapshot,
+    TopicSubscribeOutcome,
+    TopicSubscriptionSnapshot,
+)
 
 
 def test_broadcast_cursor_isolation() -> None:
@@ -50,3 +58,35 @@ def test_ephemeral_disconnect_does_not_hold_gc() -> None:
     )
     viewer = topic.subscription("viewer")
     assert viewer is not None and viewer.cursor == topic.tail_offset
+
+
+def test_tail_and_offline_advance_are_noops() -> None:
+    topic: TopicCell[str] = TopicCell({})
+    topic.subscribe("worker")
+    topic.publish("a")
+    assert topic.advance("worker") == 1
+    assert topic.advance("worker") == 1
+
+    topic.disconnect("worker")
+    topic.publish("b")
+    assert topic.read_stream("worker") == []
+    assert topic.advance("worker") == 1
+    worker = topic.subscription("worker")
+    assert worker is not None and worker.cursor == 1
+
+    topic.reconnect("worker")
+    assert topic.read_stream("worker") == ["b"]
+    assert topic.gc() == 1
+    assert topic.base_offset == 1
+    worker = topic.subscription("worker")
+    assert worker is not None and worker.cursor == 1
+
+
+def test_snapshot_rejects_disconnected_ephemeral_subscription() -> None:
+    invalid_snapshot = TopicSnapshot(
+        0,
+        (),
+        (TopicSubscriptionSnapshot("viewer", 0, TopicDurability.Ephemeral, False),),
+    )
+    with pytest.raises(ValueError, match="disconnected ephemeral"):
+        TopicCell({}, invalid_snapshot)
