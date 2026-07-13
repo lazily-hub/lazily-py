@@ -268,16 +268,21 @@ def test_outbox_store_protocol(tmp_path: Path) -> None:
 
 def test_sqlite_cursor_update_is_serialized_monotone(tmp_path: Path) -> None:
     """A stale writer cannot overwrite a newer cursor persisted by another handle."""
+    fixture = _load_fixture("outbox_store_protocol.json")
+    scenario = _scenario(fixture, "stale handle cannot regress serialized cursor")
     path = tmp_path / "cursor.sqlite3"
-    stale = SqliteStore(path, "doc")
-    current = SqliteStore(path, "doc")
-    current.save_cursor(9)
-    stale.save_cursor(3)
-    stale.close()
-    current.close()
+    handles = {
+        "stale": Outbox(SqliteStore(path, "doc")),
+        "current": Outbox(SqliteStore(path, "doc")),
+    }
+    for save in scenario["save_cursor"]:
+        handles[save["handle"]].ack_through(save["epoch"])
+    assert handles["stale"].acked_through == scenario["expect"]["loaded_cursor"]
+    for outbox in handles.values():
+        outbox.store.close()
 
     reopened = SqliteStore(path, "doc")
-    assert reopened.load_cursor() == 9
+    assert reopened.load_cursor() == scenario["expect"]["loaded_cursor"]
     reopened.close()
 
 

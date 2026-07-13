@@ -266,6 +266,7 @@ class Outbox[S: OutboxStore](DurableOutbox):
     @property
     def acked_through(self) -> int:
         """The highest peer acknowledgement loaded or observed."""
+        self._acked_through = max(self._acked_through, self._store.load_cursor())
         return self._acked_through
 
     @property
@@ -276,20 +277,21 @@ class Outbox[S: OutboxStore](DurableOutbox):
         self._store.put(epoch, msg.encode_json())
 
     def ack_through(self, epoch: int) -> None:
-        if epoch > self._acked_through:
-            self._acked_through = epoch
-            self._store.save_cursor(epoch)
-        self._store.delete_through(self._acked_through)
+        target = max(epoch, self._acked_through, self._store.load_cursor())
+        if target > self._acked_through:
+            self._store.save_cursor(target)
+            self._acked_through = target
+        self._store.delete_through(target)
 
     def replay_from(self, cursor: int) -> list[tuple[int, IpcMessage]]:
-        effective_cursor = max(cursor, self._acked_through)
+        effective_cursor = max(cursor, self.acked_through)
         return [
             (epoch, IpcMessage.decode_json(frame))
             for epoch, frame in self._store.scan_after(effective_cursor)
         ]
 
     def retained_epochs(self) -> list[int]:
-        return [epoch for epoch, _frame in self._store.scan_after(self._acked_through)]
+        return [epoch for epoch, _frame in self._store.scan_after(self.acked_through)]
 
 
 class InMemoryStore:

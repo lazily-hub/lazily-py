@@ -1,5 +1,13 @@
 ## Unreleased
 
+## 0.28.1
+
+### Fixed
+
+- **Serialized monotonic outbox cursors.** Every outbox operation refreshes the
+  persisted acknowledgement cursor, so a stale handle cannot regress replay or
+  retention semantics after another handle advances the same durable store.
+
 ## 0.28.0
 
 ### Added

@@ -22,6 +22,16 @@
       "ack_through": [10],
       "restart": true,
       "expect": { "loaded_cursor": 10, "retained": [11, 12], "replay": [11, 12] }
+    },
+    {
+      "name": "stale handle cannot regress serialized cursor",
+      "open_handles": ["stale", "current"],
+      "save_cursor": [
+        { "handle": "current", "epoch": 9 },
+        { "handle": "stale", "epoch": 3 }
+      ],
+      "restart": true,
+      "expect": { "loaded_cursor": 9 }
     }
   ]
 }
