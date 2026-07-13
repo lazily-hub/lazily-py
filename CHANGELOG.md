@@ -1,5 +1,21 @@
 ## Unreleased
 
+## 0.24.0
+
+### Changed
+
+- **Demand-driven queue reader-kinds + optional `peek`/`capacity` (Phase 0,
+  `#relaycell`).** `QueueCell` reader-kinds (`head`/`len`/`is_empty`/`is_full`)
+  are now demand-driven memoized Slots (were eagerly-set Cells): a successful
+  push/pop derives no reader value and invalidates only the readers whose value
+  provably changed. `peek`/`capacity` become optional `QueueStorage`
+  capabilities — the minimal contract is `try_push`/`try_pop`/`len`/`is_closed`/
+  `close`, so a raw-channel-style backend conforms directly (no `head`/`is_full`
+  reader). Observable semantics are unchanged; all conformance fixtures stay
+  green.
+- **BREAKING:** `QueueReaderHandles` `head`/`len`/`is_empty`/`is_full` are now
+  `Slot`s (were `Cell`s); `closed` stays a `Cell`.
+
 ## 0.23.0
 
 Adds **Reliable Sync** (`#lzsync` + `#sync-driver`), the delivery-reliability
