@@ -263,7 +263,7 @@ __all__ = [
     "tree_update_to_wire",
     "word_lcs_len",
 ]
-__version__ = "0.28.1"
+__version__ = "0.29.0"
 
 from . import (
     async_reactive_family,
