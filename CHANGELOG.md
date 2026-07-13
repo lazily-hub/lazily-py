@@ -1,5 +1,16 @@
 ## Unreleased
 
+## 0.25.0
+
+### Added
+
+- **Merge algebra + `MergeCell` (Phase 1, `#relaycell`).** `MergePolicy` (an
+  associative fold `⊕` with `commutative`/`idempotent`/`conflates` flags) with
+  policies `KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`; `MergeCell` generalizes
+  `Cell` (`Cell ≡ MergeCell(KeepLatest)`), a source whose write is a merge,
+  inheriting the `!=` store-guard + store-without-cascade. Property-based
+  law-tests + replay of the cross-language `mergecell_algebra.json` fixture.
+
 ## 0.24.0
 
 ### Changed
