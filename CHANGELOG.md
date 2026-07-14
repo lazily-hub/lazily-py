@@ -1,5 +1,19 @@
 ## Unreleased
 
+## 0.30.0
+
+### Added
+
+- Realtime + distributed primitive families, at full parity with lazily-rs:
+  temporal sources (`#lztime` — `TimerCell`/`IntervalCell`/`CronCell`/`DeadlineCell`),
+  rate-shaping operators (`#lzrateshape` — `DebounceCell`/`ThrottleCell`/`SampleCell`/`ProbabilisticSampleCell`),
+  membership + failure detection (`#lzmemb` — `MembershipCell` SWIM + Phi-accrual),
+  coordination (`#lzcoord` — `LeaseCell`/`LeaderCell`/`LockCell`/`SemaphoreCell`/`BarrierCell`),
+  presence + ephemeral plane (`#lzpresence` — `PresenceCell`/`AwarenessCell`/`EphemeralCell`),
+  stream windowing (`#lzwindow` — tumbling/sliding/session),
+  fault tolerance (`#lzresilience` — `CircuitBreakerCell`/`RetryPolicyCell`/`BulkheadCell`/`TimeoutCell`),
+  and the embedded-service plane (`#lzservice` — `HealthCell`/`ReadinessCell`/`DiscoveryCell`/`ServiceRegistry`).
+
 ## 0.29.0
 
 ### Added
