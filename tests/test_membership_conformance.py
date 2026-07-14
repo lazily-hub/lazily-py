@@ -1,0 +1,114 @@
+"""Cross-language conformance for membership + failure detection (``#lzmemb``).
+
+Replays the SWIM lifecycle fixture from
+``lazily-spec/conformance/membership`` through the lazily-py
+:class:`~lazily.membership.MembershipCell`, asserting the spec's
+language-agnostic expectations. Each op asserts the acted peers' ``state``, the
+``alive_set`` (the reactive peer set), and that the peer-set reader invalidates
+exactly when the alive set changes (via :meth:`~lazily.slot.Slot.is_in`).
+
+The same fixture is replayed by the Rust, Zig, Kotlin, Go, C++, and JS bindings,
+so all implementations stay byte-compatible on the compute invariants — the phi
+transitions in particular.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from lazily import Slot
+from lazily.membership import (
+    MembershipCell,
+    MembershipConfig,
+)
+
+
+_SPEC = (
+    Path(__file__).resolve().parents[2] / "lazily-spec" / "conformance" / "membership"
+)
+
+
+def _load(rel: str) -> dict:
+    return json.loads((_SPEC / rel).read_text())
+
+
+def _spec_present() -> bool:
+    return (_SPEC / "membership_lifecycle.json").exists()
+
+
+def _build_config(cfg: dict) -> MembershipConfig:
+    return MembershipConfig(
+        phi_threshold=float(cfg["phi_threshold"]),
+        suspect_timeout=int(cfg["suspect_timeout"]),
+        max_samples=int(cfg["max_samples"]),
+        min_std=float(cfg["min_std"]),
+    )
+
+
+def _run_fixture(fixture: dict) -> None:
+    ctx: dict = {}
+    config = _build_config(fixture["config"])
+    m: MembershipCell = MembershipCell(ctx, config)
+
+    # Wrap the alive-set reader in an observer Slot; ``is_in(ctx)`` reports
+    # whether the cached value survived the last op (cached ⇒ not invalidated).
+    observed: Slot = Slot(callable=lambda _ctx: m.peer_set())
+    observed(ctx)  # materialize the cache
+
+    for i, step in enumerate(fixture["steps"]):
+        op = step["op"]
+        op_type = op["type"]
+        now = int(op["now"])
+
+        if op_type == "join":
+            m.join(op["peer"], now)
+        elif op_type == "heartbeat":
+            m.heartbeat(op["peer"], now)
+        elif op_type == "leave":
+            m.leave(op["peer"], now)
+        elif op_type == "tick":
+            m.tick(now)
+        else:
+            raise AssertionError(f"step {i}: unknown op type: {op_type}")
+
+        expected = step["expected"]
+
+        # Per-peer state.
+        for peer, want in expected["states"].items():
+            got = m.state(_coerce_peer(peer))
+            got_name = got.value if got is not None else None
+            assert got_name == want, (
+                f"step {i}: state of peer {peer} is {got_name!r}, want {want!r}"
+            )
+
+        # Alive set.
+        want_set = {_coerce_peer(p) for p in expected["alive_set"]}
+        assert m.peer_set() == want_set, (
+            f"step {i}: alive_set {m.peer_set()} want {want_set}"
+        )
+
+        # Peer-set invalidation: cached ⇒ not invalidated.
+        was_cached = observed.is_in(ctx)
+        assert (not was_cached) == bool(expected["invalidates"]), (
+            f"step {i}: invalidation mismatch (was_cached={was_cached}, "
+            f"want invalidates={expected['invalidates']})"
+        )
+        observed(ctx)  # re-materialize for the next step
+
+
+def _coerce_peer(peer: Any) -> Any:
+    """Fixture peer ids are JSON numbers (object keys arrive as strings)."""
+    if isinstance(peer, str):
+        return int(peer)
+    return peer
+
+
+def test_membership_conformance() -> None:
+    if not _spec_present():
+        import pytest
+
+        pytest.skip("lazily-spec conformance fixtures not found")
+    fixture = _load("membership_lifecycle.json")
+    _run_fixture(fixture)
