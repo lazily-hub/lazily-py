@@ -21,29 +21,33 @@ class Cell[T]:
     A subscribable that can be used with Slots.
     """
 
-    __slots__ = ("_parents", "_subscribers", "_value", "ctx", "name")
+    __slots__ = ("_parents", "_subscribers", "_value", "ctx")
 
-    _subscribers: set[CellSubscriber[T]]
-    _parents: set[Slot[Any, Any, Any]]
+    _subscribers: set[CellSubscriber[T]] | None
+    _parents: set[Slot[Any, Any, Any]] | None
 
     def __init__(self, ctx: dict, initial_value: T) -> None:
         self.ctx = ctx
         self._value = initial_value
-        self._subscribers = set()
+        # Lazily materialized on first subscriber/parent: an empty CPython
+        # ``set()`` is ~216 B, so deferring it keeps quiescent leaf sources cheap.
+        self._subscribers = None
         # Auto-discovered parents (Slots/Effects reading this cell), tracked by
         # object identity. Stored separately from `_subscribers` (external
         # callables) because `functools.partial` objects do NOT deduplicate in a
         # set — identity-based parent tracking keeps the fan-out exactly-once.
-        self._parents = set()
+        self._parents = None
 
     def __call__(self) -> T:
         return self.value
 
     @property
     def value(self) -> T:
-        if len(slot_stack) > 0:
+        if slot_stack:
             # Track the running parent by identity so repeated reads during one
             # computation, and re-reads across reruns, do not grow the fan-out.
+            if self._parents is None:
+                self._parents = set()
             self._parents.add(slot_stack[-1])
         return self._value
 
@@ -71,15 +75,19 @@ class Cell[T]:
         :meth:`touch`. The auto-discovered reactive parents (Slots/Effects) are
         tracked separately by identity in :attr:`_parents`.
         """
+        if self._subscribers is None:
+            self._subscribers = set()
         self._subscribers.add(subscriber)
 
     def touch(self) -> None:
         # Iterate snapshots: a parent/subscriber may re-subscribe (re-establish
         # a dependency) while being notified.
-        for subscriber in tuple(self._subscribers):
-            subscriber(self.ctx, self._value)
-        for parent in tuple(self._parents):
-            parent.reset(self.ctx)
+        if self._subscribers:
+            for subscriber in tuple(self._subscribers):
+                subscriber(self.ctx, self._value)
+        if self._parents:
+            for parent in tuple(self._parents):
+                parent.reset(self.ctx)
 
 
 def none_callable(_: dict) -> None:
@@ -91,9 +99,7 @@ def _none_as_t(_: dict) -> Any:
 
 
 class CellSlot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, Cell[T]]):
-    __slots__ = [
-        "_subscribers",
-    ]
+    __slots__ = ()
 
     def __init__(
         self,

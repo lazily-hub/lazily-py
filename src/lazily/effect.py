@@ -115,7 +115,10 @@ class Effect(Slot[Any, dict, None]):
         """
         if self._disposed or self._running:
             return
-        self._subscribers.clear()
+        # Drop downstream edges before the rerun so re-registration on the next
+        # body execution is exact. Setting to None also frees the ~216 B set.
+        self._subscribers = None
+        self._parents = None
         if in_batch():
             enqueue_effect(self)
             return
@@ -133,7 +136,8 @@ class Effect(Slot[Any, dict, None]):
         """Deschedule, drop edges, run cleanup. Terminal — no subsequent event
         revives a disposed effect."""
         self._disposed = True
-        self._subscribers.clear()
+        self._subscribers = None
+        self._parents = None
         self._run_cleanup()
 
     def _run_cleanup(self) -> None:

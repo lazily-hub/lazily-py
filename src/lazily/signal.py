@@ -19,7 +19,6 @@ from __future__ import annotations
 
 __all__ = ["Signal", "signal", "signal_def"]
 
-from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from .slot import Slot, slot, slot_stack
@@ -64,11 +63,22 @@ class Signal[T]:
     this Signal's value changes.
     """
 
-    __slots__ = ("_active", "_recomputing", "_slot", "_subscribers", "_value", "ctx")
+    __slots__ = (
+        "_active",
+        "_parents",
+        "_recomputing",
+        "_slot",
+        "_subscribers",
+        "_value",
+        "ctx",
+    )
 
     def __init__(self, ctx: dict, callable: Callable[[dict], T]) -> None:
         self.ctx = ctx
-        self._subscribers: set[Callable[[dict, T], Any]] = set()
+        # Lazily materialized on first subscriber/parent: an empty CPython
+        # ``set()`` is ~216 B, so deferring it keeps quiescent signals cheap.
+        self._subscribers: set[Callable[[dict, T], Any]] | None = None
+        self._parents: set[Slot[Any, Any, Any]] | None = None
         self._active = True
         self._recomputing = False
         self._slot: _SignalSlot[dict, dict, T] = _SignalSlot(callable)
@@ -93,8 +103,13 @@ class Signal[T]:
     @property
     def value(self) -> T:
         """The current materialized value; auto-subscribes the reading slot."""
-        if len(slot_stack) > 0:
-            self.subscribe(partial(self._subscriber, slot_stack[-1]))
+        if slot_stack:
+            # Identity-based parent tracking (mirrors Cell/Slot): avoids a
+            # per-read ``functools.partial`` allocation that does not deduplicate
+            # in a set and would otherwise grow without bound.
+            if self._parents is None:
+                self._parents = set()
+            self._parents.add(slot_stack[-1])
         if not self._active:
             # Disposed: the eager puller is gone, so behave lazily and recompute
             # on read via the backing slot.
@@ -108,17 +123,20 @@ class Signal[T]:
         """Alias for the :attr:`value` getter."""
         return self.value
 
-    def _subscriber(self, parent_slot: Slot, ctx: dict, value: T) -> None:
-        parent_slot.reset(self.ctx)
-
     def subscribe(self, subscriber: Callable[[dict, T], Any]) -> None:
+        if self._subscribers is None:
+            self._subscribers = set()
         self._subscribers.add(subscriber)
 
     def touch(self) -> None:
-        # Iterate a snapshot: a subscriber may re-subscribe (re-establishing a
-        # dependency) while being notified.
-        for subscriber in tuple(self._subscribers):
-            subscriber(self.ctx, self._value)
+        # Iterate snapshots: a subscriber/parent may re-subscribe (re-establishing
+        # a dependency) while being notified.
+        if self._subscribers:
+            for subscriber in tuple(self._subscribers):
+                subscriber(self.ctx, self._value)
+        if self._parents:
+            for parent in tuple(self._parents):
+                parent.reset(self.ctx)
 
     def is_active(self) -> bool:
         """Whether the eager puller is still installed."""

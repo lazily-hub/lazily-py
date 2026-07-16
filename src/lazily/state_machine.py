@@ -115,6 +115,7 @@ class StateMachine[S, E]:
         self._cell.subscribe(subscriber)
 
         def dispose() -> None:
-            self._cell._subscribers.discard(subscriber)
+            if self._cell._subscribers is not None:
+                self._cell._subscribers.discard(subscriber)
 
         return dispose

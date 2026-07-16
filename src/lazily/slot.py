@@ -1,7 +1,6 @@
 __all__ = ["BaseSlot", "Slot", "resolve_identity", "slot", "slot_def", "slot_stack"]
 
 from collections.abc import Callable
-from functools import partial
 from typing import Any, Protocol, TypeVar, cast
 
 
@@ -71,9 +70,10 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
     Base class for a lazy slot Callable that subscribes to Cells.
     """
 
-    __slots__ = ("_subscribers",)
+    __slots__ = ("_parents", "_subscribers")
 
-    _subscribers: set[SlotSubscriber]
+    _subscribers: set[SlotSubscriber] | None
+    _parents: "set[Slot[Any, Any, Any]] | None"
 
     def __init__(
         self,
@@ -81,11 +81,21 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         resolve_ctx: Callable[[C_in], C_ctx] | None = None,
     ) -> None:
         super().__init__(callable=callable, resolve_ctx=resolve_ctx)
-        self._subscribers = set()
+        # Lazily materialized on first use: an empty CPython ``set()`` is ~216 B,
+        # so deferring it keeps un-subscribed slots cheap.
+        self._subscribers = None
+        # Auto-discovered parents (Slots/Effects reading this slot), tracked by
+        # object identity so repeated reads during one computation do not grow
+        # the fan-out. ``functools.partial`` objects do NOT deduplicate in a set,
+        # so identity-based parent tracking replaces per-read ``partial``
+        # allocation (which previously leaked without bound).
+        self._parents = None
 
     def __call__(self, ctx: C_in) -> T:
-        if len(slot_stack) > 0:
-            self.subscribe(partial(self._subscriber, slot_stack[-1]))
+        if slot_stack:
+            if self._parents is None:
+                self._parents = set()
+            self._parents.add(slot_stack[-1])
 
         resolved = self.resolve_ctx(ctx)
 
@@ -100,30 +110,36 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
 
         return resolved[self]
 
-    def _subscriber(
-        self,
-        parent_slot: "Slot",
-        slot: "Slot[Any, Any, Any]",
-        ctx: dict,
-    ) -> Any:
-        parent_slot.reset(ctx)
-
     def reset(self, ctx: C_in) -> None:
+        # Snapshot + clear BOTH sets BEFORE notifying, so a subscriber/parent
+        # that re-enters reset finds empty sets and cannot mutually recurse.
         resolved = self.resolve_ctx(ctx)
         super().reset(ctx)
-        subs = tuple(self._subscribers)
-        self._subscribers.clear()
-        for subscriber in subs:
-            subscriber(self, resolved)
+        subs = self._subscribers
+        pare = self._parents
+        self._subscribers = None
+        self._parents = None
+        if subs:
+            for subscriber in subs:
+                subscriber(self, resolved)
+        if pare:
+            for parent in pare:
+                parent.reset(resolved)
 
     def subscribe(self, subscriber: SlotSubscriber) -> None:
+        if self._subscribers is None:
+            self._subscribers = set()
         self._subscribers.add(subscriber)
 
     def touch(self, ctx: C_ctx) -> None:
-        # Iterate a snapshot: an eager subscriber may re-subscribe (re-establish
-        # a dependency) while being notified.
-        for subscriber in tuple(self._subscribers):
-            subscriber(self, ctx)
+        # Iterate snapshots: an eager subscriber/parent may re-subscribe
+        # (re-establish a dependency) while being notified.
+        if self._subscribers:
+            for subscriber in tuple(self._subscribers):
+                subscriber(self, ctx)
+        if self._parents:
+            for parent in tuple(self._parents):
+                parent.reset(ctx)
 
 
 slot_stack: list[Slot[Any, Any, Any]] = []
@@ -133,6 +149,8 @@ class slot[C_dict: dict, T](Slot[C_dict, C_dict, T]):
     """
     A Slot that can be initialized with the callable as an argument.
     """
+
+    __slots__ = ()
 
     def __init__(self, callable: Callable[[C_dict], T]) -> None:
         super().__init__(callable=callable)
