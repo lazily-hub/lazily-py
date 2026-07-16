@@ -22,7 +22,6 @@ from __future__ import annotations
 
 __all__ = ["batch", "batch_context", "in_batch", "notify_change"]
 
-import threading
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -33,16 +32,18 @@ if TYPE_CHECKING:
     from .cell import Cell
 
 
-_state = threading.local()
-
-
-def _depth() -> int:
-    return getattr(_state, "depth", 0)
+# Single-threaded batch state. The plain ``batch()`` boundary is not a
+# concurrency surface (``ThreadSafeContext`` owns its own lock/depth and does
+# not touch this module state), so plain module globals are sufficient and far
+# cheaper than ``threading.local`` + ``getattr``/``hasattr`` on the hot path.
+_depth: int = 0
+_pending_cells: set = set()
+_pending_effects: set = set()
 
 
 def in_batch() -> bool:
     """Whether the calling thread is currently inside a :func:`batch` boundary."""
-    return _depth() > 0
+    return _depth > 0
 
 
 def notify_change(cell: Cell[Any]) -> None:
@@ -53,8 +54,8 @@ def notify_change(cell: Cell[Any]) -> None:
     boundary — so multiple writes to the same cell (or to cells sharing a
     dependent) produce a single invalidation wave per batch.
     """
-    if _depth() > 0 and hasattr(_state, "pending_cells"):
-        _state.pending_cells.add(cell)
+    if _depth > 0:
+        _pending_cells.add(cell)
     else:
         cell.touch()
 
@@ -68,17 +69,17 @@ def batch[R](run: Callable[[], R]) -> R:
     touches each changed cell exactly once. Nested ``batch`` calls only flush at
     the outermost boundary.
     """
-    _ensure_state()
-    _state.depth += 1
+    global _depth
+    _depth += 1
     try:
         return run()
     finally:
         # Flush while still inside the batch boundary (depth > 0) so that
         # ``in_batch()`` is True during the invalidation pass and effects queue
         # for the coalesced Phase-2 flush instead of rerunning inline.
-        if _state.depth == 1:
+        if _depth == 1:
             _flush()
-        _state.depth -= 1
+        _depth -= 1
 
 
 @contextmanager
@@ -90,49 +91,50 @@ def batch_context():
         count.value = 2
     # one coalesced invalidation wave fires here
     """
-    _ensure_state()
-    _state.depth += 1
+    global _depth
+    _depth += 1
     try:
         yield
     finally:
-        if _state.depth == 1:
+        if _depth == 1:
             _flush()
-        _state.depth -= 1
+        _depth -= 1
 
 
 def enqueue_effect(eff: Any) -> None:
     """Queue an :class:`~lazily.effect.Effect` rerun for the batch flush.
 
-    Called by ``Effect.reset`` when inside a batch. Each effect is deduplicated
-    by identity, so the coalesced flush reruns it at most once per batch — the
-    "a dependent reached through many changed cells in one batch appears at most
-    once" invariant.
+    Called by ``Effect._invalidate`` when inside a batch. Each effect is
+    deduplicated by identity, so the coalesced flush reruns it at most once per
+    batch — the "a dependent reached through many changed cells in one batch
+    appears at most once" invariant.
     """
-    if hasattr(_state, "pending_effects"):
-        _state.pending_effects.add(eff)
-
-
-def _ensure_state() -> None:
-    if not hasattr(_state, "depth"):
-        _state.depth = 0
-        _state.pending_cells = set()
-        _state.pending_effects = set()
+    _pending_effects.add(eff)
 
 
 def _flush() -> None:
     """The coalesced frontier: touch each changed cell exactly once, then rerun
     each queued effect exactly once."""
-    _ensure_state()
-    # Phase 1 — one coalesced invalidation pass: touch each changed cell once,
-    # dirtying its slot/effect dependents.
-    pending_cells = _state.pending_cells
-    _state.pending_cells = set()
-    for cell in pending_cells:
-        cell.touch()
+    global _pending_cells, _pending_effects
+    from .slot import _resume_drain, _suspend_drain
+
+    # Phase 1 — one coalesced invalidation pass. Suspend the drain so every
+    # changed cell pushes its downstream into the work-stack, then resume to
+    # run a single iterative DFS wave with the visited guard — shared
+    # dependents are invalidated exactly once (mirrors lazily-rs
+    # ``flush_batched_invalidations`` / ``mark_frontier_locked``).
+    pending_cells = _pending_cells
+    _pending_cells = set()
+    _suspend_drain()
+    try:
+        for cell in pending_cells:
+            cell.touch()
+    finally:
+        _resume_drain()
     # Phase 2 — the coalesced effect flush: rerun each queued effect once
     # against the now-final inputs. Effects queued during Phase 1 (by cells
     # touching during the invalidation pass) are deduplicated by identity.
-    pending_effects = _state.pending_effects
-    _state.pending_effects = set()
+    pending_effects = _pending_effects
+    _pending_effects = set()
     for eff in pending_effects:
         eff._batch_rerun()

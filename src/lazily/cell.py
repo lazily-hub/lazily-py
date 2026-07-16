@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any, Protocol, TypeVar
 
 from .batch import notify_change as _notify_change
-from .slot import BaseSlot, Slot, slot_stack
+from .slot import BaseSlot, Slot, _drain_resets, _reset_work, slot_stack
 
 
 C_in = TypeVar("C_in", contravariant=True)
@@ -80,14 +80,21 @@ class Cell[T]:
         self._subscribers.add(subscriber)
 
     def touch(self) -> None:
-        # Iterate snapshots: a parent/subscriber may re-subscribe (re-establish
-        # a dependency) while being notified.
-        if self._subscribers:
-            for subscriber in tuple(self._subscribers):
+        # External subscribers persist across touches (they are not reactive
+        # edges), so iterate a snapshot. The auto-discovered parents are
+        # reactive edges: rebind-then-clear (they re-establish on recompute)
+        # and push them into the coalesced invalidation wave — no tuple alloc.
+        subs = self._subscribers
+        if subs:
+            for subscriber in tuple(subs):
                 subscriber(self.ctx, self._value)
-        if self._parents:
-            for parent in tuple(self._parents):
-                parent.reset(self.ctx)
+        pare = self._parents
+        if pare:
+            self._parents = None
+            ctx = self.ctx
+            for parent in pare:
+                _reset_work.append((parent, ctx))
+            _drain_resets()
 
 
 def none_callable(_: dict) -> None:

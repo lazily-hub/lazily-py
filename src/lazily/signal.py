@@ -21,7 +21,7 @@ __all__ = ["Signal", "signal", "signal_def"]
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from .slot import Slot, slot, slot_stack
+from .slot import Slot, _drain_resets, _reset_work, slot, slot_stack
 
 
 if TYPE_CHECKING:
@@ -48,6 +48,9 @@ class _SignalSlot[C_in, C_ctx: dict, T](Slot[C_in, C_ctx, T]):
 
     def reset(self, ctx: C_in) -> None:
         super().reset(ctx)
+
+    def _invalidate(self, ctx: Any) -> None:
+        super()._invalidate(ctx)
         sig = self._signal
         if sig is not None and sig.is_active():
             sig._eager_recompute()
@@ -129,14 +132,21 @@ class Signal[T]:
         self._subscribers.add(subscriber)
 
     def touch(self) -> None:
-        # Iterate snapshots: a subscriber/parent may re-subscribe (re-establishing
-        # a dependency) while being notified.
-        if self._subscribers:
-            for subscriber in tuple(self._subscribers):
+        # External subscribers persist across touches (they are not reactive
+        # edges), so iterate a snapshot. The auto-discovered parents are
+        # reactive edges: rebind-then-clear (they re-establish on recompute)
+        # and push them into the coalesced invalidation wave — no tuple alloc.
+        subs = self._subscribers
+        if subs:
+            for subscriber in tuple(subs):
                 subscriber(self.ctx, self._value)
-        if self._parents:
-            for parent in tuple(self._parents):
-                parent.reset(self.ctx)
+        pare = self._parents
+        if pare:
+            self._parents = None
+            ctx = self.ctx
+            for parent in pare:
+                _reset_work.append((parent, ctx))
+            _drain_resets()
 
     def is_active(self) -> bool:
         """Whether the eager puller is still installed."""

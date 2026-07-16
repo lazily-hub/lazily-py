@@ -113,6 +113,11 @@ class Effect(Slot[Any, dict, None]):
         coalesced effect flush at the outermost boundary — so an effect reached
         through many changed cells in one batch reruns at most once per batch.
         """
+        # Entry point: push self onto the iterative invalidation work-stack and
+        # drain. The actual rerun / enqueue happens in :meth:`_invalidate`.
+        super().reset(ctx)
+
+    def _invalidate(self, ctx: Any) -> None:
         if self._disposed or self._running:
             return
         # Drop downstream edges before the rerun so re-registration on the next

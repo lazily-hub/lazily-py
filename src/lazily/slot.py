@@ -14,6 +14,74 @@ def resolve_identity[C_ctx: dict](ctx: C_ctx) -> C_ctx:
     return ctx
 
 
+# ---------------------------------------------------------------------------
+# Iterative invalidation engine
+#
+# The invalidation wave (Cell.touch / Slot.reset / Signal.touch) used to recurse
+# one CPython frame per graph level, so a deep cascade could blow the 1000-frame
+# stack and a batch performed N separate recursive walks for N changed cells.
+# It is now driven by an explicit module-level work-stack:
+#
+#   * entry points (touch / reset) push the downstream parents onto
+#     ``_reset_work`` and call ``_drain_resets``.
+#   * ``_drain_resets`` pops nodes, calls ``node._invalidate(ctx)`` (which clears
+#     that one node's cache + captures its downstream + re-establishes nothing),
+#     and pushes the captured downstream back onto the stack.
+#
+# Eager ``Signal`` recompute and ``Effect`` reruns fire from inside
+# ``_invalidate`` and push their own downstream onto the SAME stack, so a deep
+# eager-signal chain no longer nests one CPython frame per level either.
+#
+# Coalescing: ``Slot._invalidate`` rebinds its downstream edges to None BEFORE
+# propagating, so a node reached through several changed sources is only
+# non-trivially processed once per wave (later passes find empty edges and do
+# no work). The batch flush additionally funnels every changed-cell root through
+# ONE drain (``_suspend_drain`` / ``_resume_drain``), and effects are deduped by
+# identity in ``enqueue_effect`` — so the "a dependent reached through many
+# changed cells in one batch appears at most once" invariant holds.
+# ---------------------------------------------------------------------------
+
+_reset_work: list[tuple["Slot[Any, Any, Any]", Any]] = []
+_reset_active: bool = False
+
+
+def _drain_resets() -> None:
+    """Process the invalidation work-stack until empty.
+
+    Re-entrant-safe: if a drain is already running (eager recompute / effect
+    rerun pushed more work), the nested call returns immediately and the outer
+    loop picks up the new items.
+    """
+    global _reset_active
+    if _reset_active:
+        return
+    _reset_active = True
+    try:
+        work = _reset_work
+        while work:
+            node, node_ctx = work.pop()
+            node._invalidate(node_ctx)
+    finally:
+        _reset_active = False
+
+
+def _suspend_drain() -> None:
+    """Mark a drain as active so pushes accumulate without being consumed.
+
+    Used by the batch flush so all changed-cell roots push their downstream
+    into ONE coalesced wave, drained once by :func:`_resume_drain`.
+    """
+    global _reset_active
+    _reset_active = True
+
+
+def _resume_drain() -> None:
+    """End a coalesced-push region and drain the accumulated wave once."""
+    global _reset_active
+    _reset_active = False
+    _drain_resets()
+
+
 class SlotSubscriber(Protocol):
     def __call__(self, slot: "Slot[Any, Any, Any]", ctx: dict) -> Any: ...
 
@@ -43,7 +111,11 @@ class BaseSlot[C_in, C_ctx: dict, T]:
         )
 
     def __call__(self, ctx: C_in) -> T:
-        resolved = self.resolve_ctx(ctx)
+        resolve = self.resolve_ctx
+        if resolve is resolve_identity:
+            resolved: C_ctx = ctx  # type: ignore[assignment]
+        else:
+            resolved = resolve(ctx)
         if self in resolved:
             return resolved[self]
         resolved[self] = self.callable(resolved)
@@ -53,15 +125,27 @@ class BaseSlot[C_in, C_ctx: dict, T]:
         return f"<Slot {self.callable}>"
 
     def get(self, ctx: C_in) -> T | None:
-        resolved = self.resolve_ctx(ctx)
+        resolve = self.resolve_ctx
+        if resolve is resolve_identity:
+            resolved: C_ctx = ctx  # type: ignore[assignment]
+        else:
+            resolved = resolve(ctx)
         return resolved.get(self)
 
     def reset(self, ctx: C_in) -> None:
-        resolved = self.resolve_ctx(ctx)
+        resolve = self.resolve_ctx
+        if resolve is resolve_identity:
+            resolved: C_ctx = ctx  # type: ignore[assignment]
+        else:
+            resolved = resolve(ctx)
         resolved.pop(self, None)
 
     def is_in(self, ctx: C_in) -> bool:
-        resolved = self.resolve_ctx(ctx)
+        resolve = self.resolve_ctx
+        if resolve is resolve_identity:
+            resolved: C_ctx = ctx  # type: ignore[assignment]
+        else:
+            resolved = resolve(ctx)
         return self in resolved
 
 
@@ -97,7 +181,11 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
                 self._parents = set()
             self._parents.add(slot_stack[-1])
 
-        resolved = self.resolve_ctx(ctx)
+        resolve = self.resolve_ctx
+        if resolve is resolve_identity:
+            resolved: C_ctx = ctx  # type: ignore[assignment]
+        else:
+            resolved = resolve(ctx)
 
         if self in resolved:
             return resolved[self]
@@ -111,10 +199,23 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         return resolved[self]
 
     def reset(self, ctx: C_in) -> None:
-        # Snapshot + clear BOTH sets BEFORE notifying, so a subscriber/parent
-        # that re-enters reset finds empty sets and cannot mutually recurse.
-        resolved = self.resolve_ctx(ctx)
-        super().reset(ctx)
+        # Push self onto the iterative work-stack; the drain clears the cache,
+        # snapshots + clears the downstream edges, and propagates to parents in
+        # one coalesced wave (see ``_drain_resets``).
+        _reset_work.append((self, ctx))
+        _drain_resets()
+
+    def _invalidate(self, ctx: Any) -> None:
+        # Clear THIS node's cache + capture its downstream edges. Re-entrancy
+        # safe: the edges are rebound to None BEFORE notification, so a
+        # subscriber/parent that re-enters reset finds empty sets. The wave's
+        # visited guard (``_drain_resets``) makes a second pass a no-op.
+        resolve = self.resolve_ctx
+        if resolve is resolve_identity:
+            resolved = ctx
+        else:
+            resolved = resolve(ctx)
+        resolved.pop(self, None)
         subs = self._subscribers
         pare = self._parents
         self._subscribers = None
@@ -124,7 +225,7 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
                 subscriber(self, resolved)
         if pare:
             for parent in pare:
-                parent.reset(resolved)
+                _reset_work.append((parent, resolved))
 
     def subscribe(self, subscriber: SlotSubscriber) -> None:
         if self._subscribers is None:
@@ -132,14 +233,20 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         self._subscribers.add(subscriber)
 
     def touch(self, ctx: C_ctx) -> None:
-        # Iterate snapshots: an eager subscriber/parent may re-subscribe
-        # (re-establish a dependency) while being notified.
-        if self._subscribers:
-            for subscriber in tuple(self._subscribers):
+        # External subscribers persist across touches (they are not reactive
+        # edges), so iterate a snapshot. The auto-discovered parents are
+        # reactive edges: rebind-then-clear (they re-establish on recompute)
+        # and push them into the coalesced invalidation wave — no tuple alloc.
+        subs = self._subscribers
+        if subs:
+            for subscriber in tuple(subs):
                 subscriber(self, ctx)
-        if self._parents:
-            for parent in tuple(self._parents):
-                parent.reset(ctx)
+        pare = self._parents
+        if pare:
+            self._parents = None
+            for parent in pare:
+                _reset_work.append((parent, ctx))
+            _drain_resets()
 
 
 slot_stack: list[Slot[Any, Any, Any]] = []
