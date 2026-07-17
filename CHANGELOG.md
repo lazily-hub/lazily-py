@@ -1,5 +1,20 @@
 ## Unreleased
 
+## 0.31.2
+
+### Changed — packaging
+
+- **CI auto-publish to PyPI.** The `wheels.yml` publish step now uploads the
+  built matrix with the PyPI API token from the repo secret
+  `PYPI_PUBLISH_TOKEN` (sourced from passage `btak/PYPI_PUBLISH_TOKEN` — the
+  same key Claude/Codex use for `twine upload`), replacing OIDC trusted
+  publishing (which needed PyPI-side config). A `git tag v*` now builds and
+  publishes the full wheel matrix hands-off.
+- **macOS x86_64 via Apple-Silicon cross-compile.** Dropped the deprecated
+  Intel `macos-13` runner (which stalled ~40 min queueing); `macos-14` now
+  builds both arm64 and x86_64 (`CIBW_ARCHS_MACOS`).
+- Fixed drifted `lazily.__version__` (was stuck at `0.29.0`).
+
 ## 0.31.1
 
 ### Changed — packaging

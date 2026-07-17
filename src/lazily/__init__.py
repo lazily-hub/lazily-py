@@ -348,7 +348,7 @@ __all__ = [
     "windowing",
     "word_lcs_len",
 ]
-__version__ = "0.29.0"
+__version__ = "0.31.2"
 
 from . import (
     async_reactive_family,
