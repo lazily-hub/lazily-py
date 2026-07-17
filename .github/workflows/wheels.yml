@@ -28,12 +28,14 @@ jobs:
       # aarch64 on ubuntu-24.04-arm) instead of QEMU-emulating — much faster
       # and avoids duplicate aarch64 wheels.
       CIBW_ARCHS_LINUX: native
+      # Cross-compile both macOS arches from the Apple Silicon runner so we
+      # don't depend on the deprecated/scarce Intel macos-13 runners.
+      CIBW_ARCHS_MACOS: "x86_64 arm64"
     strategy:
       fail-fast: false
       matrix:
-        # macos-13 = Intel (x86_64), macos-14 = Apple Silicon (arm64).
-        # ubuntu builds x86_64 natively and aarch64 via QEMU emulation.
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-13, macos-14]
+        # macos-14 (Apple Silicon) builds both arm64 + x86_64 (cross-compiled).
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-14]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
