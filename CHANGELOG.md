@@ -1,5 +1,30 @@
 ## Unreleased
 
+## 0.31.0
+
+### Changed — reactive-core performance
+
+- **mypyc-compiled reactive core.** The five core modules (`slot` / `cell` /
+  `signal` / `effect` / `batch`) are now compiled as a single mypyc compilation
+  unit. Public classes use `@mypyc_attr(allow_interpreited_subclasses=True)`
+  (mypyc's `Py_TPFLAGS_BASETYPE` equivalent) so interpreted subclasses such as
+  `class HttpClient(Slot[...])` keep working. A prebuilt CPython 3.12 Linux
+  wheel ships the compiled extensions; on other platforms / interpreters the
+  sdist's build step falls back to pure Python automatically (the package stays
+  installable everywhere, losing only the speedup). Measured (CPython 3.12):
+  `slot.cached_read` ~1.7×, `viewport_recalc` ~1.9×, `full_recalc_invalidate_all`
+  ~1.6×.
+- **Iterative DFS invalidation + batch root coalescing.** The recursive
+  `Cell.touch` / `Slot.reset` cascade is replaced by an explicit work-stack, and
+  `batch()` now collects all changed-cell roots into one DFS pass — mirroring
+  lazily-rs `mark_frontier_locked` / `flush_batched_invalidations`. Removes the
+  CPython recursion limit on deep dependency chains.
+- **Hot-path micro-optimizations.** The `resolve_identity` no-op resolver is
+  short-circuited with an `is` check on every cached read; the single-threaded
+  `batch()` state moved from `threading.local` + `getattr`/`hasattr` to plain
+  module globals; `touch()` snapshots switched from `tuple(...)` allocation to
+  rebind-then-clear.
+
 ## 0.30.0
 
 ### Added
