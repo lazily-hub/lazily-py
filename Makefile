@@ -1,4 +1,4 @@
-.PHONY: init build test lint format type-check clean publish-test publish bench bench-scale
+.PHONY: init build test lint format type-check clean publish-test publish bench bench-scale compile
 
 # Install development dependencies and package in editable mode
 init: PY_VERSION = $(shell [ -f .python-version ] && \
@@ -23,6 +23,15 @@ init:
 # Run tests
 test:
 	uv run pytest tests/ -v
+
+# Compile the reactive core with mypyc (in-place .so files). Idempotent —
+# rebuild after editing src/lazily/{slot,cell,signal,effect,batch}.py to run
+# tests/benchmarks against the compiled code. If mypyc is unavailable this is a
+# no-op and tests/benches fall back to the pure-Python sources.
+compile:
+	-uv run mypyc --follow-imports=silent --config-file=pyproject.toml \
+		src/lazily/slot.py src/lazily/cell.py src/lazily/signal.py \
+		src/lazily/effect.py src/lazily/batch.py
 
 # Run tests with coverage
 test-cov:

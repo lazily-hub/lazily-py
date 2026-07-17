@@ -3,6 +3,8 @@ __all__ = ["BaseSlot", "Slot", "resolve_identity", "slot", "slot_def", "slot_sta
 from collections.abc import Callable
 from typing import Any, Protocol, TypeVar, cast
 
+from mypy_extensions import mypyc_attr
+
 
 C_in = TypeVar("C_in", contravariant=True)
 C_ctx = TypeVar("C_ctx", bound=dict)
@@ -12,6 +14,23 @@ T = TypeVar("T")
 
 def resolve_identity[C_ctx: dict](ctx: C_ctx) -> C_ctx:
     return ctx
+
+
+def _callable_of(slot_obj: Any) -> Callable[[Any], Any]:
+    """Resolve the slot's callable with MRO-aware semantics.
+
+    ``slot_obj`` is deliberately typed ``Any`` so mypyc emits a generic
+    (MRO-aware) attribute read instead of a native struct read. This matters
+    for interpreted subclasses that override ``callable`` as a *method* without
+    assigning the instance attribute (e.g.
+    ``class HttpClient(Slot[...]): def callable(self, ctx): ...``): a native
+    struct read would miss the method (the slot is unset) and raise
+    ``AttributeError``, whereas the generic read finds the method through the
+    MRO. The cost is off the hot path — cached reads return before the
+    callable is ever touched, and ordinary native slots keep their fast native
+    attribute *write* in ``__init__``; only the (cache-miss) read is generic.
+    """
+    return slot_obj.callable
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +105,7 @@ class SlotSubscriber(Protocol):
     def __call__(self, slot: "Slot[Any, Any, Any]", ctx: dict) -> Any: ...
 
 
+@mypyc_attr(allow_interpreted_subclasses=True)
 class BaseSlot[C_in, C_ctx: dict, T]:
     """
     Base class for a lazy slot Callable. Wraps a callable implementation field.
@@ -118,11 +138,11 @@ class BaseSlot[C_in, C_ctx: dict, T]:
             resolved = resolve(ctx)
         if self in resolved:
             return resolved[self]
-        resolved[self] = self.callable(resolved)
+        resolved[self] = _callable_of(self)(resolved)
         return resolved[self]
 
     def __repr__(self) -> str:
-        return f"<Slot {self.callable}>"
+        return f"<Slot {_callable_of(self)}>"
 
     def get(self, ctx: C_in) -> T | None:
         resolve = self.resolve_ctx
@@ -149,6 +169,7 @@ class BaseSlot[C_in, C_ctx: dict, T]:
         return self in resolved
 
 
+@mypyc_attr(allow_interpreted_subclasses=True)
 class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
     """
     Base class for a lazy slot Callable that subscribes to Cells.
@@ -192,7 +213,7 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
 
         try:
             slot_stack.append(self)
-            resolved[self] = self.callable(resolved)
+            resolved[self] = _callable_of(self)(resolved)
         finally:
             slot_stack.pop()
 

@@ -13,6 +13,17 @@ Wall-clock benchmarks for the lazily-py hot paths. Two suites:
 
 All timings use `time.perf_counter()`. Lower is better.
 
+> **The reactive core is mypyc-compiled.** `Slot` / `Cell` / `Signal` / `Effect`
+> / `CellSlot` are compiled to native C extension classes (one compilation unit
+> for `slot` / `cell` / `signal` / `effect` / `batch`), giving the speedups
+> below. The public classes are decorated with
+> `@mypyc_attr(allow_interpreted_subclasses=True)`, so interpreted subclasses
+> (`class HttpClient(Slot[...])`) keep working — this is the
+> `Py_TPFLAGS_BASETYPE`-equivalent that unblocked compilation. The same `.py`
+> sources ship as a fallback used automatically when compilation is unavailable
+> (no C toolchain); the "pure-Python" columns below are that fallback path. See
+> the [Compilation (shipped)](#compilation-shipped) section for the full story.
+
 ## Reproduce
 
 ```bash
@@ -47,27 +58,33 @@ parity.
 
 ## Micro-benchmark results
 
-10,000 samples per entry (`run_benchmarks()` default).
+10,000 samples per entry (`run_benchmarks()` default). **compiled** = mypyc
+native core; **pure-Python** = the shipped fallback (no `.so`).
 
-| Benchmark | µs/op | What it measures |
-|-----------|------:|------------------|
-| `slot.cached_read` | 0.066 | Cached (memoized) slot read — the steady-state pull with no recompute. |
-| `slot.invalidate_recompute` | 0.521 | Set a cell, then re-pull a dependent slot (edge re-tracking + recompute). |
-| `reconcile.lis_move_minimized` | 159.0 | LIS move-minimized keyed reconcile over a 10-key level (definitional longest-subsequence kernel, not greedy). |
-| `cellmap.insert_50` | 21.5 | Build a `CellMap` and insert 50 keyed entries (whole-collection construction, not per-insert). |
-| `textcrdt.merge_disjoint` | 1.37 | Merge two disjoint `TextCrdt` documents (Fugue/RGA order recomputed). |
-| `crdt_plane.idempotent_apply` | 0.088 | Re-apply an already-seen op to a `CrdtPlaneRuntime` (idempotent dedupe path). |
+| Benchmark | compiled µs/op | pure-Python µs/op | speedup | What it measures |
+|-----------|---------------:|------------------:|--------:|------------------|
+| `slot.cached_read` | 0.039 | 0.067 | ~1.7× | Cached (memoized) slot read — the steady-state pull with no recompute. |
+| `slot.invalidate_recompute` | 0.352 | 0.540 | ~1.5× | Set a cell, then re-pull a dependent slot (edge re-tracking + recompute). |
+| `reconcile.lis_move_minimized` | 189 | 159 | n/a¹ | LIS move-minimized keyed reconcile over a 10-key level (definitional longest-subsequence kernel, not greedy). |
+| `cellmap.insert_50` | 15.8 | 21.1 | ~1.3× | Build a `CellMap` and insert 50 keyed entries (whole-collection construction, not per-insert). |
+| `textcrdt.merge_disjoint` | 1.43 | 1.32 | n/a¹ | Merge two disjoint `TextCrdt` documents (Fugue/RGA order recomputed). |
+| `crdt_plane.idempotent_apply` | 0.089 | 0.087 | n/a¹ | Re-apply an already-seen op to a `CrdtPlaneRuntime` (idempotent dedupe path). |
+
+¹ `reconcile` / `textcrdt` / `crdt_plane` are not part of the mypyc compilation
+unit (only the reactive core is), so their numbers move only with run-to-run
+noise — they index the non-compiled paths.
 
 ### Notes
 
-- The reactive steady state is cheap: a cached slot read is ~66 ns, and an
-  invalidate + recompute round trip is ~0.52 µs even under CPython's
-  interpreter overhead.
+- The reactive steady state is cheap: a compiled cached slot read is ~39 ns, and
+  an invalidate + recompute round trip is ~0.35 µs — roughly 1.5–1.7× faster than
+  the pure-Python fallback under CPython's interpreter overhead.
 - `reconcile.lis_move_minimized` is the heaviest micro-path because the LIS
-  kernel is *definitional* (longest subsequence, not greedy) — it is
-  exponential in the worst case, so the bench keeps the level at 10 keys.
+  kernel is *definitional* (longest subsequence, not greedy) — it is exponential
+  in the worst case, so the bench keeps the level at 10 keys.
 - `cellmap.insert_50` measures whole-collection construction (50 inserts +
-  allocation), not a single insert — divide by 50 for per-insert.
+  allocation), not a single insert — divide by 50 for per-insert. Its speedup
+  comes for free from the compiled `Cell` it builds on.
 
 ## Scale (≥1M cells) — spreadsheet-shaped graph
 
@@ -86,9 +103,30 @@ lifecycle:
 > formulas `=A_i + A_{i-1}`, so each row is **one input cell `A_i` plus one
 > formula cell**. `N` rows ⇒ `N` inputs + `N` formulas = `2N` cells.
 
-### 1,000,000 rows (~2M cells / nodes)
+### Compiled vs pure-Python (N = 300,000 rows, back-to-back A/B)
 
-Peak RSS ~1.4 GiB.
+The mypyc-compiled core versus the pure-Python fallback on the same machine,
+same run. The interactive-edit (`viewport_recalc`) and worst-case-edit
+(`full_recalc_invalidate_all`) paths — the ones a spreadsheet UI actually hits —
+see the largest gains.
+
+| Benchmark | compiled | pure-Python | speedup |
+|-----------|---------:|------------:|--------:|
+| `build` | 949 ns/cell | 1120 ns/cell | ~1.18× |
+| `cold_full_recalc` | 297 ns/cell | 403 ns/cell | ~1.36× |
+| `viewport_recalc` | **34.4 µs/edit** | 66.3 µs/edit | **~1.93×** |
+| `full_recalc_invalidate_all` | 528 ns/cell | 846 ns/cell | ~1.60× |
+
+`build` is the smallest gain because it is allocation/GC-bound on one
+interpreter object per node — mypyc speeds up the `Cell`/`Slot` constructors but
+cannot remove the per-node allocation. The *recompute* paths run the compiled
+attribute/cache machinery, which is where the speedup concentrates.
+
+### 1,000,000 rows (~2M cells / nodes) — pure-Python fallback
+
+The numbers below are the **pure-Python fallback** (no `.so`), matching what a
+platform without a C toolchain ships. The compiled core scales proportionally
+(see the N=300k A/B above for the per-path speedup). Peak RSS ~1.4 GiB.
 
 | Benchmark | Time | Per cell | What it measures |
 |-----------|-----:|---------:|------------------|
@@ -176,17 +214,49 @@ These are single-threaded benchmarks. The concurrency surfaces
 (`ThreadSafeContext`, signaling, the CRDT plane) are correctness-tested rather
 than benchmarked here.
 
-### Compilation (future work)
+### Compilation (shipped)
 
-The reactive core is pure CPython. mypyc compilation of the five core modules
-(`slot`, `cell`, `signal`, `effect`, `batch`) was prototyped (they compile and
-function correctly) but is **not** shipped: mypyc compiles classes to C
-extension types, which CPython interpreted classes cannot subclass, so
-compiling `Slot` breaks the `class HttpClient(Slot[...])` extension pattern
-(test `test_complex_dependency_graph`); and compiling the dependents without
-`Slot` fails because `Effect`/`_SignalSlot`/`CellSlot` assign `__slots__`
-inherited from `Slot`/`BaseSlot`. mypyc remains the single biggest available
-speedup (~2–5× on the hot path) once either mypyc supports subclassable
-compiled classes (`Py_TPFLAGS_BASETYPE`) or the `Slot`-subclass extension point
-is refactored — the prototype validated that the heavily type-annotated,
-`__slots__`-based core is otherwise mypyc-ready.
+The reactive core (`slot` / `cell` / `signal` / `effect` / `batch`) is compiled
+to native C extension classes with **mypyc 2.3** (`mypy 2.3.0`), invoked through
+`setup.py`'s `mypycify(...)` as a single compilation unit so cross-file
+native-class inheritance (`BaseSlot` → `CellSlot`, `Slot` → `Effect` /
+`_SignalSlot`) gets mypyc's early binding. `make build` ships a platform wheel
+(`cp312-cp312-linux_x86_64.whl`, etc.) carrying the compiled `.so` alongside the
+`.py` sources.
+
+**The subclassability blocker — solved.** The prior prototype (documented here
+as "future work") found that mypyc compiles classes to C extension types that
+CPython interpreted classes cannot subclass, so compiling `Slot` broke the
+`class HttpClient(Slot[...])` extension pattern. mypyc 2.x solves this directly:
+the public classes are decorated with
+`@mypyc_attr(allow_interpreted_subclasses=True)` (the `Py_TPFLAGS_BASETYPE`
+equivalent — `mypy_extensions.mypyc_attr`), so interpreted subclasses keep
+working while the native classes themselves stay fast. All four public classes
+(`BaseSlot`/`Slot`/`Cell`/`Signal`/`Effect`) opt in, so the public subclassable
+contract is unchanged (`tests/test_slot.py::test_complex_dependency_graph`
+passes against the compiled core).
+
+**`callable` as an overridden method.** An interpreted subclass may override
+`callable` as a *method* rather than assigning the instance attribute (the
+`HttpClient` pattern). mypyc compiles `self.callable` to a native struct read,
+which would miss the method (the slot is unset). `slot._callable_of` is
+deliberately typed `Any` so mypyc emits a generic, MRO-aware attribute read that
+finds the method. This is off the hot path — cached reads return before
+`callable` is ever touched, and ordinary native slots keep their fast native
+attribute *write* in `__init__`; only the (cache-miss) read is generic.
+
+**Pure-Python fallback.** `setup.py` downgrades to a pure-Python build (no
+extension modules) if mypyc is unavailable or C compilation fails, and the wheel
+always carries the `.py` sources — so the package stays installable on platforms
+without a C toolchain, losing the speedup but keeping full correctness and the
+public API. A compiled install never imports `mypy_extensions` at runtime (the
+decorator is baked into the C); it is a runtime dependency only for the fallback
+sources.
+
+**Dev workflow.** `make compile` rebuilds the in-place `.so` files after editing
+the core; `make check` / `make bench` then run against the compiled code. With
+no `.so` present (fresh checkout, no `make compile`), they run against the
+pure-Python sources — both paths are green. `--follow-imports=silent` scopes
+mypyc's mypy pass to the compilation unit: the package type-checks with `ty`
+(not mypy), and this silences pre-existing mypy-only errors in modules reached
+through `lazily/__init__` re-exports without affecting the compiled core.

@@ -28,13 +28,14 @@ __all__ = ["Effect", "effect"]
 from typing import TYPE_CHECKING, Any
 
 from .batch import enqueue_effect, in_batch
-from .slot import Slot, slot_stack
+from .slot import Slot, mypyc_attr, slot_stack
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+@mypyc_attr(allow_interpreted_subclasses=True)
 class Effect(Slot[Any, dict, None]):
     """A sync reactive effect — a side-effecting observer.
 
@@ -58,6 +59,12 @@ class Effect(Slot[Any, dict, None]):
         "_running",
     )
 
+    _body: Callable[[dict], Any | None]
+    _cleanup: Any | None
+    _ctx: dict | None
+    _disposed: bool
+    _running: bool
+
     def __init__(self, body: Callable[[dict], Any | None]) -> None:
         # Slot.__init__ sets up `_subscribers` and the placeholder callable; we
         # override `__call__` and `reset` so the slot machinery is used only for
@@ -65,8 +72,8 @@ class Effect(Slot[Any, dict, None]):
         # the body so Cells/Slots/Signals auto-subscribe to it).
         super().__init__(callable=lambda _ctx: None)
         self._body = body
-        self._cleanup: Any | None = None
-        self._ctx: dict | None = None
+        self._cleanup = None
+        self._ctx = None
         self._disposed = False
         self._running = False
 

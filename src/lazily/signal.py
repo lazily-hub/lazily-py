@@ -21,7 +21,7 @@ __all__ = ["Signal", "signal", "signal_def"]
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from .slot import Slot, _drain_resets, _reset_work, slot, slot_stack
+from .slot import Slot, _drain_resets, _reset_work, mypyc_attr, slot, slot_stack
 
 
 if TYPE_CHECKING:
@@ -38,13 +38,15 @@ class _SignalSlot[C_in, C_ctx: dict, T](Slot[C_in, C_ctx, T]):
 
     __slots__ = ("_signal",)
 
+    _signal: Signal[T] | None
+
     def __init__(
         self,
         callable: Callable[[C_ctx], T],
         resolve_ctx: Callable[[C_in], C_ctx] | None = None,
     ) -> None:
         super().__init__(callable=callable, resolve_ctx=resolve_ctx)
-        self._signal: Signal[T] | None = None
+        self._signal = None
 
     def reset(self, ctx: C_in) -> None:
         super().reset(ctx)
@@ -56,6 +58,7 @@ class _SignalSlot[C_in, C_ctx: dict, T](Slot[C_in, C_ctx, T]):
             sig._eager_recompute()
 
 
+@mypyc_attr(allow_interpreted_subclasses=True)
 class Signal[T]:
     """An eager derived value bound to a single context.
 
@@ -76,15 +79,23 @@ class Signal[T]:
         "ctx",
     )
 
+    _subscribers: set[Callable[[dict, T], Any]] | None
+    _parents: set[Slot[Any, Any, Any]] | None
+    _active: bool
+    _recomputing: bool
+    _slot: _SignalSlot[dict, dict, T]
+    _value: T
+    ctx: dict
+
     def __init__(self, ctx: dict, callable: Callable[[dict], T]) -> None:
         self.ctx = ctx
         # Lazily materialized on first subscriber/parent: an empty CPython
         # ``set()`` is ~216 B, so deferring it keeps quiescent signals cheap.
-        self._subscribers: set[Callable[[dict, T], Any]] | None = None
-        self._parents: set[Slot[Any, Any, Any]] | None = None
+        self._subscribers = None
+        self._parents = None
         self._active = True
         self._recomputing = False
-        self._slot: _SignalSlot[dict, dict, T] = _SignalSlot(callable)
+        self._slot = _SignalSlot(callable)
         self._slot._signal = self
         # Eager activation: compute once now so there is no intermediate unset
         # value, and so dependency edges are established immediately.

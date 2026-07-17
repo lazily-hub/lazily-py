@@ -23,7 +23,14 @@ classifiers = [
 ]
 keywords = ["lazy", "evaluation", "dependency", "injection", "context", "lazily"]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    # mypy_extensions.mypyc_attr decorates the public reactive classes
+    # (Slot/Cell/Signal/Effect) with ``allow_interpreted_subclasses=True``.
+    # mypyc processes it at compile time and bakes it into the C extension, so
+    # compiled installs never import it at runtime; it is required by the
+    # shipped pure-Python fallback (used when compilation is unavailable).
+    "mypy-extensions>=1.0",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/lazily-hub/lazily-py"
@@ -34,6 +41,7 @@ dependencies = []
 dev = [
     "build==1.4.0",
     "jsonschema==4.23.0",
+    "mypy[mypyc]>=2.3",
     "poethepoet==0.40.0",
     "pytest-cov==7.0.0",
     "pytest==9.0.2",
@@ -47,8 +55,19 @@ dev = [
 dev = ["lazily[dev]"]
 
 [build-system]
-requires = ["uv_build>=0.9.21,<0.10.0"]
-build-backend = "uv_build"
+# setuptools + mypyc compile the reactive core (slot/cell/signal/effect/batch)
+# to native C extension classes. setup.py falls back to a pure-Python build if
+# mypyc or a C compiler is unavailable, so the package still installs without a
+# toolchain (losing the speedup, keeping correctness). See setup.py + the
+# "Compilation" note in BENCHMARKS.md.
+requires = ["setuptools>=61", "wheel", "mypy[mypyc]>=2.3", "mypy-extensions>=1.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
 
 [tool.uv]
 default-groups = ["dev"]

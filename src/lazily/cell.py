@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any, Protocol, TypeVar
 
 from .batch import notify_change as _notify_change
-from .slot import BaseSlot, Slot, _drain_resets, _reset_work, slot_stack
+from .slot import BaseSlot, Slot, _drain_resets, _reset_work, mypyc_attr, slot_stack
 
 
 C_in = TypeVar("C_in", contravariant=True)
@@ -16,6 +16,7 @@ class CellSubscriber[T](Protocol):
     def __call__(self, ctx: dict[Any, Any], value: T, /) -> Any: ...
 
 
+@mypyc_attr(allow_interpreted_subclasses=True)
 class Cell[T]:
     """
     A subscribable that can be used with Slots.
@@ -25,6 +26,8 @@ class Cell[T]:
 
     _subscribers: set[CellSubscriber[T]] | None
     _parents: set[Slot[Any, Any, Any]] | None
+    _value: T
+    ctx: dict
 
     def __init__(self, ctx: dict, initial_value: T) -> None:
         self.ctx = ctx
@@ -105,6 +108,7 @@ def _none_as_t(_: dict) -> Any:
     return None
 
 
+@mypyc_attr(allow_interpreted_subclasses=True)
 class CellSlot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, Cell[T]]):
     __slots__ = ()
 
