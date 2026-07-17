@@ -51,6 +51,13 @@ def stamp_key(stamp: WireStamp) -> tuple[int, int, int]:
     return (stamp.wall_time, stamp.logical, stamp.peer)
 
 
+def _entry_key(node: NodeId, key: NodeKey | None) -> tuple[NodeId, str | None]:
+    """The secondary-index key for a ``(node, key)`` pair — matches on node id
+    and the key path (``None`` for an unkeyed entry). Mirrors
+    :meth:`PlaneEntry.matches`."""
+    return (node, key.path if key is not None else None)
+
+
 @dataclass
 class PlaneEntry:
     """One converged node entry in the plane — the winning op for ``(node, key)``.
@@ -87,6 +94,7 @@ class CrdtPlaneRuntime:
 
     __slots__ = (
         "_applied",
+        "_by_node_key",
         "_entries",
         "_families",
         "_family_epoch",
@@ -101,6 +109,10 @@ class CrdtPlaneRuntime:
     def __init__(self, self_peer: int = 0) -> None:
         self._self_peer = self_peer
         self._entries: list[PlaneEntry] = []
+        # Secondary index ``#lzpyfindindex``: ``(node, path|None) -> entries[i]``
+        # so :meth:`_find` is a dict lookup instead of an O(n) scan (apply /
+        # apply_frame / delta_sync drop O(N·M) -> O(N+M)).
+        self._by_node_key: dict[tuple[NodeId, str | None], int] = {}
         # Op-log dedup keyed by (node, stamp_key) — idempotent redelivery.
         self._applied: set[tuple[NodeId, tuple[int, int, int]]] = set()
         # Per-peer highest observed stamp (the frontier this runtime publishes).
@@ -146,6 +158,7 @@ class CrdtPlaneRuntime:
         entry = PlaneEntry(op.node, op.key, op.stamp, payload)
         idx = self._find(op.node, op.key)
         if idx is None:
+            self._by_node_key[_entry_key(op.node, op.key)] = len(self._entries)
             self._entries.append(entry)
             return True
         existing = self._entries[idx]
@@ -255,10 +268,8 @@ class CrdtPlaneRuntime:
     # -- convergence ---------------------------------------------------- #
 
     def _find(self, node: NodeId, key: NodeKey | None) -> int | None:
-        for i, entry in enumerate(self._entries):
-            if entry.matches(node, key):
-                return i
-        return None
+        # ``#lzpyfindindex``: O(1) dict lookup via the secondary index.
+        return self._by_node_key.get(_entry_key(node, key))
 
     def converged(self) -> list[PlaneEntry]:
         """The current winner per ``(node, key)`` in insertion order."""

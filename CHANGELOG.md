@@ -1,5 +1,40 @@
 ## Unreleased
 
+## 0.33.0
+
+### Changed — performance (Phase 2 quick wins of `tasks/agent-doc/plans/lazily-perf-memory-audit.md`)
+
+- **Patience-sort LIS (`#lzpylisnlogn`).** `reconciliation.lis_by` replaced its
+  O(2ⁿ) include-vs-skip recursion (genuinely longest, not greedy) with an
+  O(n log n) patience-sort kernel. It returns the same lexicographically-smallest
+  longest increasing subsequence the recursion chose, so the stable set a
+  reconcile selects is unchanged. The 10-key micro-bench drops from ~159 µs to
+  ~4.6 µs (~35×), and N=50 / N=100 — unbenchable before — are now first-class
+  gates (`reconcile.lis_n50` / `reconcile.lis_n100`). Verified against
+  `lazily-spec/conformance/collections/keyed_reconciliation_lis.json`.
+- **CRDT plane secondary index (`#lzpyfindindex`).** `CrdtPlaneRuntime` keeps a
+  `_by_node_key: dict[(NodeId, path|None), int]` so `_find` is an O(1) dict
+  lookup instead of an O(n) entry scan. `apply()` / `apply_frame()` /
+  `delta_sync()` drop O(N·M) → O(N+M). New `crdt_plane.apply_indexed_100` gate.
+- **`SemTree` parent index (`#lzpysemtreeparents`).** A `_parents:
+  dict[Id, list[Node]]` index makes `_mark_dirty_chain` an O(depth) walk up the
+  ancestor chain instead of an O(depth × N) full-table scan per ancestor. New
+  `semtree.dirty_chain_100` gate.
+- **Reconcile LIS computed once (`#lzpyreconcileidx`).** `stable_keys` builds the
+  prior-index map once via `enumerate` (O(n)) instead of an `idx_in` linear scan
+  per common key (O(n·m)), and `reconcile_ops` derives the moved set from the
+  single LIS rather than recomputing it.
+- **`@dataclass(slots=True)` sweep (`#lzpySlotsSweep`).** ~47 leaf dataclasses
+  across `ipc.py`, `textcrdt.py`, `command.py`, `temporal.py`, `service.py`,
+  `rateshape.py`, and the `lossless_tree_crdt.py` internal record/body classes
+  now declare `slots=True` (frozen leaves get `frozen=True, slots=True`). The
+  non-slots tagged-union bases (`NodeState` / `IpcValue` / `DeltaOp`) and
+  `PermissionDenied(Exception)` were intentionally skipped.
+- **`match` dispatch (`#lzpymatchdispatch`).** The 6-way `isinstance` chains in
+  `lossless_tree_crdt._kind_to_dict` / `_apply_op` / `_dependencies_ready` are
+  now `match` statements (class patterns). `_apply_op` also consolidates the
+  per-node dict lookup on `CreateNode`.
+
 ## 0.32.0
 
 ### Changed — performance (CRDT plane, Phase 1 of `tasks/agent-doc/plans/lazily-perf-memory-audit.md`)

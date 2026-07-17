@@ -163,7 +163,7 @@ class NodeKeyError(ValueError):
         return "node key path has an empty segment"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NodeKey:
     """Wire-stable keyed address for a collection entry.
 
@@ -282,7 +282,7 @@ class BlobBackendKind(Enum):
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ShmBlobRef:
     """Descriptor for a payload stored in a blob backend (zero-copy transport).
 
@@ -731,7 +731,7 @@ class IpcValue_SharedBlob(IpcValue):
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NodeSnapshot:
     """Full state for one node in a snapshot."""
 
@@ -782,7 +782,7 @@ class NodeSnapshot:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EdgeSnapshot:
     """Directed dependency edge (``dependent`` → ``dependency``)."""
 
@@ -802,7 +802,7 @@ class EdgeSnapshot:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Snapshot:
     """Full graph image sent on connect or resync."""
 
@@ -1039,7 +1039,7 @@ class DeltaApplyStatusKind(Enum):
     RESYNC_REQUIRED = "resync_required"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DeltaApplyStatus:
     """Receiver decision for an incoming :class:`Delta`."""
 
@@ -1072,7 +1072,7 @@ class DeltaApplyStatus:
         return self.kind is DeltaApplyStatusKind.RESYNC_REQUIRED
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Delta:
     """Incremental change set emitted after one outermost batch flush."""
 
@@ -1127,7 +1127,7 @@ class Delta:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WireStamp:
     """Wire mirror of the runtime HLC stamp — a total order ``(wall, logical, peer)``.
 
@@ -1156,7 +1156,7 @@ class WireStamp:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CrdtOp:
     """One CRDT cell op on the wire (state-based / CvRDT).
 
@@ -1213,7 +1213,7 @@ class CrdtOp:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CrdtSync:
     """A CRDT anti-entropy sync frame (the multi-writer plane).
 
@@ -1263,7 +1263,7 @@ class CrdtSync:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResyncRequest:
     """Reliable-sync reverse-channel control frame: request a covering
     :class:`Snapshot` on a detected gap (``#lzsync``, spec § ResyncCoordinator).
@@ -1283,7 +1283,7 @@ class ResyncRequest:
         return cls(from_epoch=d["from_epoch"])
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class OutboxAck:
     """Reliable-sync reverse-channel control frame: prove receipt through
     ``through_epoch`` (``#lzsync``, spec § DurableOutbox).
@@ -1308,7 +1308,7 @@ class OutboxAck:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class IpcMessage:
     """Tagged IPC protocol message — a :class:`Snapshot`, :class:`Delta`,
     :class:`CrdtSync`, or a reliable-sync control frame (:class:`ResyncRequest`
@@ -1429,7 +1429,7 @@ class OpKind(Enum):
     TRIGGER_EFFECT = "trigger_effect"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RemoteOp:
     """A single operation a remote peer may request against the shared graph."""
 
@@ -1556,7 +1556,7 @@ PROTOCOL_ID = "lazily-ipc"
 PROTOCOL_MAJOR_VERSION = 1
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CapabilityHandshake:
     """Compatibility handshake exchanged before any graph state flows.
 
@@ -1701,7 +1701,7 @@ class ReceiptOutcome(Enum):
             ) from exc
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CausalReceipt:
     """One causal receipt event — an idempotent observation of a command/effect.
 
@@ -1761,7 +1761,7 @@ class CausalReceipt:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CausalReceipts:
     """Wire frame carrying a batch of :class:`CausalReceipt` events.
 

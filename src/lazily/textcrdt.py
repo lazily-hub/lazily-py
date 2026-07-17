@@ -50,7 +50,7 @@ from typing import Any
 ROOT = ("root", -1)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class OpId:
     """Unique identifier for one element op — ``(counter, peer)``.
 
@@ -81,7 +81,7 @@ class OpId:
 Origin = Any
 
 
-@dataclass
+@dataclass(slots=True)
 class TextElement:
     """One character CRDT element.
 
@@ -99,7 +99,7 @@ class TextElement:
     delete_id: OpId | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TextOp:
     """Transport form of one element — the ``delta_since`` payload shape.
 

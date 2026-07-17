@@ -70,7 +70,7 @@ class TimelineSource(Protocol):
         ...
 
 
-@dataclass
+@dataclass(slots=True)
 class ManualClock:
     """A monotone logical clock a manual runtime (game loop, test) can own to
     drive sources. :meth:`advance` clamps backwards moves so ``now`` is always
@@ -94,7 +94,7 @@ class ManualClock:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class TimerCore:
     """Single-shot compute core: ``None -> Some(())`` at the first tick with
     ``now >= fire_at``; fires exactly once (idempotent thereafter)."""
@@ -158,7 +158,7 @@ class TimerCell:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class IntervalCore:
     """Periodic compute core: fire boundaries at ``period, 2*period, ...``. A
     tick counts every boundary in ``(frontier, now]``, so a jump past several
@@ -238,7 +238,7 @@ def count_upto(n: int, o: int, cycle: int) -> int:
     return 0
 
 
-@dataclass
+@dataclass(slots=True)
 class CronCore:
     """Pattern-periodic compute core: a tick ``m >= 1`` fires iff
     ``m mod cycle in offsets``. Structurally an interval with a match set — a
@@ -328,7 +328,7 @@ class DeadlineState(Enum):
     EXPIRED = "Expired"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Deadlined[T]:
     """A value paired with a liveness state: ``Live`` until its deadline, then
     ``Expired`` — the value is preserved across the flip."""
@@ -340,7 +340,7 @@ class Deadlined[T]:
         return self.state is DeadlineState.EXPIRED
 
 
-@dataclass
+@dataclass(slots=True)
 class DeadlineCore:
     """Deadline compute core (bytes-eligible): a :class:`TimerCore` over the
     deadline. The value lives in the reactive cell."""

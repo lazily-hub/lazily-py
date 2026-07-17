@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from lazily.semtree import _IdLike
+
 
 @dataclass(frozen=True)
 class BenchmarkResult:
@@ -101,8 +103,9 @@ def _bench_slot_invalidate(n: int) -> BenchmarkResult:
 def _bench_reconcile(n: int) -> BenchmarkResult:
     from lazily import Level, reconcile_ops
 
-    # The LIS kernel is definitional (longest, not greedy), so it is O(2^n) in
-    # the worst case — keep the level small enough to stay fast in a microbench.
+    # The LIS kernel is now O(n log n) (patience sort, `#lzpylisnlogn`) — it
+    # replaced an O(2^n) include-vs-skip recursion. This entry keeps the
+    # historical 10-key level for continuity with prior BENCHMARKS.md rows.
     prior: Level[str, int] = Level(
         order=[f"k{i}" for i in range(10)],
         values={f"k{i}": i for i in range(10)},
@@ -115,6 +118,30 @@ def _bench_reconcile(n: int) -> BenchmarkResult:
         "reconcile.lis_move_minimized",
         lambda: reconcile_ops(prior, target),  # type: ignore[arg-type]
         n,
+    )
+
+
+def _bench_lis_by(keys: int, samples: int) -> BenchmarkResult:
+    """The patience-sort LIS kernel (`#lzpylisnlogn`) at a given level size.
+
+    Exercises the move-minimized reconcile over a level of ``keys`` entries
+    (half rotated to the tail). The pre-`#lzpylisnlogn` recursion was O(2^n),
+    so only N=10 was benchable; N=50/100 are new gates the fix unblocked."""
+    from lazily import Level, reconcile_ops
+
+    half = keys // 2
+    prior: Level[str, int] = Level(
+        order=[f"k{i}" for i in range(keys)],
+        values={f"k{i}": i for i in range(keys)},
+    )
+    target: Level[str, int] = Level(
+        order=[f"k{i}" for i in range(half, keys)] + [f"k{i}" for i in range(half)],
+        values={f"k{i}": i for i in range(keys)},
+    )
+    return time_op(
+        f"reconcile.lis_n{keys}",
+        lambda: reconcile_ops(prior, target),  # type: ignore[arg-type]
+        samples,
     )
 
 
@@ -146,22 +173,92 @@ def _bench_crdt_plane_apply(n: int) -> BenchmarkResult:
     return time_op("crdt_plane.idempotent_apply", lambda: plane.apply(op), n)
 
 
+def _bench_crdt_plane_apply_indexed(n: int) -> BenchmarkResult:
+    """Apply updates to a populated plane (`#lzpyfindindex`).
+
+    Each update re-resolves an existing ``(node, key)`` — the path the
+    secondary ``_by_node_key`` index turns from an O(n) scan into an O(1) dict
+    lookup. Stamps strictly advance each sample so every op clears dedup and
+    reaches :meth:`_find`."""
+    from lazily import CrdtOp, CrdtPlaneRuntime, WireStamp
+    from lazily.ipc import IpcValue_Inline, NodeKey
+
+    size = 100
+    plane = CrdtPlaneRuntime(self_peer=0)
+    for i in range(size):
+        plane.apply(
+            CrdtOp.keyed(
+                i, NodeKey.new(f"p{i}"), WireStamp(1, i, 1), IpcValue_Inline(b"x")
+            )
+        )
+    tick = [1]
+
+    def step() -> None:
+        wall = tick[0] + 1
+        tick[0] = wall
+        for i in range(size):
+            plane.apply(
+                CrdtOp.keyed(
+                    i,
+                    NodeKey.new(f"p{i}"),
+                    WireStamp(wall, i, 1),
+                    IpcValue_Inline(b"y"),
+                )
+            )
+
+    return time_op("crdt_plane.apply_indexed_100", step, n)
+
+
+def _bench_semtree_dirty_chain(n: int) -> BenchmarkResult:
+    """Edit the deepest leaf of a 100-deep chain (`#lzpysemtreeparents`).
+
+    ``set_node_value`` walks the ancestor chain via the ``_parents`` index —
+    O(depth) instead of the former O(depth x N) full-table scan."""
+    from typing import cast
+
+    from lazily import SemTree
+
+    depth = 100
+    tree = SemTree[str, int](fold="sum")
+    tree.add(cast("_IdLike", "n0"), 0)
+    for i in range(1, depth):
+        tree.insert_child(cast("_IdLike", f"n{i - 1}"), cast("_IdLike", f"n{i}"), 0)
+    leaf = cast("_IdLike", f"n{depth - 1}")
+    root = cast("_IdLike", "n0")
+    tree.derived(leaf)  # materialize the memoized chain
+
+    def step() -> None:
+        tree.set_node_value(leaf, 1)
+        tree.derived(root)
+        tree.set_node_value(leaf, 0)
+        tree.derived(root)
+
+    return time_op("semtree.dirty_chain_100", step, n)
+
+
 def run_benchmarks(samples: int = 10_000) -> list[BenchmarkResult]:
     """Run the full benchmark suite and return each result.
 
     The suite exercises the reactive core (cached read + invalidate/recompute),
-    keyed reconciliation (LIS move-minimized diff), :class:`CellMap` insertion,
-    :class:`TextCrdt` merge, and the :class:`CrdtPlaneRuntime` idempotent apply.
+    keyed reconciliation (LIS move-minimized diff at 10 keys + the patience-sort
+    kernel at 10/50/100 keys), :class:`CellMap` insertion, :class:`TextCrdt`
+    merge, the :class:`CrdtPlaneRuntime` apply paths (idempotent + indexed
+    lookup), and the :class:`SemTree` dirty-chain walk.
     """
-    entries = [
-        _bench_slot_read,
-        _bench_slot_invalidate,
-        _bench_reconcile,
-        _bench_cellmap_insert,
-        _bench_textcrdt_merge,
-        _bench_crdt_plane_apply,
+    entries: list[Callable[[], BenchmarkResult]] = [
+        lambda: _bench_slot_read(samples),
+        lambda: _bench_slot_invalidate(samples),
+        lambda: _bench_reconcile(samples),
+        lambda: _bench_lis_by(10, samples),
+        lambda: _bench_lis_by(50, samples),
+        lambda: _bench_lis_by(100, samples),
+        lambda: _bench_cellmap_insert(samples),
+        lambda: _bench_textcrdt_merge(samples),
+        lambda: _bench_crdt_plane_apply(samples),
+        lambda: _bench_crdt_plane_apply_indexed(samples),
+        lambda: _bench_semtree_dirty_chain(samples),
     ]
-    return [entry(samples) for entry in entries]
+    return [entry() for entry in entries]
 
 
 def main() -> None:

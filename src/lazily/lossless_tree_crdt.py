@@ -438,13 +438,13 @@ def tree_version_frontier_from_wire(d: Any) -> TreeVersionFrontier:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class _LeafBody:
     kind: LeafKind
     text: TextCrdt
 
 
-@dataclass
+@dataclass(slots=True)
 class _ElementBody:
     kind: str
 
@@ -452,7 +452,7 @@ class _ElementBody:
 _NodeBody = _LeafBody | _ElementBody
 
 
-@dataclass
+@dataclass(slots=True)
 class _NodeRecord:
     id: TreeOpId
     parent: TreeOpId | None
@@ -526,47 +526,51 @@ def _text_op_from_dict(d: Any) -> TextOp:
 
 
 def _kind_to_dict(kind: TreeOpKind) -> dict[str, Any]:
-    if isinstance(kind, CreateNode):
-        return {
-            "CreateNode": {
-                "id": kind.id.to_dict(),
-                "parent": kind.parent.to_dict(),
-                "sort": kind.sort.to_dict(),
-                "seed": _seed_wire(kind.seed),
+    match kind:
+        case CreateNode(id=oid, parent=oparent, sort=osort, seed=oseed):
+            return {
+                "CreateNode": {
+                    "id": oid.to_dict(),
+                    "parent": oparent.to_dict(),
+                    "sort": osort.to_dict(),
+                    "seed": _seed_wire(oseed),
+                }
             }
-        }
-    if isinstance(kind, Tombstone):
-        return {"Tombstone": {"node": kind.node.to_dict()}}
-    if isinstance(kind, Reorder):
-        return {"Reorder": {"node": kind.node.to_dict(), "sort": kind.sort.to_dict()}}
-    if isinstance(kind, LeafEdit):
-        return {
-            "LeafEdit": {
-                "node": kind.node.to_dict(),
-                "prev": kind.prev.to_dict(),
-                "ops": [_text_op_to_dict(o) for o in kind.ops],
+        case Tombstone(node=node):
+            return {"Tombstone": {"node": node.to_dict()}}
+        case Reorder(node=node, sort=osort):
+            return {"Reorder": {"node": node.to_dict(), "sort": osort.to_dict()}}
+        case LeafEdit(node=node, prev=oprev, ops=oops):
+            return {
+                "LeafEdit": {
+                    "node": node.to_dict(),
+                    "prev": oprev.to_dict(),
+                    "ops": [_text_op_to_dict(o) for o in oops],
+                }
             }
-        }
-    if isinstance(kind, SplitLeaf):
-        return {
-            "SplitLeaf": {
-                "node": kind.node.to_dict(),
-                "new": kind.new.to_dict(),
-                "sort": kind.sort.to_dict(),
-                "at_char": kind.at_char,
-                "prev": kind.prev.to_dict(),
+        case SplitLeaf(node=node, new=new, sort=osort, at_char=at_char, prev=oprev):
+            return {
+                "SplitLeaf": {
+                    "node": node.to_dict(),
+                    "new": new.to_dict(),
+                    "sort": osort.to_dict(),
+                    "at_char": at_char,
+                    "prev": oprev.to_dict(),
+                }
             }
-        }
-    if isinstance(kind, MergeLeaves):
-        return {
-            "MergeLeaves": {
-                "left": kind.left.to_dict(),
-                "right": kind.right.to_dict(),
-                "prev_left": kind.prev_left.to_dict(),
-                "prev_right": kind.prev_right.to_dict(),
+        case MergeLeaves(
+            left=left, right=right, prev_left=prev_left, prev_right=prev_right
+        ):
+            return {
+                "MergeLeaves": {
+                    "left": left.to_dict(),
+                    "right": right.to_dict(),
+                    "prev_left": prev_left.to_dict(),
+                    "prev_right": prev_right.to_dict(),
+                }
             }
-        }
-    raise TypeError(f"unknown op kind: {type(kind).__name__}")
+        case _:
+            raise TypeError(f"unknown op kind: {type(kind).__name__}")
 
 
 def _kind_from_dict(d: Any) -> TreeOpKind:
@@ -1007,21 +1011,24 @@ class LosslessTreeCrdt:
                 break
 
     def _dependencies_ready(self, op: TreeOp) -> bool:
-        k = op.kind
-        if isinstance(k, CreateNode):
-            return self._get(k.parent) is not None
-        if isinstance(k, (Tombstone, Reorder)):
-            return self._get(k.node) is not None
-        if isinstance(k, (LeafEdit, SplitLeaf)):
-            return self._get(k.node) is not None and self._frontier.contains(k.prev)
-        if isinstance(k, MergeLeaves):
-            return (
-                self._get(k.left) is not None
-                and self._get(k.right) is not None
-                and self._frontier.contains(k.prev_left)
-                and self._frontier.contains(k.prev_right)
-            )
-        return False
+        match op.kind:
+            case CreateNode(parent=parent):
+                return self._get(parent) is not None
+            case Tombstone(node=node) | Reorder(node=node):
+                return self._get(node) is not None
+            case LeafEdit(node=node, prev=oprev) | SplitLeaf(node=node, prev=oprev):
+                return self._get(node) is not None and self._frontier.contains(oprev)
+            case MergeLeaves(
+                left=left, right=right, prev_left=prev_left, prev_right=prev_right
+            ):
+                return (
+                    self._get(left) is not None
+                    and self._get(right) is not None
+                    and self._frontier.contains(prev_left)
+                    and self._frontier.contains(prev_right)
+                )
+            case _:
+                return False
 
     # -- internal apply ------------------------------------------------- #
 
@@ -1034,48 +1041,45 @@ class LosslessTreeCrdt:
         self._log.append(op)
 
     def _apply_op(self, op: TreeOp) -> None:
-        k = op.kind
-        if isinstance(k, CreateNode):
-            if self._get(k.id) is not None:
-                return
-            body: _NodeBody
-            if isinstance(k.seed, SeedLeaf):
-                body = _LeafBody(k.seed.kind, _seed_to_text(k.id.peer, k.seed))
-            else:
-                body = _ElementBody(k.seed.kind)
-            self._nodes[(k.id.counter, k.id.peer)] = _NodeRecord(
-                id=k.id,
-                parent=k.parent,
-                sort=k.sort,
-                sort_stamp=op.id,
-                body=body,
-                text_head=op.id,
-            )
-            self._index_add(self._nodes[(k.id.counter, k.id.peer)])
-            return
-        if isinstance(k, Tombstone):
-            rec = self._get(k.node)
-            if rec is not None:
-                rec.tomb = op.id if rec.tomb is None else _min_id(rec.tomb, op.id)
-            return
-        if isinstance(k, Reorder):
-            rec = self._get(k.node)
-            if rec is not None and op.id > rec.sort_stamp:
-                rec.sort = k.sort
-                rec.sort_stamp = op.id
-            return
-        if isinstance(k, LeafEdit):
-            rec = self._get(k.node)
-            if rec is not None and isinstance(rec.body, _LeafBody):
-                rec.body.text.apply_delta(k.ops)
-                rec.text_head = op.id
-            return
-        if isinstance(k, SplitLeaf):
-            self._apply_split(k.node, k.new, k.sort, k.at_char, op.id)
-            return
-        if isinstance(k, MergeLeaves):
-            self._apply_merge(k.left, k.right, op.id)
-            return
+        op_id = op.id
+        match op.kind:
+            case CreateNode(id=oid, parent=oparent, sort=osort, seed=oseed):
+                if self._get(oid) is not None:
+                    return
+                body: _NodeBody
+                match oseed:
+                    case SeedLeaf(kind=lkind):
+                        body = _LeafBody(lkind, _seed_to_text(oid.peer, oseed))
+                    case _:
+                        body = _ElementBody(oseed.kind)
+                rec = _NodeRecord(
+                    id=oid,
+                    parent=oparent,
+                    sort=osort,
+                    sort_stamp=op_id,
+                    body=body,
+                    text_head=op_id,
+                )
+                self._nodes[(oid.counter, oid.peer)] = rec
+                self._index_add(rec)
+            case Tombstone(node=node):
+                rec = self._get(node)
+                if rec is not None:
+                    rec.tomb = op_id if rec.tomb is None else _min_id(rec.tomb, op_id)
+            case Reorder(node=node, sort=osort):
+                rec = self._get(node)
+                if rec is not None and op_id > rec.sort_stamp:
+                    rec.sort = osort
+                    rec.sort_stamp = op_id
+            case LeafEdit(node=node, ops=oops):
+                rec = self._get(node)
+                if rec is not None and isinstance(rec.body, _LeafBody):
+                    rec.body.text.apply_delta(oops)
+                    rec.text_head = op_id
+            case SplitLeaf(node=node, new=new, sort=osort, at_char=at_char):
+                self._apply_split(node, new, osort, at_char, op_id)
+            case MergeLeaves(left=left, right=right):
+                self._apply_merge(left, right, op_id)
 
     def _apply_split(
         self,

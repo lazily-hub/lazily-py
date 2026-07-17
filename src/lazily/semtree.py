@@ -113,15 +113,17 @@ class SemNode[IdLike, V]:
     def value(self) -> V:
         return self.value_cell.value
 
-    def _mark_dirty_chain(self, node_by_id: dict, visited: set) -> None:
-        """Mark this node and its ancestors dirty (the ancestor chain)."""
+    def _mark_dirty_chain(self, parents: dict, visited: set) -> None:
+        """Mark this node and its ancestors dirty (the ancestor chain).
+
+        Walks the per-child parent index (``#lzpysemtreeparents``) — O(depth),
+        not O(depth x N) over the whole node table."""
         if self.id in visited:
             return
         visited.add(self.id)
         self._dirty = True
-        for parent in node_by_id.values():
-            if self.id in parent.children:
-                parent._mark_dirty_chain(node_by_id, visited)
+        for parent in parents.get(self.id, ()):
+            parent._mark_dirty_chain(parents, visited)
 
 
 class SemTree[IdLike, V]:
@@ -137,11 +139,14 @@ class SemTree[IdLike, V]:
     ``lazily-spec/cell-model.md § Memoized semantic tree``.
     """
 
-    __slots__ = ("_fold", "_nodes")
+    __slots__ = ("_fold", "_nodes", "_parents")
 
     def __init__(self, fold: Fold | str = "sum") -> None:
         self._fold: Fold = _fold_named(fold) if isinstance(fold, str) else fold
         self._nodes: dict[_IdLike, SemNode[_IdLike, V]] = {}
+        # Per-child parent index (``#lzpysemtreeparents``) so a dirty-chain walk
+        # is O(depth) instead of O(depth x N).
+        self._parents: dict[_IdLike, list[SemNode[_IdLike, V]]] = {}
 
     # -- reads ---------------------------------------------------------- #
 
@@ -203,7 +208,7 @@ class SemTree[IdLike, V]:
         if n.value_cell.value == value:
             return
         n.value_cell.set(value)
-        n._mark_dirty_chain(self._nodes, set())
+        n._mark_dirty_chain(self._parents, set())
 
     def insert_child(self, parent: _IdLike, child: _IdLike, value: V) -> None:
         p = self._nodes.get(parent)
@@ -214,8 +219,10 @@ class SemTree[IdLike, V]:
         if child in p.children:
             return
         p.children.append(child)
+        # Maintain the parent index (``#lzpysemtreeparents``).
+        self._parents.setdefault(child, []).append(p)
         # A structural change dirties the parent's chain (its fold input set).
-        p._mark_dirty_chain(self._nodes, set())
+        p._mark_dirty_chain(self._parents, set())
 
     def remove_child(self, parent: _IdLike, child: _IdLike) -> None:
         """Detach ``child`` from ``parent``'s child collection.
@@ -229,7 +236,11 @@ class SemTree[IdLike, V]:
         if child not in p.children:
             return
         p.children = [c for c in p.children if c != child]
-        p._mark_dirty_chain(self._nodes, set())
+        # Maintain the parent index (``#lzpysemtreeparents``) — drop this parent.
+        self._parents[child] = [
+            pp for pp in self._parents.get(child, []) if pp is not p
+        ]
+        p._mark_dirty_chain(self._parents, set())
 
     # -- JSON builder (conformance fixture shape) ----------------------- #
 

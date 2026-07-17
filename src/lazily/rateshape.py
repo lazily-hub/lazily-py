@@ -59,7 +59,7 @@ def _set_output[T](cell: Cell[T | None], emitted: T | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class DebounceCore[T]:
     """Debounce compute core: coalesce inputs (KeepLatest) and emit the latest
     value only after ``quiet`` ticks with no new input — every input resets the
@@ -130,7 +130,7 @@ class ThrottleEdge(Enum):
     """First input opens the window; the latest is emitted at the boundary."""
 
 
-@dataclass
+@dataclass(slots=True)
 class ThrottleCore[T]:
     """Throttle compute core: at most one emit per ``window``."""
 
@@ -211,7 +211,7 @@ class _SampleKind(Enum):
     TIME = auto()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SampleMode:
     """Sampling mode for :class:`SampleCore`.
 
@@ -234,7 +234,7 @@ class SampleMode:
         return cls(_SampleKind.TIME, period)
 
 
-@dataclass
+@dataclass(slots=True)
 class SampleCore[T]:
     """Deterministic sampling compute core."""
 
@@ -343,7 +343,7 @@ class Lcg:
         return (z >> 11) / float(1 << 53)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ProbabilisticSampleCore:
     """Probabilistic (tail) sampling compute core — the plan's only new
     algorithm. A draw in ``[0, 1)`` passes iff ``draw < rate``."""

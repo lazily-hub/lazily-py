@@ -93,36 +93,59 @@ class ReconcileOp[K, V]:
 # --------------------------------------------------------------------------- #
 
 
-def _incl_branch(p: dict[K, int], bound: int | None, k: K, rest: list[K]) -> list[K]:
-    """The include-``k`` branch of :func:`_best_from`: ``k`` prepended to the
-    LIS of ``rest`` above ``p[k]``, when ``k`` itself clears ``bound``;
-    otherwise empty. Mirrors ``inclBranch``."""
-    pk = p[k]
-    if bound is None or bound < pk:
-        return [k, *_best_from(p, pk, rest)]
-    return []
-
-
-def _best_from(p: dict[K, int], bound: int | None, keys: list[K]) -> list[K]:
-    """The longest strictly-increasing (by ``p``) subsequence of ``keys`` whose
-    values all clear ``bound`` (``None`` = no lower bound). The longer of the
-    include-``k`` and skip-``k`` branches wins. Mirrors ``bestFrom``."""
-    if not keys:
-        return []
-    k, rest = keys[0], keys[1:]
-    incl = _incl_branch(p, bound, k, rest)
-    skip = _best_from(p, bound, rest)
-    return incl if len(incl) >= len(skip) else skip
-
-
 def lis_by[K: Key](p: dict[K, int], keys: list[K]) -> list[K]:
     """The longest strictly-increasing (by ``p``) subsequence of ``keys``.
 
     Mirrors ``lisBy``. ``p`` maps each key to its prior index; the LIS is the
     maximal set of common keys already in relative prior-index order, which a
     move-minimized reconcile therefore leaves untouched.
+
+    Computed by patience sorting in **O(n log n)** (it replaced an O(2ⁿ)
+    include-vs-skip recursion). Among all longest increasing subsequences the
+    lexicographically-smallest by ``keys`` position is returned — exactly the
+    subsequence the include-on-tie recursion chose — so the stable set a
+    reconcile selects is unchanged.
     """
-    return _best_from(p, None, keys)
+    n = len(keys)
+    if n == 0:
+        return []
+    seq = [p[k] for k in keys]
+    # len_start[i] = length of the longest strictly-increasing subsequence that
+    # starts at index i. Built right-to-left: ``heads[L]`` is the greatest first
+    # value of any length-(L+1) increasing subsequence in the processed suffix.
+    # ``heads`` is strictly decreasing in L, so it binary-searches.
+    len_start = [0] * n
+    heads: list[int] = []
+    for i in range(n - 1, -1, -1):
+        v = seq[i]
+        # Rightmost L whose head > v (preparable); heads is strictly decreasing.
+        lo, hi = 0, len(heads)
+        while lo < hi:
+            mid = (lo + hi) >> 1
+            if heads[mid] > v:
+                lo = mid + 1
+            else:
+                hi = mid
+        length = lo + 1
+        len_start[i] = length
+        idx = length - 1
+        if idx == len(heads):
+            heads.append(v)
+        elif v > heads[idx]:
+            heads[idx] = v
+    # Greedy lex-smallest-by-index reconstruction: walk left to right, taking
+    # the earliest index that still reaches the max length with a rising value.
+    target = len(heads)
+    out: list[K] = []
+    prev: int | None = None
+    for i in range(n):
+        if target == 0:
+            break
+        if len_start[i] == target and (prev is None or seq[i] > prev):
+            out.append(keys[i])
+            prev = seq[i]
+            target -= 1
+    return out
 
 
 def idx_in[K: Key](order: list[K], key: K) -> int:
@@ -147,7 +170,10 @@ def stable_keys[K: Key](prior: list[K], target: list[K]) -> list[K]:
     prior index): the maximal already-in-relative-order subset. Mirrors
     ``stableKeys``."""
     commons = common_keys(prior, target)
-    p = {k: idx_in(prior, k) for k in commons}
+    # Build the prior-index map once (O(n)) instead of an ``idx_in`` linear scan
+    # per common key (O(n·m)) — ``#lzpyreconcileidx``.
+    prior_index = {k: i for i, k in enumerate(prior)}
+    p = {k: prior_index[k] for k in commons}
     return lis_by(p, commons)
 
 
@@ -199,9 +225,11 @@ def reconcile_ops[K: Key, V: EntryValue](
     # move: one per common non-LIS key. Resolve the `after` anchor from the
     # target order — the preceding key in target order that is stable (so the
     # move repositions relative to a key that will not itself move), or None
-    # when the key moves to the front.
+    # when the key moves to the front. Compute the LIS once and derive the
+    # moved set from it (``#lzpyreconcileidx`` — avoids recomputing the LIS).
+    commons = common_keys(prior_order, target_order)
     stable = set(stable_keys(prior_order, target_order))
-    moved = moved_keys(prior_order, target_order)
+    moved = [k for k in commons if k not in stable]
     moved_set = set(moved)
     for k in moved:
         anchor: K | None = None

@@ -84,7 +84,7 @@ class DedupePolicy(Enum):
             ) from exc
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CommandPolicy:
     """Per-command admission policy."""
 
@@ -108,7 +108,7 @@ class CommandPolicy:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CommandSubmit:
     """Submit a command — the request envelope plus a domain payload.
 
@@ -171,7 +171,7 @@ class CommandSubmit:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CommandCancel:
     """Preempt a still-non-terminal command by ``command_id``.
 
@@ -229,7 +229,7 @@ class CommandEventKind(Enum):
             raise ValueError(f"unknown command event kind: {value!r}") from exc
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CommandEvent:
     """One progress/detail event for a command."""
 
@@ -259,7 +259,7 @@ class CommandEvent:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CommandEvents:
     """A batch of :class:`CommandEvent` frames."""
 
@@ -308,7 +308,7 @@ class CommandStatus(Enum):
             raise ValueError(f"unknown command status: {value!r}") from exc
 
 
-@dataclass
+@dataclass(slots=True)
 class CommandProjectionEntry:
     """One command's folded state in the projection."""
 
@@ -355,7 +355,7 @@ class CommandProjectionEntry:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CommandProjectionImage:
     """Queryable projection snapshot — also the reconnect resync frame."""
 
@@ -383,7 +383,7 @@ class CommandProjectionImage:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CommandMessage:
     """One command-plane wire frame — an externally-tagged sibling family.
 
@@ -445,7 +445,7 @@ class CommandMessage:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StaleGeneration:
     """An event/receipt/cancel outside the command's current generation."""
 
@@ -453,7 +453,7 @@ class StaleGeneration:
     actual: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TerminalConflict:
     """A second terminal receipt with a different outcome — fail closed."""
 
@@ -724,7 +724,7 @@ class CallStateKind(Enum):
     CONFLICT = "conflict"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CallState:
     """The resolution state of an RPC ``call``.
 

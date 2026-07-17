@@ -51,7 +51,7 @@ class Health(str, Enum):
     Unhealthy = "Unhealthy"
 
 
-@dataclass
+@dataclass(slots=True)
 class HealthCore:
     """Composed liveness-probe core. Each probe reports ``up`` and whether it is
     ``critical``."""
@@ -106,7 +106,7 @@ class HealthCell:
 # ===========================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class ReadinessCore:
     """Composed readiness-probe core: ready iff every condition holds."""
 
@@ -153,7 +153,7 @@ class ReadinessCell:
 # ===========================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class DiscoveryCore:
     """Service-discovery core: ``service → (endpoint, owner peer)``. A peer's
     departure (:meth:`evict`) removes its endpoints."""
@@ -240,7 +240,7 @@ class DiscoveryCell:
 # ===========================================================================
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegistryOp:
     """A durable registry op (the ordered log entry). ``kind`` is ``"register"``
     or ``"deregister"``; ``endpoint`` is ``None`` for a deregister."""
@@ -250,7 +250,7 @@ class RegistryOp:
     endpoint: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class ServiceRegistryCore:
     """Durable service-registry core: an ordered log (the ``DurableOutbox``
     pattern) whose left-fold is the projection, so replay reconstructs it."""

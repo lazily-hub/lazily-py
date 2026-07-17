@@ -4,8 +4,8 @@ Wall-clock benchmarks for the lazily-py hot paths. Two suites:
 
 - **Micro-benchmarks** — the in-library suite in
   [`src/lazily/benchmarks.py`](src/lazily/benchmarks.py) (`run_benchmarks()`),
-  covering the reactive core, keyed reconciliation, `CellMap`, `TextCrdt`, and
-  the CRDT plane.
+  covering the reactive core, keyed reconciliation, `CellMap`, `TextCrdt`, the
+  CRDT plane, and the `SemTree` dirty-chain walk.
 - **Scale** — a large spreadsheet-shaped graph
   ([`src/lazily/scale_bench.py`](src/lazily/scale_bench.py)) mirroring the
   lazily-rs [`scale`](https://github.com/lazily-hub/lazily-rs/blob/main/benches/scale.rs)
@@ -65,23 +65,32 @@ native core; **pure-Python** = the shipped fallback (no `.so`).
 |-----------|---------------:|------------------:|--------:|------------------|
 | `slot.cached_read` | 0.039 | 0.067 | ~1.7× | Cached (memoized) slot read — the steady-state pull with no recompute. |
 | `slot.invalidate_recompute` | 0.352 | 0.540 | ~1.5× | Set a cell, then re-pull a dependent slot (edge re-tracking + recompute). |
-| `reconcile.lis_move_minimized` | 189 | 159 | n/a¹ | LIS move-minimized keyed reconcile over a 10-key level (definitional longest-subsequence kernel, not greedy). |
+| `reconcile.lis_move_minimized` | 4.6 | 4.6 | n/a¹ | LIS move-minimized keyed reconcile over a 10-key level (patience-sort O(n log n) kernel, `#lzpylisnlogn` — was ~159 µs under the O(2ⁿ) recursion it replaced). |
+| `reconcile.lis_n10` | 6.1 | 6.1 | n/a¹ | The patience-sort LIS kernel over a 10-key level (half rotated). New `#lzpylisnlogn` gate. |
+| `reconcile.lis_n50` | 39 | 39 | n/a¹ | Same kernel over 50 keys — unbenchable before `#lzpylisnlogn` (O(2ⁿ)). |
+| `reconcile.lis_n100` | 107 | 107 | n/a¹ | Same kernel over 100 keys — unbenchable before `#lzpylisnlogn` (O(2ⁿ)). |
 | `cellmap.insert_50` | 15.8 | 21.1 | ~1.3× | Build a `CellMap` and insert 50 keyed entries (whole-collection construction, not per-insert). |
 | `textcrdt.merge_disjoint` | 1.43 | 1.32 | n/a¹ | Merge two disjoint `TextCrdt` documents (Fugue/RGA order recomputed). |
 | `crdt_plane.idempotent_apply` | 0.089 | 0.087 | n/a¹ | Re-apply an already-seen op to a `CrdtPlaneRuntime` (idempotent dedupe path). |
+| `crdt_plane.apply_indexed_100` | 300 | 300 | n/a¹ | Apply 100 stamp-advancing updates to a 100-entry plane — each re-resolves an existing `(node, key)` via the `#lzpyfindindex` dict (was an O(n) scan per op). |
+| `semtree.dirty_chain_100` | 50 | 50 | n/a¹ | Edit the deepest leaf of a 100-deep `SemTree` chain — the `#lzpysemtreeparents` index makes the ancestor dirty-walk O(depth) (was O(depth × N)). |
 
-¹ `reconcile` / `textcrdt` / `crdt_plane` are not part of the mypyc compilation
-unit (only the reactive core is), so their numbers move only with run-to-run
-noise — they index the non-compiled paths.
+¹ `reconcile` / `textcrdt` / `crdt_plane` / `semtree` are not part of the mypyc
+compilation unit (only the reactive core is), so their numbers move only with
+run-to-run noise — they index the non-compiled paths.
 
 ### Notes
 
 - The reactive steady state is cheap: a compiled cached slot read is ~39 ns, and
   an invalidate + recompute round trip is ~0.35 µs — roughly 1.5–1.7× faster than
   the pure-Python fallback under CPython's interpreter overhead.
-- `reconcile.lis_move_minimized` is the heaviest micro-path because the LIS
-  kernel is *definitional* (longest subsequence, not greedy) — it is exponential
-  in the worst case, so the bench keeps the level at 10 keys.
+- `reconcile.lis_*` measures the longest-increasing-subsequence kernel behind
+  move-minimized keyed reconciliation. Through v0.32.0 it was a definitional
+  include-vs-skip recursion (genuinely longest, not greedy) that was **O(2ⁿ)**,
+  so the bench was capped at 10 keys. v0.33.0 (`#lzpylisnlogn`) replaces it with
+  a **patience-sort O(n log n)** kernel that returns the same
+  lexicographically-smallest LIS — ~35× faster at 10 keys and able to scale to
+  N=50/100 (the new `reconcile.lis_n50` / `reconcile.lis_n100` gates).
 - `cellmap.insert_50` measures whole-collection construction (50 inserts +
   allocation), not a single insert — divide by 50 for per-insert. Its speedup
   comes for free from the compiled `Cell` it builds on.
