@@ -1,5 +1,24 @@
 ## Unreleased
 
+## 0.32.0
+
+### Changed — performance (CRDT plane, Phase 1 of `tasks/agent-doc/plans/lazily-perf-memory-audit.md`)
+
+- **`TextCrdt._visible_ordered` cache (`#lztextordcache`).** The DFS pre-order
+  is now memoized and invalidated on every mutation that changes the element
+  set (`seed`/`insert`/`insert_str`/`merge`/`apply_delta`/`gc`). Repeated
+  `text()` / `__len__()` between mutations drops from O(N log N) per call to
+  O(N) total (one rebuild + N filter passes) instead of N × O(N log N).
+  Tombstone flips (`delete`) do **not** invalidate the cache — the DFS includes
+  tombstones and callers filter at read.
+- **`LosslessTreeCrdt` parent→children index (`#lzlivelchildidx`).** A new
+  `_children_by_parent` dict replaces the O(N) full-scan in `_live_children`.
+  `render()` drops from O(N²) to O(N) over the tree. Tombstones remain in the
+  bucket (logical delete); sort is lazy on read. Maintained at every
+  `CreateNode` / `SplitLeaf` site (all structural mutations flow through
+  `_apply_op` / `_apply_split`); `fork` rebuilds from the copied node map.
+- `insert_str` origin chaining (`#lztextinsertchain`) was already in place.
+
 ## 0.31.2
 
 ### Changed — packaging

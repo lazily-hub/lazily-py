@@ -159,13 +159,22 @@ class TextCrdt:
     it as a left origin is collectable).
     """
 
-    __slots__ = ("_by_id", "_counter", "peer")
+    __slots__ = ("_by_id", "_counter", "_ordered_cache", "peer")
 
     def __init__(self, peer: int) -> None:
         self.peer = peer
         self._counter = 0
         # OpId.counter is unique per peer, so (counter, peer) keys the dict.
         self._by_id: dict[tuple[int, int], TextElement] = {}
+        # Cached DFS pre-order over ALL elements (tombstones included).
+        # Invalidated by any mutation that changes the element set or origin
+        # tree; populated lazily on the next read. Repeated text() / len()
+        # between mutations drops O(N log N) -> O(N) (one rebuild, N filter
+        # passes) instead of N x O(N log N) (#lztextordcache).
+        self._ordered_cache: list[TextElement] | None = None
+
+    def _invalidate_ordered(self) -> None:
+        self._ordered_cache = None
 
     # -- seed / clone --------------------------------------------------- #
 
@@ -179,6 +188,7 @@ class TextCrdt:
             eid = OpId(buf._counter, peer)
             buf._by_id[eid.counter, eid.peer] = TextElement(eid, ch, origin)
             origin = eid
+        buf._invalidate_ordered()
         return buf
 
     def clone(self) -> TextCrdt:
@@ -213,6 +223,8 @@ class TextCrdt:
     def _visible_ordered(self) -> list[TextElement]:
         """Every element (including tombstones) in deterministic pre-order DFS
         order — siblings DESCENDING by OpId (most-recent first)."""
+        if self._ordered_cache is not None:
+            return self._ordered_cache
         # Group children by origin.
         children_by_origin: dict[Origin, list[TextElement]] = {}
         for elem in self._by_id.values():
@@ -227,6 +239,7 @@ class TextCrdt:
                 visit(child.id)
 
         visit(ROOT)
+        self._ordered_cache = ordered
         return ordered
 
     def _index_to_origin(self, index: int) -> tuple[Origin, int]:
@@ -251,6 +264,7 @@ class TextCrdt:
         origin, _ = self._index_to_origin(index)
         eid = self._next_id()
         self._by_id[eid.counter, eid.peer] = TextElement(eid, ch, origin)
+        self._invalidate_ordered()
         return eid
 
     def insert_str(self, index: int, text: str) -> list[OpId]:
@@ -262,6 +276,7 @@ class TextCrdt:
             self._by_id[eid.counter, eid.peer] = TextElement(eid, ch, origin)
             ids.append(eid)
             origin = eid
+        self._invalidate_ordered()
         return ids
 
     def delete(self, index: int) -> OpId | None:
@@ -321,6 +336,8 @@ class TextCrdt:
         for counter, _peer in self._by_id:
             if counter > self._counter:
                 self._counter = counter
+        if changed:
+            self._invalidate_ordered()
         return changed
 
     # -- projections ---------------------------------------------------- #
@@ -433,6 +450,8 @@ class TextCrdt:
         for counter, _peer in self._by_id:
             if counter > self._counter:
                 self._counter = counter
+        if changed:
+            self._invalidate_ordered()
         return changed
 
     # -- tombstone GC --------------------------------------------------- #
@@ -463,4 +482,6 @@ class TextCrdt:
                 continue
             survivors[key] = elem
         self._by_id = survivors
+        if collected:
+            self._invalidate_ordered()
         return collected

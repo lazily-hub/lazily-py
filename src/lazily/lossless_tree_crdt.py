@@ -653,12 +653,27 @@ class LosslessTreeCrdt:
     arrived is buffered and retried to a fixpoint).
     """
 
-    __slots__ = ("_buffered", "_counter", "_frontier", "_log", "_nodes", "_peer")
+    __slots__ = (
+        "_buffered",
+        "_children_by_parent",
+        "_counter",
+        "_frontier",
+        "_log",
+        "_nodes",
+        "_peer",
+    )
 
     def __init__(self, peer: int) -> None:
         self._peer = peer
         self._counter = 0
         self._nodes: dict[tuple[int, int], _NodeRecord] = {}
+        # Secondary index: parent-key -> live children records (unsorted; sorted
+        # lazily on read in _live_children). Replaces the O(N) full-scan per
+        # parent that made Render O(N^2) over the tree (#lzlivelchildidx).
+        # Maintained at every node-create site (CreateNode, SplitLeaf); tombstone
+        # and reorder mutate record fields in place, so the index only needs to
+        # know parent->child membership.
+        self._children_by_parent: dict[tuple[int, int], list[_NodeRecord]] = {}
         root = _NodeRecord(
             id=ROOT,
             parent=None,
@@ -670,6 +685,29 @@ class LosslessTreeCrdt:
         self._frontier = TreeVersionFrontier()
         self._log: list[TreeOp] = []
         self._buffered: list[TreeOp] = []
+
+    def _index_add(self, record: _NodeRecord) -> None:
+        """Insert ``record`` into the parent->children index.
+
+        Root (parent is None) is never indexed. Safe to call on every node
+        creation; idempotent if the record is already tracked.
+        """
+        if record.parent is None:
+            return
+        pk = (record.parent.counter, record.parent.peer)
+        bucket = self._children_by_parent.get(pk)
+        if bucket is None:
+            bucket = []
+            self._children_by_parent[pk] = bucket
+        # Idempotency check: apply_update may replay an op whose target already
+        # exists (apply is idempotent). Skip if already tracked.
+        for existing in bucket:
+            if (
+                existing.id.counter == record.id.counter
+                and existing.id.peer == record.id.peer
+            ):
+                return
+        bucket.append(record)
 
     # -- identity / fork ------------------------------------------------ #
 
@@ -703,6 +741,10 @@ class LosslessTreeCrdt:
                 text_head=r.text_head,
             )
         out._nodes = nodes
+        # Rebuild the parent->children index from the copied node map (#lzlivelchildidx).
+        out._children_by_parent = {}
+        for r in nodes.values():
+            out._index_add(r)
         out._frontier = self._frontier.copy()
         out._log = list(self._log)
         out._buffered = list(self._buffered)
@@ -719,15 +761,13 @@ class LosslessTreeCrdt:
 
     def _live_children(self, parent: TreeOpId) -> list[TreeOpId]:
         pk = (parent.counter, parent.peer)
-        kids = [
-            r
-            for r in self._nodes.values()
-            if r.parent is not None
-            and (r.parent.counter, r.parent.peer) == pk
-            and r.tomb is None
-        ]
-        kids.sort(key=lambda r: _SortableKey(r.sort))
-        return [r.id for r in kids]
+        bucket = self._children_by_parent.get(pk)
+        if bucket is None:
+            return []
+        # Tombstones remain in the bucket (logical delete); filter at read.
+        live = [r for r in bucket if r.tomb is None]
+        live.sort(key=lambda r: _SortableKey(r.sort))
+        return [r.id for r in live]
 
     def render(self) -> str:
         """Concatenate live-leaf text in tree (child-sort) order."""
@@ -1011,6 +1051,7 @@ class LosslessTreeCrdt:
                 body=body,
                 text_head=op.id,
             )
+            self._index_add(self._nodes[(k.id.counter, k.id.peer)])
             return
         if isinstance(k, Tombstone):
             rec = self._get(k.node)
@@ -1058,13 +1099,15 @@ class LosslessTreeCrdt:
         rec.body = _LeafBody(leaf_kind, TextCrdt.seed(node.peer, head))
         rec.text_head = op_id
         if self._get(new_node) is None and parent is not None:
-            self._nodes[(new_node.counter, new_node.peer)] = _NodeRecord(
+            record = _NodeRecord(
                 id=new_node,
                 parent=parent,
                 sort=sort,
                 sort_stamp=op_id,
                 body=_LeafBody(leaf_kind, TextCrdt.seed(new_node.peer, tail)),
             )
+            self._nodes[(new_node.counter, new_node.peer)] = record
+            self._index_add(record)
 
     def _apply_merge(self, left: TreeOpId, right: TreeOpId, op_id: TreeOpId) -> None:
         left_rec = self._get(left)
