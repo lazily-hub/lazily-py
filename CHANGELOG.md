@@ -1,5 +1,17 @@
 ## Unreleased
 
+## 0.31.1
+
+### Changed — packaging
+
+- **Precompiled wheels for every supported platform.** A cibuildwheel
+  `.github/workflows/wheels.yml` now builds the mypyc-compiled wheel matrix on
+  tag release: Linux (manylinux + musllinux, x86_64 + aarch64), macOS (x86_64 +
+  arm64), and Windows (x86_64), for CPython 3.12 / 3.13 / 3.14. Users no longer
+  fall back to pure Python on non-(Linux cp312 x86_64) platforms; the compiled
+  extension installs directly. (0.31.0 shipped only a Linux cp312 x86_64 wheel +
+  sdist; this release fills out the matrix.)
+
 ## 0.31.0
 
 ### Changed — reactive-core performance

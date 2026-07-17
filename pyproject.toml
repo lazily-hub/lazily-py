@@ -1,6 +1,6 @@
 [project]
 name = "lazily"
-version = "0.31.0"
+version = "0.31.1"
 description = "A library for lazy evaluation with context caching"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -62,6 +62,17 @@ dev = ["lazily[dev]"]
 # "Compilation" note in BENCHMARKS.md.
 requires = ["setuptools>=61", "wheel", "mypy[mypyc]>=2.3", "mypy-extensions>=1.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.cibuildwheel]
+# Supported CPython versions (requires-python = ">=3.12").
+build = "cp312-* cp313-* cp314-*"
+# pypa/build for build isolation (matches `make build`); isolation installs
+# mypy[mypyc] from build-system.requires, so setup.py's mypycify runs per wheel.
+build-frontend = "build"
+# Smoke-test each built wheel: import the compiled core modules.
+test-command = "python -c \"from lazily import slot, cell, signal, effect, batch; print('wheel ok')\""
+# Skip the PyPy/free-threaded/etc. targets; mypyc targets CPython only.
+skip = "pp* *-win32 *_i686"
 
 [tool.setuptools.packages.find]
 where = ["src"]
