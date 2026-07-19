@@ -30,6 +30,8 @@ jobs:
         run: |
           test -d ../lazily-spec/conformance || { echo "::error::../lazily-spec/conformance missing — the conformance suites would silently skip"; exit 1; }
           test -d ../lazily-spec/conformance/familysync || { echo "::error::../lazily-spec/conformance/familysync missing — test_family_sync.py would silently fall back to local fixtures"; exit 1; }
+          test -d ../lazily-spec/conformance/reactive-graph || { echo "::error::../lazily-spec/conformance/reactive-graph missing — test_reactive_graph_conformance.py would silently skip every context"; exit 1; }
+          test -f ../lazily-spec/conformance/reactive-graph/transitive_invalidation_reaches_depth.json || { echo "::error::transitive_invalidation_reaches_depth.json missing — it is the only reactive-graph fixture lazily-py can replay today, so without it the runner executes nothing"; exit 1; }
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
