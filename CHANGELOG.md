@@ -1,42 +1,52 @@
 ## Unreleased
 
+### Removed
+
+- **The `Cell` observer API is gone (`Cell.subscribe`).** `lazily` will not have
+  a `Cell` observer API in any binding. Observation in a reactive graph is a
+  declared dependency edge, not a registered callback: a callback registry
+  bolted onto `Cell` bypasses the graph, ignores batching, and breaks
+  glitch-freedom. The decisive objection is cost — the registry (and its
+  registration counter) was paid by *every* cell whether or not anyone
+  subscribed. Four of the eight bindings (`rs`, `cpp`, `js`, `kt`) never had
+  `Cell` observers; they were right.
+
+  Where a caller genuinely needs a stream of every transition rather than the
+  settled value, that is a `Topic`, which every binding already has.
+
+  This reverses the registration-keying work earlier in this same unreleased
+  cycle (`b2bc6bd`, `#lzdartobservercow`): the code is deleted rather than
+  fixed. `Cell.__slots__` drops from five entries to three (`_parents`,
+  `_value`, `ctx`); `Cell.touch()` now does nothing but push the auto-discovered
+  reactive parents into the coalesced invalidation wave.
+
+  Removed with it: the `CellSubscriber` protocol, `tests/test_cell_observer.py`,
+  and `tests/test_reactive_graph_conformance.py`. The conformance runner went
+  because its entire supported op vocabulary was the observer API — with the
+  spec's `observer_*` fixtures withdrawn, every remaining fixture in
+  `lazily-spec/conformance/reactive-graph` uses the disposal/teardown-scope
+  vocabulary this binding does not model, so the runner would have skipped 100%
+  of its fixtures and still reported green. A conformance suite that executes
+  nothing is worse than no suite. When `lazily-py` grows teardown scopes, a
+  runner for *that* vocabulary gets written then. The matching CI fixture-presence
+  guard in `.github/workflows/precommit.yml` was dropped for the same reason.
+
+### Changed
+
+- **`StateMachine.on_transition` is now an `Effect`.** It was the only non-test
+  consumer of `Cell.subscribe`. It is reimplemented the way the Rust reference
+  (`lazily-rs`, `state_machine.rs`) always did it: an effect over the backing
+  cell with a `prev` captured in the closure, firing `handler(old, new)` only on
+  a real change and returning a disposer. The initial run seeds `prev` and fires
+  nothing, as before.
+
+  **Behaviour change under `batch`.** An effect-based `on_transition` is a graph
+  participant, so it sees only the *settled* value of a batch: `A -> B -> C`
+  inside one `batch` now reports a single `(A, C)` transition rather than two.
+  This is intended — a batch asserts atomicity, so intermediate states are not
+  observable. Unbatched transitions are unaffected and still report every step.
+
 ### Added
-
-- **`Cell.subscribe` returns a disposer (`#lzdartobservercow`).** `Cell` had no
-  unsubscribe API at all, so `StateMachine.on_transition` was reaching into the
-  private `Cell._subscribers` set to `discard` its own callback — the library
-  violating its own encapsulation to do something no caller could do. It now
-  matches the rest of the family (dart's `void Function()`, go's keyed map, zig's
-  `EdgeSet`): `subscribe` returns an idempotent disposer, and
-  `StateMachine.on_transition` simply returns it.
-
-  The disposer carries a fired-latch rather than a bare `discard`, which fixes a
-  bug the old workaround had: a stale disposer would silently unsubscribe a
-  *later* registration of an equal callable. That path was only reachable through
-  private state, so no public behaviour changed.
-
-  Observer semantics are now pinned rather than accidental — dedup by equality
-  (the storage is a `set`, so subscribing the same callable twice is one
-  registration removed by one disposal), **unspecified dispatch order** (a `set`
-  does not preserve registration order; do not depend on it), and snapshot
-  dispatch (`touch` iterates a snapshot, so a subscriber added mid-notification
-  runs on the *next* one and a subscriber removed mid-notification still runs in
-  the current pass). Nine equivalence tests in `tests/test_cell_observer.py` pass
-  identically against both the pre- and post-change implementations, confirming
-  the storage contract is unchanged.
-
-  The per-notify `tuple(subs)` snapshot was audited and **deliberately left
-  alone**. Unlike dart's O(W²) copy-on-write churn, python's `set` already gives
-  O(1) subscribe/unsubscribe, and the snapshot is O(W) on top of a notify that is
-  inherently O(W), so it amortises to one pointer (measured: exactly 8 bytes) per
-  subscriber invocation. With total work held fixed and only W varying, publish
-  cost per invocation is flat from W=16 to W=16384 — there is no scaling defect
-  to fix. A/B against the pre-change tree (one process per rung, three
-  interleaved repeats, load average 5.2–8.0 on a box in active use, so ratios
-  only): publish 0.93–1.04x (unchanged), subscribe 1.47–1.59x slower at W≥16
-  from the disposer closure allocation, and the full subscribe+dispose lifecycle
-  0.46–0.62x — about 2x *faster*, because the disposer captures its target
-  directly instead of re-deriving it through the private set.
 
 - **`Signal.subscribe` returns a disposer (`#lzdartobservercow`).** `Signal`
   carried the identical defect `Cell` did — a persistent `set` of observers with
@@ -46,7 +56,8 @@
   which manage their own). `subscribe` now returns the same idempotent,
   fired-latch disposer, so the two primitives do not diverge inside one binding.
 
-  Semantics are identical to `Cell`'s and equally deliberate: dedup by equality,
+  `Signal` keeps its observer API; `Cell` does not (see Removed above).
+  Semantics are deliberate: dedup by equality,
   **unspecified dispatch order**, and snapshot dispatch. Subscribers are notified
   on `touch`, including the eager recompute that follows a dependency change —
   subject to the memo guard, so an equal recompute stays silent. Ten equivalence
@@ -59,8 +70,7 @@
   one-shot edge set cleared on reset, a lifecycle in which a disposer would be
   meaningless.
 
-  The per-notify `tuple(subs)` snapshot was again left alone, for the same reason
-  as `Cell`. A/B against the pre-change tree (one process per rung, three
+  The per-notify `tuple(subs)` snapshot was left alone. A/B against the pre-change tree (one process per rung, three
   interleaved repeats, load average 3.8–5.2 on a box in active use, so ratios
   only): publish is flat from W=16 to W=16384 and unchanged at 0.95–1.06x
   (excluding one 1.32x load-noise outlier whose neighbouring repeat was 0.98x),

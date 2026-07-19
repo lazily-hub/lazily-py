@@ -59,8 +59,11 @@ Mutable value holder that notifies dependent slots when changed.
 | `cell.value = x` (set) | Update value; invalidate dependents if changed |
 | `cell.get()` | Alias for value getter |
 | `cell.set(x)` | Alias for value setter |
-| `cell.subscribe(callback)` | Register change callback |
-| `cell.touch()` | Notify all subscribers |
+| `cell.touch()` | Invalidate dependents |
+
+`Cell` has **no observer API**. Observation is a declared dependency edge — read
+the cell from a `Slot`, `Signal`, or `Effect` — not a registered callback. For a
+stream of every transition, use `Topic`.
 
 ### Signal
 
@@ -178,7 +181,7 @@ Uses a global `slot_stack: list[Slot]` (acts as thread-local execution context).
 
 ## Invalidation Semantics
 
-- `Cell.value = new_value` → if changed: `touch()` → subscribers → `parent.reset()` → cascade
+- `Cell.value = new_value` → if changed: `touch()` → `parent.reset()` → cascade
 - `Slot.__call__(ctx)` → compute or return cached value; does **not** cascade invalidation (computation must not trigger subscriber resets)
 - `Slot.reset(ctx)` → clear cache → snapshot + clear subscribers → notify snapshot → cascade up dependency tree. Clearing before notification makes reset re-entrancy-safe: a subscriber that itself triggers a reset finds an empty subscriber set, preventing mutual recursion.
 - Value equality check: Cells only invalidate when `new_value != old_value`

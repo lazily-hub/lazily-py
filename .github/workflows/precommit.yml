@@ -29,7 +29,6 @@ jobs:
       - name: Assert canonical lazily-spec fixtures are present (#lzspecconf)
         run: |
           test -d ../lazily-spec/conformance || { echo "::error::../lazily-spec/conformance missing — the conformance suites would silently skip"; exit 1; }
-          test -d ../lazily-spec/conformance/reactive-graph || { echo "::error::../lazily-spec/conformance/reactive-graph missing — test_reactive_graph_conformance.py would silently skip instead of validating observer semantics"; exit 1; }
           test -d ../lazily-spec/conformance/familysync || { echo "::error::../lazily-spec/conformance/familysync missing — test_family_sync.py would silently fall back to local fixtures"; exit 1; }
 
       - name: Install uv

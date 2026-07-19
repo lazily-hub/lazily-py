@@ -149,8 +149,9 @@ class Signal[T]:
         than once is a no-op, and a disposer that has already fired will never
         remove a *later* registration of an equal callable.
 
-        Semantics match :meth:`lazily.Cell.subscribe` exactly (see
-        ``tests/test_signal_observer.py``):
+        Semantics (see ``tests/test_signal_observer.py``) — note that
+        :class:`~lazily.cell.Cell` deliberately has **no** counterpart to this
+        method; observation of a cell is a declared dependency edge:
 
         * **Dedup** — storage is a ``set``, so registration is by equality: the
           same callable subscribed twice is one registration, invoked once per

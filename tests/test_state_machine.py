@@ -1,4 +1,5 @@
 from lazily import StateMachine, slot
+from lazily.batch import batch
 
 
 class TestStateMachine:
@@ -110,3 +111,34 @@ class TestStateMachine:
         m.send("inc")
 
         assert pairs == [(0, 1), (1, 2), (2, 0)]
+
+    def test_on_transition_reports_only_the_settled_value_of_a_batch(self) -> None:
+        """`on_transition` is an Effect, so it is a graph participant and sees
+        the settled value of a batch. ``A -> B -> C`` inside one batch is one
+        ``(A, C)`` transition, not two: a batch asserts atomicity, so the
+        intermediate state is not observable.
+
+        This is the deliberate behaviour change from the callback-based
+        `Cell.subscribe` implementation, which fired per write.
+        """
+        ctx: dict = {}
+        pairs: list[tuple[str, str]] = []
+        m = StateMachine(
+            ctx,
+            "A",
+            lambda s, e: {"A": "B", "B": "C", "C": "A"}[s] if e == "go" else None,
+        )
+        m.on_transition(lambda old, new: pairs.append((old, new)))
+
+        def advance_twice() -> None:
+            m.send("go")
+            m.send("go")
+
+        batch(advance_twice)
+
+        assert m.state == "C", "both writes still land"
+        assert pairs == [("A", "C")], "the intermediate B is not observable"
+
+        # Outside a batch, every step is still reported.
+        m.send("go")
+        assert pairs == [("A", "C"), ("C", "A")]

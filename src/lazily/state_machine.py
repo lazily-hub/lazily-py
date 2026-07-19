@@ -19,7 +19,8 @@ __all__ = ["StateMachine"]
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from .cell import Cell, CellSubscriber
+from .cell import Cell
+from .effect import effect as _effect
 
 
 if TYPE_CHECKING:
@@ -27,6 +28,11 @@ if TYPE_CHECKING:
 
 S = TypeVar("S")
 E = TypeVar("E")
+
+# Distinguishes "the effect has not run yet" from a legitimate ``None`` state,
+# mirroring the ``Option<S>`` seed in the Rust reference (`lazily-rs`
+# `state_machine.rs::on_transition`).
+_UNSET: Any = object()
 
 
 class StateMachine[S, E]:
@@ -96,20 +102,34 @@ class StateMachine[S, E]:
     def on_transition(self, handler: Callable[[S, S], Any]) -> Callable[[], None]:
         """Register a handler that fires with ``(old, new)`` on state change.
 
-        The handler is **not** called on registration; it only fires on
-        subsequent transitions to a different state. This is the state-machine
-        analog of on-enter/on-exit: the handler receives both the previous and
-        new state.
+        Implemented as an :class:`~lazily.effect.Effect` over the backing cell —
+        a declared dependency edge, not a callback registered on the cell. This
+        mirrors ``StateMachine::on_transition`` in the Rust reference
+        (`lazily-rs`): the effect reads the state, compares it against a ``prev``
+        captured in the closure, and invokes ``handler`` only on a real change.
+
+        The handler is **not** called on registration; the effect's initial run
+        only seeds ``prev``. It fires on subsequent transitions to a different
+        state. This is the state-machine analog of on-enter/on-exit: the handler
+        receives both the previous and new state.
+
+        Because this is a graph participant, it observes the **settled** value
+        of a :func:`~lazily.batch.batch`. ``A -> B -> C`` inside one batch
+        reports a single ``(A, C)`` transition, not two — a batch asserts
+        atomicity, so intermediate states are not observable.
 
         Returns a disposer function; call it to stop observing.
         """
-        prev: list[S] = [self._cell.get()]
+        cell = self._cell
+        prev: list[Any] = [_UNSET]
 
-        def _subscriber(_ctx: dict[Any, Any], new_state: S) -> None:
+        def _body(_ctx: dict) -> None:
+            current = cell.get()  # declares the dependency edge
             old = prev[0]
-            if old != new_state:
-                handler(old, new_state)
-                prev[0] = new_state
+            prev[0] = current
+            if old is not _UNSET and old != current:
+                handler(old, current)
 
-        subscriber: CellSubscriber[S] = _subscriber
-        return self._cell.subscribe(subscriber)
+        eff = _effect(_body)
+        eff(self.ctx)  # initial run: seeds `prev`, fires nothing
+        return eff.dispose

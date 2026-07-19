@@ -1,9 +1,10 @@
 """Observer semantics for :class:`lazily.Signal` (#lzdartobservercow).
 
-The companion to ``tests/test_cell_observer.py``. ``Signal.subscribe`` had the
-same shape as ``Cell.subscribe`` before the disposer landed — a persistent
-``set`` of observers with no way to undo a registration — so it gets the same
-contract, pinned the same way.
+``Signal.subscribe`` is a persistent ``set`` of observers plus a disposer.
+:class:`lazily.Cell` has no counterpart — the Cell observer API was removed
+because a callback registry on every reactive leaf bypasses the graph, ignores
+batching, and costs memory whether or not anyone subscribes. This file pins what
+remains on ``Signal``.
 
 Every test in :class:`TestSignalObserverEquivalence` is written against a shim
 (:func:`_subscribe`) that uses the public disposer when ``subscribe`` returns
