@@ -16,7 +16,7 @@ Lazily-computed cached value with automatic dependency tracking via a global `sl
 
 | Type | Purpose |
 |------|---------|
-| `BaseSlot[C_in, C_ctx, T]` | Base slot without subscriber support |
+| `BaseSlot[C_in, C_ctx, T]` | Base slot without dependency tracking |
 | `Slot[C_in, C_ctx, T]` | Slot with dependency tracking and invalidation |
 | `slot[C_ctx, T]` | Convenience: Slot with identity context resolver |
 | `slot_def(resolve_ctx)` | Decorator factory for custom context resolvers |
@@ -34,9 +34,8 @@ Lazily-computed cached value with automatic dependency tracking via a global `sl
 
 | Method | Purpose |
 |--------|---------|
-| `subscribe(subscriber)` | Register invalidation callback |
-| `touch(ctx)` | Notify all subscribers |
-| `reset(ctx)` | Clear cache + notify subscribers + clear subscriber list (re-entrancy-safe: subscribers are cleared before notification so a subscriber-triggered reset cannot mutually recurse) |
+| `touch(ctx)` | Invalidate dependents |
+| `reset(ctx)` | Clear cache + invalidate dependents. Downstream edges are rebound to `None` before propagating, so a re-entered reset finds an empty set. |
 
 ### Cell
 
@@ -174,16 +173,16 @@ Uses a global `slot_stack: list[Slot]` (acts as thread-local execution context).
 
 1. When a Slot computes, it pushes itself onto `slot_stack`
 2. Any child Slot or Cell accessed during computation sees the parent on the stack
-3. The child registers a subscriber that calls `parent.reset()` when the child changes
+3. The child records that parent in its `_parents` edge set (by identity); a later change calls `parent.reset()`
 4. When a Cell value changes (and differs from old value), `touch()` cascades invalidation
 
-**Key invariant:** Subscribers are cleared on `reset()`, forcing re-registration on next access. This prevents stale subscriptions.
+**Key invariant:** Dependency edges are cleared on `reset()`, forcing re-registration on next access. This prevents stale edges.
 
 ## Invalidation Semantics
 
 - `Cell.value = new_value` → if changed: `touch()` → `parent.reset()` → cascade
-- `Slot.__call__(ctx)` → compute or return cached value; does **not** cascade invalidation (computation must not trigger subscriber resets)
-- `Slot.reset(ctx)` → clear cache → snapshot + clear subscribers → notify snapshot → cascade up dependency tree. Clearing before notification makes reset re-entrancy-safe: a subscriber that itself triggers a reset finds an empty subscriber set, preventing mutual recursion.
+- `Slot.__call__(ctx)` → compute or return cached value; does **not** cascade invalidation (computation must not invalidate its own dependents — doing so destroys the edge being registered)
+- `Slot.reset(ctx)` → clear cache → rebind downstream edges to `None` → push them onto the iterative invalidation work-stack → drain. Rebinding before propagation keeps a re-entered reset from finding stale edges.
 - Value equality check: Cells only invalidate when `new_value != old_value`
 
 ## Context Resolvers

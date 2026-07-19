@@ -66,7 +66,7 @@ class Effect(Slot[Any, dict, None]):
     _running: bool
 
     def __init__(self, body: Callable[[dict], Any | None]) -> None:
-        # Slot.__init__ sets up `_subscribers` and the placeholder callable; we
+        # Slot.__init__ sets up `_parents` and the placeholder callable; we
         # override `__call__` and `reset` so the slot machinery is used only for
         # dependency tracking (the Effect pushes itself onto `slot_stack` during
         # the body so Cells/Slots/Signals auto-subscribe to it).
@@ -113,8 +113,8 @@ class Effect(Slot[Any, dict, None]):
 
         Re-entrant calls are suppressed: an invalidation fired while the body is
         itself executing schedules no extra rerun (the body is already running
-        against the latest inputs). Clears downstream subscribers before the
-        rerun so re-registration on the next body execution is exact.
+        against the latest inputs). Clears downstream edges before the rerun so
+        re-registration on the next body execution is exact.
 
         Inside a :func:`lazily.batch.batch`, the rerun is queued for the
         coalesced effect flush at the outermost boundary — so an effect reached
@@ -129,7 +129,6 @@ class Effect(Slot[Any, dict, None]):
             return
         # Drop downstream edges before the rerun so re-registration on the next
         # body execution is exact. Setting to None also frees the ~216 B set.
-        self._subscribers = None
         self._parents = None
         if in_batch():
             enqueue_effect(self)
@@ -148,7 +147,6 @@ class Effect(Slot[Any, dict, None]):
         """Deschedule, drop edges, run cleanup. Terminal — no subsequent event
         revives a disposed effect."""
         self._disposed = True
-        self._subscribers = None
         self._parents = None
         self._run_cleanup()
 

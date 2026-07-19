@@ -2,7 +2,8 @@
 
 ### Removed
 
-- **The reactive observer APIs are gone (`Cell.subscribe`, `Signal.subscribe`).**
+- **The reactive observer APIs are gone (`Cell.subscribe`, `Signal.subscribe`,
+  `Slot.subscribe`).**
   No reactive in `lazily` exposes an observer API, in any binding. Observation
   in a reactive graph is a declared dependency edge, not a registered callback:
   a callback registry bolted onto a reactive bypasses the graph, ignores
@@ -31,9 +32,27 @@
   `StateMachine.on_transition` moved to an effect, the library contains zero
   `.subscribe(` calls on any reactive.
 
-  Removed with them: the `CellSubscriber` protocol,
+  `Slot` was the third and last one, and the most thoroughly mislabelled: its
+  own `touch()` comment read "External subscribers persist across touches (they
+  are not reactive edges)" directly above the loop that invoked them. The edge
+  set it was mistaken for is `_parents`, which sits two lines below doing the
+  rebind-then-clear the comment describes. `Slot.__slots__` drops to
+  `("_parents",)`, `_invalidate` and `touch` lose their notify loops, and
+  `Effect` (which subclasses `Slot`) stops clearing an attribute that no longer
+  exists.
+
+  All three registries were labelled or assumed to be dependency-graph edges and
+  none of them were. In each case the real edge set sat beside the registry
+  under a different name — `_parents` on all three types. The tell was uniform
+  and available in the source the whole time: graph edges are rebound to `None`
+  and re-established on recompute; observer registries persist across
+  notifications. Anything that survives a `touch` is not an edge.
+
+  Removed with them: the `CellSubscriber` and `SlotSubscriber` protocols,
   `tests/test_cell_observer.py`, `tests/test_signal_observer.py`, and
-  `tests/test_reactive_graph_conformance.py`. The conformance runner went
+  `tests/test_reactive_graph_conformance.py`. The two `Slot.subscribe` tests in
+  `tests/test_recursion_regression.py` were **ported to Effects, not deleted**
+  — see Changed. The conformance runner went
   because its entire supported op vocabulary was the observer API — with the
   spec's `observer_*` fixtures withdrawn, every remaining fixture in
   `lazily-spec/conformance/reactive-graph` uses the disposal/teardown-scope
@@ -44,6 +63,28 @@
   guard in `.github/workflows/precommit.yml` was dropped for the same reason.
 
 ### Changed
+
+- **The two `Slot.subscribe` recursion-regression tests were ported to Effects.**
+  Both pinned commit `30907ea`; neither was dropped, but they no longer pin the
+  same things and the file says so.
+
+  Fix 1 (`Slot.__call__` must not cascade while computing) still discriminates
+  exactly, and its symptom got *worse*, not weaker: with no callback registry, a
+  cascade during computation no longer fires a spurious notification — it
+  destroys the dependency edge, because `touch` rebinds `_parents` to `None` and
+  wipes the very dependent that was mid-computation registering itself. The
+  dependent then never updates again. The ported test asserts the second run
+  happens, which the original `notified == []` form could not.
+
+  Fix 2 (reset re-entrancy) lost its mechanism. Notify-before-clear was a
+  property of a callback registry, and there is no registry left to re-enter;
+  propagation is an append to an iterative work-stack drained by one loop, so
+  reordering the clear in `Slot._invalidate` is now unobservable — verified by
+  reverting it, both orderings terminate identically. The guarantee relocated to
+  `Effect._running`, which is the only remaining way user code runs inside an
+  invalidation wave, and the ported test pins it there: deleting that guard
+  makes it diverge without bound. Relocated coverage, honestly labelled, rather
+  than a test that quietly stopped discriminating.
 
 - **`StateMachine.on_transition` is now an `Effect`.** It was the only non-test
   consumer of `Cell.subscribe`. It is reimplemented the way the Rust reference

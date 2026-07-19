@@ -3,67 +3,100 @@
 Before the fix, two issues caused unbounded recursion:
 
 1. ``Slot.__call__`` fired ``touch()`` immediately after computing, so merely
-   *reading* a Slot cascaded invalidation through its subscribers. During
+   *reading* a Slot cascaded invalidation through its dependents. During
    ``Signal`` construction this closed a ``_SignalSlot`` <-> source-Slot
-   subscription cycle and blew the stack.
+   dependency cycle and blew the stack.
 2. ``Slot.reset`` notified subscribers *before* clearing them, so a subscriber
    that itself triggered a re-entrant reset found a non-empty subscriber set
    and mutually recursed.
 
 The fix:
   - ``Slot.__call__`` no longer touches (computation must not cascade).
-  - ``Slot.reset`` snapshots + clears subscribers, then notifies the snapshot.
+  - the invalidation wave rebinds a node's downstream edges to ``None`` BEFORE
+    propagating.
 
-These tests pin both invariants directly (so reverting either change fails the
-suite) and add a deep cascade + the Signal->Slot topology that originally
-triggered the bug.
+**Both tests were ported when the observer registries were removed**, because
+each was originally written against ``Slot.subscribe``. What they pin, and how
+faithfully, differs — see each test:
+
+* Fix 1 still discriminates exactly. Its *symptom* changed: with observers gone,
+  a cascade during computation does not spuriously notify a callback, it
+  destroys the dependency edge (``touch`` rebinds ``_parents`` to ``None``), so
+  the dependent silently stops updating forever. That is a strictly worse bug
+  than the original and the test now catches it.
+* Fix 2's original mechanism no longer exists — notify-before-clear was a
+  property of a *callback registry*, and there is no callback registry to
+  re-enter. Propagation is now an append to an iterative work-stack drained by a
+  single loop, so reordering the clear in ``Slot._invalidate`` is unobservable
+  (verified: both orderings terminate identically). The re-entrancy guarantee
+  relocated to ``Effect._running``, and the ported test pins it there — removing
+  that guard makes it diverge without bound. Coverage was relocated, not lost.
 """
 
 from __future__ import annotations
 
 from lazily import Signal, cell, slot
+from lazily.effect import effect
 
 
-def test_slot_call_does_not_notify_subscribers() -> None:
-    """Fix 1: ``Slot.__call__`` must NOT touch subscribers during computation.
+def test_reading_a_slot_does_not_cascade_and_preserves_its_edges() -> None:
+    """Fix 1: ``Slot.__call__`` must NOT touch during computation.
 
     Re-adding ``self.touch(resolved)`` to ``Slot.__call__`` makes this fail.
+    The failure mode is edge destruction, not a spurious notification: ``touch``
+    rebinds ``_parents`` to ``None``, so a slot that cascaded while computing
+    wipes the very dependent that was mid-computation registering itself. The
+    effect then never reruns again. Asserting the second run is therefore a
+    stronger check than the original ``notified == []``.
     """
-    notified: list[str] = []
+    runs: list[int] = []
+    ctx: dict = {}
+    src = cell(lambda c: 1)
 
     @slot
     def derived(c: dict) -> int:
-        return 1
+        return src(c).value + 1
 
-    derived.subscribe(lambda slot_, ctx: notified.append("touched"))
-    derived({})  # computation must not cascade invalidation
+    eff = effect(lambda c: runs.append(derived(c)))
+    eff(ctx)
+    assert runs == [2], "initial run"
 
-    assert notified == []
+    src(ctx).value = 5
+    assert runs == [2, 6], (
+        "the dependency edge must survive computation; under the reverted fix "
+        "`derived._parents` is wiped by its own touch and this stays [2]"
+    )
 
 
-def test_slot_reset_is_reentrancy_safe() -> None:
-    """Fix 2: ``Slot.reset`` clears subscribers BEFORE notification, so a
-    subscriber that re-enters reset finds an empty set and cannot mutually
-    recurse.
+def test_reentrant_reset_from_an_effect_body_terminates() -> None:
+    """Fix 2, ported: a re-entrant reset must not diverge.
 
-    Reverting reset to notify-before-clear raises ``RecursionError`` here.
+    The original form drove this through a ``Slot.subscribe`` callback that
+    re-entered ``reset``; with observers removed there is no callback to
+    re-enter, so this drives it through an Effect body instead — the only
+    remaining way user code runs inside an invalidation wave.
+
+    This no longer discriminates the historical notify-before-clear ordering
+    (that ordering is unobservable now). It pins the guarantee's current owner:
+    deleting the ``self._running`` check in ``Effect._invalidate`` makes this
+    loop without bound.
     """
     fired: list[int] = []
+    ctx: dict = {}
 
     @slot
     def base(c: dict) -> int:
         return 1
 
-    def reentrant(slot_: object, ctx: dict) -> None:
-        # Re-entrant reset: under the old code this found non-empty subscribers
-        # and recursed without bound.
-        base.reset(ctx)
+    def body(c: dict) -> None:
+        base(c)  # depend on base
         fired.append(1)
+        assert len(fired) < 100, "re-entrant reset diverged"
+        base.reset(c)  # re-entrant reset from inside the rerun
 
-    ctx: dict = {}
-    base(ctx)
-    base.subscribe(reentrant)
-    base.reset(ctx)  # must not raise
+    eff = effect(body)
+    eff(ctx)
+    base.reset(ctx)  # must terminate
 
     assert fired == [1]
 

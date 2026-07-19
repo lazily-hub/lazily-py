@@ -1,7 +1,7 @@
 __all__ = ["BaseSlot", "Slot", "resolve_identity", "slot", "slot_def", "slot_stack"]
 
 from collections.abc import Callable
-from typing import Any, Protocol, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from mypy_extensions import mypyc_attr
 
@@ -101,15 +101,11 @@ def _resume_drain() -> None:
     _drain_resets()
 
 
-class SlotSubscriber(Protocol):
-    def __call__(self, slot: "Slot[Any, Any, Any]", ctx: dict) -> Any: ...
-
-
 @mypyc_attr(allow_interpreted_subclasses=True)
 class BaseSlot[C_in, C_ctx: dict, T]:
     """
     Base class for a lazy slot Callable. Wraps a callable implementation field.
-    Does not subscribe to Cells.
+    Does not track Cell dependencies.
     """
 
     __slots__ = ("callable", "resolve_ctx")
@@ -171,13 +167,14 @@ class BaseSlot[C_in, C_ctx: dict, T]:
 
 @mypyc_attr(allow_interpreted_subclasses=True)
 class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
-    """
-    Base class for a lazy slot Callable that subscribes to Cells.
+    """Base class for a lazy slot Callable that tracks Cell dependencies.
+
+    Like every reactive in this library, a Slot exposes **no observer API**.
+    See :class:`~lazily.cell.Cell` for the rationale.
     """
 
-    __slots__ = ("_parents", "_subscribers")
+    __slots__ = ("_parents",)
 
-    _subscribers: set[SlotSubscriber] | None
     _parents: "set[Slot[Any, Any, Any]] | None"
 
     def __init__(
@@ -186,9 +183,6 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         resolve_ctx: Callable[[C_in], C_ctx] | None = None,
     ) -> None:
         super().__init__(callable=callable, resolve_ctx=resolve_ctx)
-        # Lazily materialized on first use: an empty CPython ``set()`` is ~216 B,
-        # so deferring it keeps un-subscribed slots cheap.
-        self._subscribers = None
         # Auto-discovered parents (Slots/Effects reading this slot), tracked by
         # object identity so repeated reads during one computation do not grow
         # the fan-out. ``functools.partial`` objects do NOT deduplicate in a set,
@@ -228,40 +222,25 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
 
     def _invalidate(self, ctx: Any) -> None:
         # Clear THIS node's cache + capture its downstream edges. Re-entrancy
-        # safe: the edges are rebound to None BEFORE notification, so a
-        # subscriber/parent that re-enters reset finds empty sets. The wave's
-        # visited guard (``_drain_resets``) makes a second pass a no-op.
+        # safe: the edges are rebound to None BEFORE propagating, so a parent
+        # that re-enters reset finds an empty set. The wave's visited guard
+        # (``_drain_resets``) makes a second pass a no-op.
         resolve = self.resolve_ctx
         if resolve is resolve_identity:
             resolved = ctx
         else:
             resolved = resolve(ctx)
         resolved.pop(self, None)
-        subs = self._subscribers
         pare = self._parents
-        self._subscribers = None
         self._parents = None
-        if subs:
-            for subscriber in subs:
-                subscriber(self, resolved)
         if pare:
             for parent in pare:
                 _reset_work.append((parent, resolved))
 
-    def subscribe(self, subscriber: SlotSubscriber) -> None:
-        if self._subscribers is None:
-            self._subscribers = set()
-        self._subscribers.add(subscriber)
-
     def touch(self, ctx: C_ctx) -> None:
-        # External subscribers persist across touches (they are not reactive
-        # edges), so iterate a snapshot. The auto-discovered parents are
-        # reactive edges: rebind-then-clear (they re-establish on recompute)
-        # and push them into the coalesced invalidation wave — no tuple alloc.
-        subs = self._subscribers
-        if subs:
-            for subscriber in tuple(subs):
-                subscriber(self, ctx)
+        # The auto-discovered parents are the only fan-out: they are reactive
+        # edges, so rebind-then-clear (they re-establish on recompute) and push
+        # them into the coalesced invalidation wave — no tuple alloc.
         pare = self._parents
         if pare:
             self._parents = None
