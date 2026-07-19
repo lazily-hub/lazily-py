@@ -414,6 +414,18 @@ def test_crdt_plane_anti_entropy_conformance() -> None:
             )
 
 
+def _canonicalize_crdt_sync_wire(wire: dict[str, Any]) -> dict[str, Any]:
+    """Fill in the declared default for an omitted ``CrdtSync.frontier``.
+
+    ``#lzspecfrontiersuppress``: omitted and ``[]`` are declared equivalent by
+    ``schemas/distributed.json``, so the round-trip comparison is semantic.
+    """
+    inner = wire.get("CrdtSync")
+    if not isinstance(inner, dict) or "frontier" in inner:
+        return wire
+    return {"CrdtSync": {"frontier": [], **inner}}
+
+
 def test_crdt_sync_frames_round_trip() -> None:
     fix = _load("distributed/crdt_sync_frames.json")
     assert fix["kind"] == "CrdtSyncFrames"
@@ -423,10 +435,21 @@ def test_crdt_sync_frames_round_trip() -> None:
         wire = frame["wire"]
         msg = IpcMessage.from_wire(wire)
         assert msg.is_crdt_sync
-        assert msg.to_wire() == wire, f"round-trip mismatch: {frame['label']}"
+        # Round-trip is byte-for-byte except for schema-declared-equivalent
+        # encodings (lazily-spec docs/conformance.md § Round-trip equivalence
+        # exemptions): `CrdtSync.frontier` omitted is equivalent to `[]`.
+        assert msg.to_wire() == _canonicalize_crdt_sync_wire(wire), (
+            f"round-trip mismatch: {frame['label']}"
+        )
         a = frame["assertions"]
         sync = msg.crdt_sync
-        assert len(sync.frontier) == a["frontier_len"], frame["label"]
+        if "frontier_len" in a:
+            assert len(sync.frontier) == a["frontier_len"], frame["label"]
+        if "frontier_omitted" in a:
+            # #lzspecfrontiersuppress: an omitted frontier decodes as empty.
+            assert a["frontier_omitted"] is True, frame["label"]
+            assert "frontier" not in wire["CrdtSync"], frame["label"]
+            assert sync.frontier == [], frame["label"]
         assert len(sync.ops) == a["op_count"], frame["label"]
         if "has_keyed_op" in a:
             assert any(op.key is not None for op in sync.ops), frame["label"]
