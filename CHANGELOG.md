@@ -38,6 +38,37 @@
   0.46–0.62x — about 2x *faster*, because the disposer captures its target
   directly instead of re-deriving it through the private set.
 
+- **`Signal.subscribe` returns a disposer (`#lzdartobservercow`).** `Signal`
+  carried the identical defect `Cell` did — a persistent `set` of observers with
+  no unsubscribe API — but latent rather than active: nothing in the library was
+  forced to reach into `Signal._subscribers` the way `StateMachine` reached into
+  `Cell`'s (audited; the only other `_subscribers` users are `Slot`/`Effect`,
+  which manage their own). `subscribe` now returns the same idempotent,
+  fired-latch disposer, so the two primitives do not diverge inside one binding.
+
+  Semantics are identical to `Cell`'s and equally deliberate: dedup by equality,
+  **unspecified dispatch order**, and snapshot dispatch. Subscribers are notified
+  on `touch`, including the eager recompute that follows a dependency change —
+  subject to the memo guard, so an equal recompute stays silent. Ten equivalence
+  tests in `tests/test_signal_observer.py` pass identically against both the pre-
+  and post-change trees (verified against a `git worktree` at HEAD, both arms
+  mypyc-compiled), and three disposer-contract tests fail against the old tree,
+  confirming they test something real.
+
+  `Slot._subscribers` was checked and deliberately **not** changed: it is a
+  one-shot edge set cleared on reset, a lifecycle in which a disposer would be
+  meaningless.
+
+  The per-notify `tuple(subs)` snapshot was again left alone, for the same reason
+  as `Cell`. A/B against the pre-change tree (one process per rung, three
+  interleaved repeats, load average 3.8–5.2 on a box in active use, so ratios
+  only): publish is flat from W=16 to W=16384 and unchanged at 0.95–1.06x
+  (excluding one 1.32x load-noise outlier whose neighbouring repeat was 0.98x),
+  and the full subscribe+dispose lifecycle is 0.94x at W=16 improving to ~0.69x
+  by W=4096 — faster, as with `Cell`. The subscribe-only arm is *not* reported:
+  the equivalence shim allocates a fallback closure on the old side too, so that
+  comparison is confounded by construction and measures nothing.
+
 ## 0.33.0
 
 ### Changed — performance (Phase 2 quick wins of `tasks/agent-doc/plans/lazily-perf-memory-audit.md`)
