@@ -71,16 +71,53 @@ class Cell[T]:
         """Alias for value= property setter"""
         self.value = value
 
-    def subscribe(self, subscriber: CellSubscriber[T]) -> None:
+    def subscribe(self, subscriber: CellSubscriber[T]) -> Callable[[], None]:
         """Register an external (non-reactive) change callback.
 
         External subscribers are called as ``subscriber(ctx, value)`` on
         :meth:`touch`. The auto-discovered reactive parents (Slots/Effects) are
         tracked separately by identity in :attr:`_parents`.
+
+        Returns an idempotent disposer; call it to unsubscribe. Calling it more
+        than once is a no-op, and a disposer that has already fired will never
+        remove a *later* registration of an equal callable.
+
+        Semantics (see ``tests/test_cell_observer.py``):
+
+        * **Dedup** — storage is a ``set``, so registration is by equality: the
+          same callable subscribed twice is one registration, invoked once per
+          :meth:`touch` and removed by a single disposal.
+        * **Order is unspecified** — a ``set`` does not preserve registration
+          order. Do not depend on the dispatch sequence.
+        * **Snapshot dispatch** — :meth:`touch` iterates a snapshot, so a
+          subscriber added during a notification first runs on the *next* one,
+          and one removed mid-notification still runs in the current pass.
         """
-        if self._subscribers is None:
-            self._subscribers = set()
-        self._subscribers.add(subscriber)
+        subscribers = self._subscribers
+        if subscribers is None:
+            subscribers = self._subscribers = set()
+        subscribers.add(subscriber)
+
+        disposed = False
+
+        def unsubscribe() -> None:
+            # The `disposed` latch is what makes this safe to call twice AND
+            # safe to hold past a re-subscribe: a bare `discard` would silently
+            # remove a later registration of an equal callable.
+            nonlocal disposed
+            if disposed:
+                return
+            disposed = True
+            subs = self._subscribers
+            if subs is not None:
+                subs.discard(subscriber)
+                if not subs:
+                    # Release the ~216 B set, matching the lazy-materialization
+                    # policy in __init__. `touch` tests truthiness, so an empty
+                    # set and None are already indistinguishable to callers.
+                    self._subscribers = None
+
+        return unsubscribe
 
     def touch(self) -> None:
         # External subscribers persist across touches (they are not reactive

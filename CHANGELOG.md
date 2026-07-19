@@ -1,5 +1,43 @@
 ## Unreleased
 
+### Added
+
+- **`Cell.subscribe` returns a disposer (`#lzdartobservercow`).** `Cell` had no
+  unsubscribe API at all, so `StateMachine.on_transition` was reaching into the
+  private `Cell._subscribers` set to `discard` its own callback — the library
+  violating its own encapsulation to do something no caller could do. It now
+  matches the rest of the family (dart's `void Function()`, go's keyed map, zig's
+  `EdgeSet`): `subscribe` returns an idempotent disposer, and
+  `StateMachine.on_transition` simply returns it.
+
+  The disposer carries a fired-latch rather than a bare `discard`, which fixes a
+  bug the old workaround had: a stale disposer would silently unsubscribe a
+  *later* registration of an equal callable. That path was only reachable through
+  private state, so no public behaviour changed.
+
+  Observer semantics are now pinned rather than accidental — dedup by equality
+  (the storage is a `set`, so subscribing the same callable twice is one
+  registration removed by one disposal), **unspecified dispatch order** (a `set`
+  does not preserve registration order; do not depend on it), and snapshot
+  dispatch (`touch` iterates a snapshot, so a subscriber added mid-notification
+  runs on the *next* one and a subscriber removed mid-notification still runs in
+  the current pass). Nine equivalence tests in `tests/test_cell_observer.py` pass
+  identically against both the pre- and post-change implementations, confirming
+  the storage contract is unchanged.
+
+  The per-notify `tuple(subs)` snapshot was audited and **deliberately left
+  alone**. Unlike dart's O(W²) copy-on-write churn, python's `set` already gives
+  O(1) subscribe/unsubscribe, and the snapshot is O(W) on top of a notify that is
+  inherently O(W), so it amortises to one pointer (measured: exactly 8 bytes) per
+  subscriber invocation. With total work held fixed and only W varying, publish
+  cost per invocation is flat from W=16 to W=16384 — there is no scaling defect
+  to fix. A/B against the pre-change tree (one process per rung, three
+  interleaved repeats, load average 5.2–8.0 on a box in active use, so ratios
+  only): publish 0.93–1.04x (unchanged), subscribe 1.47–1.59x slower at W≥16
+  from the disposer closure allocation, and the full subscribe+dispose lifecycle
+  0.46–0.62x — about 2x *faster*, because the disposer captures its target
+  directly instead of re-deriving it through the private set.
+
 ## 0.33.0
 
 ### Changed — performance (Phase 2 quick wins of `tasks/agent-doc/plans/lazily-perf-memory-audit.md`)

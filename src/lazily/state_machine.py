@@ -112,10 +112,4 @@ class StateMachine[S, E]:
                 prev[0] = new_state
 
         subscriber: CellSubscriber[S] = _subscriber
-        self._cell.subscribe(subscriber)
-
-        def dispose() -> None:
-            if self._cell._subscribers is not None:
-                self._cell._subscribers.discard(subscriber)
-
-        return dispose
+        return self._cell.subscribe(subscriber)
