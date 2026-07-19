@@ -168,6 +168,13 @@ class AsyncSlot[T]:
     def state(self) -> SlotState:
         return self._state
 
+    @property
+    def revision(self) -> Revision:
+        """The monotonic revision counter. Bumped by every ``invalidate`` /
+        ``hard_clear``; a completion whose recorded revision no longer matches
+        is discarded (conformance point 2)."""
+        return self._revision
+
     def get(self) -> T | None:
         """Synchronous cached read: the value if resolved, else ``None``
         (warm fast path). Never spawns a computation."""

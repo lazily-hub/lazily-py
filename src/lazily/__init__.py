@@ -26,10 +26,16 @@ __all__ = [
     "SHM_DEFAULT_CAPACITY",
     "Alignment",
     "ArrowBackend",
+    "AsyncCellHandle",
     "AsyncCellMap",
+    "AsyncComputeContext",
+    "AsyncContext",
+    "AsyncContextDisposedError",
     "AsyncEffect",
+    "AsyncEffectHandle",
     "AsyncReactiveMap",
     "AsyncSlot",
+    "AsyncSlotHandle",
     "AsyncSlotMap",
     "AwarenessCell",
     "BackpressurePolicy",
@@ -285,6 +291,8 @@ __all__ = [
     "align",
     "applied_receipt",
     "assign_stable_keys",
+    "async_context",
+    "async_effect",
     "async_reactive_family",
     "async_slot",
     "batch",
@@ -351,6 +359,8 @@ __all__ = [
 __version__ = "0.33.0"
 
 from . import (
+    async_context,
+    async_effect,
     async_reactive_family,
     async_slot,
     benchmarks,
@@ -378,6 +388,14 @@ from . import (
     thread_safe_reactive_family,
     tree,
     windowing,
+)
+from .async_context import (
+    AsyncCellHandle,
+    AsyncComputeContext,
+    AsyncContext,
+    AsyncContextDisposedError,
+    AsyncEffectHandle,
+    AsyncSlotHandle,
 )
 from .async_effect import AsyncEffect, EffectEvent, EffectState
 from .async_reactive_family import AsyncCellMap, AsyncReactiveMap, AsyncSlotMap
