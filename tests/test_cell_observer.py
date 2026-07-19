@@ -2,6 +2,9 @@
 
 These tests pin the *observable* contract of ``Cell.subscribe`` / ``Cell.touch``
 so that changes to the subscriber storage are provably behaviour-preserving.
+The normative clauses themselves are asserted against the canonical
+``lazily-spec`` fixtures in ``tests/test_reactive_graph_conformance.py``; this
+file is the unit-level companion.
 
 Every test in :class:`TestCellObserverEquivalence` is written against a shim
 (:func:`_subscribe`) that uses the public disposer when ``subscribe`` returns
@@ -57,11 +60,13 @@ class TestCellObserverEquivalence:
         assert seen[0][0] is ctx
         assert seen[0][1] == 1
 
-    def test_duplicate_registration_is_deduplicated(self) -> None:
-        """The same callable subscribed twice is invoked ONCE per touch.
+    def test_duplicate_registration_is_independent(self) -> None:
+        """The same callable subscribed twice yields TWO registrations.
 
-        Subscriber storage is a ``set``, so registration is by equality. This
-        is load-bearing for existing callers and is deliberately preserved.
+        Storage is keyed by registration, not by callback, so the callable runs
+        once per registration — the normative no-deduplication clause
+        (``lazily-spec/docs/reactive-graph.md``, replayed in
+        ``tests/test_reactive_graph_conformance.py``).
         """
         c = Cell({}, 0)
         calls: list[int] = []
@@ -74,11 +79,10 @@ class TestCellObserverEquivalence:
 
         c.touch()
 
-        assert calls == [0], "duplicate registration must not double-invoke"
+        assert calls == [0, 0], "each registration must be invoked"
 
-    def test_duplicate_registration_disposes_with_one_disposal(self) -> None:
-        """Dedup means two subscribes create ONE registration, so one disposal
-        removes it. The second disposer is then a no-op."""
+    def test_duplicate_registration_needs_one_disposal_each(self) -> None:
+        """Each disposer removes exactly one of the two registrations."""
         c = Cell({}, 0)
         calls: list[int] = []
 
@@ -90,15 +94,20 @@ class TestCellObserverEquivalence:
 
         d1()
         c.touch()
-        assert calls == []
+        assert calls == [0], "disposing one registration must leave the other"
 
+        calls.clear()
         d2()
         c.touch()
         assert calls == []
 
     def test_every_subscriber_invoked_exactly_once_per_touch(self) -> None:
-        """Order is UNSPECIFIED (the storage is a ``set``), so this asserts on
-        the multiset of invocations, never on sequence."""
+        """Invocation is exactly-once per registration per touch.
+
+        Asserted as a multiset here; the sequence itself is pinned by the
+        registration-order fixture in
+        ``tests/test_reactive_graph_conformance.py``.
+        """
         c = Cell({}, 7)
         calls: list[str] = []
         for name in ("a", "b", "c", "d"):
@@ -133,9 +142,16 @@ class TestCellObserverEquivalence:
         c.touch()
         assert late_calls == [0], "late subscriber must fire on the next pass"
 
-    def test_unsubscribe_during_notification_still_fires_this_pass(self) -> None:
-        """The snapshot is taken before dispatch, so a subscriber removed
-        mid-notification is still invoked in that pass, and skipped after."""
+    def test_unsubscribe_during_notification_does_not_retract_a_past_call(
+        self,
+    ) -> None:
+        """Disposal is not retroactive: an *already-visited* subscriber keeps the
+        invocation it received before it was disposed, and is skipped after.
+
+        The complementary case — a subscriber disposed mid-pass that the loop has
+        NOT yet reached, which must be skipped immediately — is pinned by
+        ``tests/test_reactive_graph_conformance.py``.
+        """
         c = Cell({}, 0)
         victim_calls: list[int] = []
 
@@ -155,7 +171,9 @@ class TestCellObserverEquivalence:
         _subscribe(c, remover)
 
         c.touch()
-        assert victim_calls == [0], "snapshot semantics: victim still fires"
+        assert victim_calls == [0], (
+            "the victim ran before it was disposed; that call stands"
+        )
 
         c.touch()
         assert victim_calls == [0], "victim must not fire after removal"

@@ -15,8 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out lazily-spec
+      # lazily-spec is the canonical cross-language conformance source. Clone it
+      # as a sibling BEFORE any test step so every conformance suite that reads
+      # ../lazily-spec has the canonical fixtures, and CI fails on drift rather
+      # than skipping (#lzspecconf).
+      - name: Fetch canonical lazily-spec conformance fixtures (#lzspecconf)
         run: git clone --depth 1 https://github.com/lazily-hub/lazily-spec.git ../lazily-spec
+
+      # The conformance suites skip when the sibling is absent, which is correct
+      # for a local checkout and fatal in CI: without these guards a green run
+      # would mean "tested nothing". Add a guard here for every fixture
+      # directory a suite reads.
+      - name: Assert canonical lazily-spec fixtures are present (#lzspecconf)
+        run: |
+          test -d ../lazily-spec/conformance || { echo "::error::../lazily-spec/conformance missing — the conformance suites would silently skip"; exit 1; }
+          test -d ../lazily-spec/conformance/reactive-graph || { echo "::error::../lazily-spec/conformance/reactive-graph missing — test_reactive_graph_conformance.py would silently skip instead of validating observer semantics"; exit 1; }
+          test -d ../lazily-spec/conformance/familysync || { echo "::error::../lazily-spec/conformance/familysync missing — test_family_sync.py would silently fall back to local fixtures"; exit 1; }
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7

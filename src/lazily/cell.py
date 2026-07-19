@@ -22,9 +22,15 @@ class Cell[T]:
     A subscribable that can be used with Slots.
     """
 
-    __slots__ = ("_parents", "_subscribers", "_value", "ctx")
+    __slots__ = ("_next_registration", "_parents", "_subscribers", "_value", "ctx")
 
-    _subscribers: set[CellSubscriber[T]] | None
+    # Registration-keyed, insertion-ordered observer table: `token -> callback`.
+    # The key is the *registration*, never the callback, so two subscribes of one
+    # callable are two independent entries (lazily-spec reactive-graph.md,
+    # "Every registration is independent"). A CPython dict preserves insertion
+    # order, which is exactly the required firing order.
+    _subscribers: dict[int, CellSubscriber[T]] | None
+    _next_registration: int
     _parents: set[Slot[Any, Any, Any]] | None
     _value: T
     ctx: dict
@@ -33,8 +39,13 @@ class Cell[T]:
         self.ctx = ctx
         self._value = initial_value
         # Lazily materialized on first subscriber/parent: an empty CPython
-        # ``set()`` is ~216 B, so deferring it keeps quiescent leaf sources cheap.
+        # ``dict()`` is ~64 B, so deferring it keeps quiescent leaf sources cheap.
         self._subscribers = None
+        # Monotonic per cell and never rewound, so a token is unique for the
+        # lifetime of the cell even across a full unsubscribe that releases the
+        # table. A recycled token would let a spent disposer name a later
+        # registration — the `b2de504` defect, one layer down.
+        self._next_registration = 0
         # Auto-discovered parents (Slots/Effects reading this cell), tracked by
         # object identity. Stored separately from `_subscribers` (external
         # callables) because `functools.partial` objects do NOT deduplicate in a
@@ -82,52 +93,75 @@ class Cell[T]:
         than once is a no-op, and a disposer that has already fired will never
         remove a *later* registration of an equal callable.
 
-        Semantics (see ``tests/test_cell_observer.py``):
+        Semantics — the normative observer contract of
+        ``lazily-spec/docs/reactive-graph.md``, replayed in
+        ``tests/test_reactive_graph_observer_conformance.py``:
 
-        * **Dedup** — storage is a ``set``, so registration is by equality: the
-          same callable subscribed twice is one registration, invoked once per
-          :meth:`touch` and removed by a single disposal.
-        * **Order is unspecified** — a ``set`` does not preserve registration
-          order. Do not depend on the dispatch sequence.
-        * **Snapshot dispatch** — :meth:`touch` iterates a snapshot, so a
-          subscriber added during a notification first runs on the *next* one,
-          and one removed mid-notification still runs in the current pass.
+        * **Every registration is independent** — the table is keyed by
+          registration, not by callback, so the same callable subscribed twice
+          is *two* registrations. Both are invoked per :meth:`touch`, and each
+          disposer removes exactly one.
+        * **Order is registration order** — observers fire in the sequence they
+          were registered, stably across notifications. Order is a property of
+          the registration, not of the callback: a callback removed and
+          re-registered goes to the back.
+        * **Subscribing during a notification is deferred** — the pass is
+          bounded by the registrations captured before the first callback, so a
+          subscriber added mid-pass first runs on the *next* one (and a
+          self-feeding observer terminates).
+        * **Unsubscribing during a notification takes effect immediately** — a
+          registration disposed mid-pass is skipped even when the cursor has not
+          reached it. Already-visited observers are unaffected; disposal is not
+          retroactive.
         """
         subscribers = self._subscribers
         if subscribers is None:
-            subscribers = self._subscribers = set()
-        subscribers.add(subscriber)
+            subscribers = self._subscribers = {}
+        token = self._next_registration
+        self._next_registration = token + 1
+        subscribers[token] = subscriber
 
         disposed = False
 
         def unsubscribe() -> None:
-            # The `disposed` latch is what makes this safe to call twice AND
-            # safe to hold past a re-subscribe: a bare `discard` would silently
-            # remove a later registration of an equal callable.
+            # Latch first: a spent disposer must never remove anything, which is
+            # what keeps it off a later registration of an equal callable even
+            # though the table itself is already registration-keyed.
             nonlocal disposed
             if disposed:
                 return
             disposed = True
             subs = self._subscribers
             if subs is not None:
-                subs.discard(subscriber)
+                # Popping mid-`touch` is the mechanism for immediate removal:
+                # the notify loop re-reads the table per entry, so an unvisited
+                # observer removed here is skipped rather than relocated.
+                subs.pop(token, None)
                 if not subs:
-                    # Release the ~216 B set, matching the lazy-materialization
+                    # Release the table, matching the lazy-materialization
                     # policy in __init__. `touch` tests truthiness, so an empty
-                    # set and None are already indistinguishable to callers.
+                    # dict and None are already indistinguishable to callers.
                     self._subscribers = None
 
         return unsubscribe
 
     def touch(self) -> None:
         # External subscribers persist across touches (they are not reactive
-        # edges), so iterate a snapshot. The auto-discovered parents are
+        # edges). Snapshot the registration tokens — that bounds the pass to
+        # the observers registered before it began (deferred subscribe) — but
+        # re-read each callback from the live table before invoking it, so a
+        # disposal from inside a callback takes effect immediately even for an
+        # observer the loop has not yet reached. The auto-discovered parents are
         # reactive edges: rebind-then-clear (they re-establish on recompute)
         # and push them into the coalesced invalidation wave — no tuple alloc.
         subs = self._subscribers
         if subs:
-            for subscriber in tuple(subs):
-                subscriber(self.ctx, self._value)
+            ctx = self.ctx
+            value = self._value
+            for token in tuple(subs):
+                subscriber = subs.get(token)
+                if subscriber is not None:
+                    subscriber(ctx, value)
         pare = self._parents
         if pare:
             self._parents = None
