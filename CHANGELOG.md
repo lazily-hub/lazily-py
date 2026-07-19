@@ -2,14 +2,14 @@
 
 ### Removed
 
-- **The `Cell` observer API is gone (`Cell.subscribe`).** `lazily` will not have
-  a `Cell` observer API in any binding. Observation in a reactive graph is a
-  declared dependency edge, not a registered callback: a callback registry
-  bolted onto `Cell` bypasses the graph, ignores batching, and breaks
-  glitch-freedom. The decisive objection is cost — the registry (and its
-  registration counter) was paid by *every* cell whether or not anyone
-  subscribed. Four of the eight bindings (`rs`, `cpp`, `js`, `kt`) never had
-  `Cell` observers; they were right.
+- **The reactive observer APIs are gone (`Cell.subscribe`, `Signal.subscribe`).**
+  No reactive in `lazily` exposes an observer API, in any binding. Observation
+  in a reactive graph is a declared dependency edge, not a registered callback:
+  a callback registry bolted onto a reactive bypasses the graph, ignores
+  batching, and breaks glitch-freedom. The decisive objection is cost — the
+  registry (and, on `Cell`, its registration counter) was paid by *every*
+  instance whether or not anyone subscribed. Four of the eight bindings (`rs`,
+  `cpp`, `js`, `kt`) never had `Cell` observers; they were right.
 
   Where a caller genuinely needs a stream of every transition rather than the
   settled value, that is a `Topic`, which every binding already has.
@@ -20,8 +20,20 @@
   `_value`, `ctx`); `Cell.touch()` now does nothing but push the auto-discovered
   reactive parents into the coalesced invalidation wave.
 
-  Removed with it: the `CellSubscriber` protocol, `tests/test_cell_observer.py`,
-  and `tests/test_reactive_graph_conformance.py`. The conformance runner went
+  `Signal` carried the identical registry — `signal.py` documented it as
+  "an external (non-reactive) change callback", with `_parents` tracked
+  separately as the actual graph edges — so it goes for the same reasons, plus
+  one of its own: its dedup was by equality via a `set`, which the spec now
+  states as a MUST NOT. That is the defect where two components sharing a bound
+  method silently cancel each other's subscription. `Signal.__slots__` drops
+  `_subscribers`; `_parents` is kept on both types, being the genuine graph
+  edges. Nothing in `src/` called `Signal.subscribe` — after
+  `StateMachine.on_transition` moved to an effect, the library contains zero
+  `.subscribe(` calls on any reactive.
+
+  Removed with them: the `CellSubscriber` protocol,
+  `tests/test_cell_observer.py`, `tests/test_signal_observer.py`, and
+  `tests/test_reactive_graph_conformance.py`. The conformance runner went
   because its entire supported op vocabulary was the observer API — with the
   spec's `observer_*` fixtures withdrawn, every remaining fixture in
   `lazily-spec/conformance/reactive-graph` uses the disposal/teardown-scope
@@ -45,39 +57,6 @@
   inside one `batch` now reports a single `(A, C)` transition rather than two.
   This is intended — a batch asserts atomicity, so intermediate states are not
   observable. Unbatched transitions are unaffected and still report every step.
-
-### Added
-
-- **`Signal.subscribe` returns a disposer (`#lzdartobservercow`).** `Signal`
-  carried the identical defect `Cell` did — a persistent `set` of observers with
-  no unsubscribe API — but latent rather than active: nothing in the library was
-  forced to reach into `Signal._subscribers` the way `StateMachine` reached into
-  `Cell`'s (audited; the only other `_subscribers` users are `Slot`/`Effect`,
-  which manage their own). `subscribe` now returns the same idempotent,
-  fired-latch disposer, so the two primitives do not diverge inside one binding.
-
-  `Signal` keeps its observer API; `Cell` does not (see Removed above).
-  Semantics are deliberate: dedup by equality,
-  **unspecified dispatch order**, and snapshot dispatch. Subscribers are notified
-  on `touch`, including the eager recompute that follows a dependency change —
-  subject to the memo guard, so an equal recompute stays silent. Ten equivalence
-  tests in `tests/test_signal_observer.py` pass identically against both the pre-
-  and post-change trees (verified against a `git worktree` at HEAD, both arms
-  mypyc-compiled), and three disposer-contract tests fail against the old tree,
-  confirming they test something real.
-
-  `Slot._subscribers` was checked and deliberately **not** changed: it is a
-  one-shot edge set cleared on reset, a lifecycle in which a disposer would be
-  meaningless.
-
-  The per-notify `tuple(subs)` snapshot was left alone. A/B against the pre-change tree (one process per rung, three
-  interleaved repeats, load average 3.8–5.2 on a box in active use, so ratios
-  only): publish is flat from W=16 to W=16384 and unchanged at 0.95–1.06x
-  (excluding one 1.32x load-noise outlier whose neighbouring repeat was 0.98x),
-  and the full subscribe+dispose lifecycle is 0.94x at W=16 improving to ~0.69x
-  by W=4096 — faster, as with `Cell`. The subscribe-only arm is *not* reported:
-  the equivalence shim allocates a fallback closure on the old side too, so that
-  comparison is confounded by construction and measures nothing.
 
 ## 0.33.0
 

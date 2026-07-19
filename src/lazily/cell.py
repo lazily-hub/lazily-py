@@ -16,13 +16,17 @@ T = TypeVar("T")
 class Cell[T]:
     """A reactive leaf source: a mutable value other reactives depend on.
 
-    A Cell has **no observer API**. Observation in this graph is a declared
+    **No reactive in this library exposes an observer API** — not Cell, not
+    :class:`~lazily.signal.Signal`. Observation in this graph is a declared
     dependency edge, not a registered callback: read the cell from a
     :class:`~lazily.slot.Slot`, :class:`~lazily.signal.Signal`, or
     :class:`~lazily.effect.Effect` and that reader becomes a dependent, which is
-    what makes batching and glitch-freedom hold. Where a caller genuinely needs
-    a stream of *every* transition rather than the settled value, that is a
-    :class:`~lazily.queue.Topic`.
+    what makes batching and glitch-freedom hold. A callback registry bypasses
+    all of that and costs memory on every reactive whether or not anyone
+    subscribes.
+
+    Where a caller genuinely needs a stream of *every* transition rather than
+    the settled value, that is a :class:`~lazily.queue.Topic`.
     """
 
     __slots__ = ("_parents", "_value", "ctx")

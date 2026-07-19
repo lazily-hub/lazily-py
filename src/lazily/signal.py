@@ -67,6 +67,9 @@ class Signal[T]:
     waiting for the next read. Reading :attr:`value` inside a Slot/Signal
     computation registers a dependency, so downstream reactives invalidate when
     this Signal's value changes.
+
+    Like every reactive in this library, a Signal exposes **no observer API**.
+    See :class:`~lazily.cell.Cell` for the rationale.
     """
 
     __slots__ = (
@@ -74,12 +77,10 @@ class Signal[T]:
         "_parents",
         "_recomputing",
         "_slot",
-        "_subscribers",
         "_value",
         "ctx",
     )
 
-    _subscribers: set[Callable[[dict, T], Any]] | None
     _parents: set[Slot[Any, Any, Any]] | None
     _active: bool
     _recomputing: bool
@@ -89,9 +90,8 @@ class Signal[T]:
 
     def __init__(self, ctx: dict, callable: Callable[[dict], T]) -> None:
         self.ctx = ctx
-        # Lazily materialized on first subscriber/parent: an empty CPython
-        # ``set()`` is ~216 B, so deferring it keeps quiescent signals cheap.
-        self._subscribers = None
+        # Lazily materialized on first parent: an empty CPython ``set()`` is
+        # ~216 B, so deferring it keeps quiescent signals cheap.
         self._parents = None
         self._active = True
         self._recomputing = False
@@ -137,66 +137,10 @@ class Signal[T]:
         """Alias for the :attr:`value` getter."""
         return self.value
 
-    def subscribe(self, subscriber: Callable[[dict, T], Any]) -> Callable[[], None]:
-        """Register an external (non-reactive) change callback.
-
-        External subscribers are called as ``subscriber(ctx, value)`` on
-        :meth:`touch` — including the :meth:`_eager_recompute` that follows a
-        dependency change, subject to the memo guard. The auto-discovered
-        reactive parents are tracked separately by identity in :attr:`_parents`.
-
-        Returns an idempotent disposer; call it to unsubscribe. Calling it more
-        than once is a no-op, and a disposer that has already fired will never
-        remove a *later* registration of an equal callable.
-
-        Semantics (see ``tests/test_signal_observer.py``) — note that
-        :class:`~lazily.cell.Cell` deliberately has **no** counterpart to this
-        method; observation of a cell is a declared dependency edge:
-
-        * **Dedup** — storage is a ``set``, so registration is by equality: the
-          same callable subscribed twice is one registration, invoked once per
-          :meth:`touch` and removed by a single disposal.
-        * **Order is unspecified** — a ``set`` does not preserve registration
-          order. Do not depend on the dispatch sequence.
-        * **Snapshot dispatch** — :meth:`touch` iterates a snapshot, so a
-          subscriber added during a notification first runs on the *next* one,
-          and one removed mid-notification still runs in the current pass.
-        """
-        subscribers = self._subscribers
-        if subscribers is None:
-            subscribers = self._subscribers = set()
-        subscribers.add(subscriber)
-
-        disposed = False
-
-        def unsubscribe() -> None:
-            # The `disposed` latch is what makes this safe to call twice AND
-            # safe to hold past a re-subscribe: a bare `discard` would silently
-            # remove a later registration of an equal callable.
-            nonlocal disposed
-            if disposed:
-                return
-            disposed = True
-            subs = self._subscribers
-            if subs is not None:
-                subs.discard(subscriber)
-                if not subs:
-                    # Release the ~216 B set, matching the lazy-materialization
-                    # policy in __init__. `touch` tests truthiness, so an empty
-                    # set and None are already indistinguishable to callers.
-                    self._subscribers = None
-
-        return unsubscribe
-
     def touch(self) -> None:
-        # External subscribers persist across touches (they are not reactive
-        # edges), so iterate a snapshot. The auto-discovered parents are
-        # reactive edges: rebind-then-clear (they re-establish on recompute)
-        # and push them into the coalesced invalidation wave — no tuple alloc.
-        subs = self._subscribers
-        if subs:
-            for subscriber in tuple(subs):
-                subscriber(self.ctx, self._value)
+        # The auto-discovered parents are the only fan-out: they are reactive
+        # edges, so rebind-then-clear (they re-establish on recompute) and push
+        # them into the coalesced invalidation wave — no tuple alloc.
         pare = self._parents
         if pare:
             self._parents = None

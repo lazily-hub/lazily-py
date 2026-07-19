@@ -61,9 +61,10 @@ Mutable value holder that notifies dependent slots when changed.
 | `cell.set(x)` | Alias for value setter |
 | `cell.touch()` | Invalidate dependents |
 
-`Cell` has **no observer API**. Observation is a declared dependency edge — read
-the cell from a `Slot`, `Signal`, or `Effect` — not a registered callback. For a
-stream of every transition, use `Topic`.
+**No reactive exposes an observer API** — neither `Cell` nor `Signal`.
+Observation is a declared dependency edge — read the cell from a `Slot`,
+`Signal`, or `Effect` — not a registered callback. For a stream of every
+transition, use `Topic`.
 
 ### Signal
 
@@ -89,8 +90,7 @@ yields an equal value suppresses the downstream cascade.
 |-----------------|---------|
 | `signal.value` (get) | Read current value; auto-subscribes calling slot |
 | `signal.get()` / `signal()` | Aliases for the value getter |
-| `signal.subscribe(callback)` | Register change callback |
-| `signal.touch()` | Notify all subscribers |
+| `signal.touch()` | Invalidate dependents |
 | `signal.is_active()` | Whether the eager puller is still installed |
 | `signal.dispose()` | Remove the eager puller; value reverts to lazy (recomputed on next read) |
 
