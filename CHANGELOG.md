@@ -1,5 +1,31 @@
 ## Unreleased
 
+### Fixed
+
+- **`Signal` re-materialized once per write inside a `batch`, not once per
+  flush.** The eager puller was welded into the backing slot's `_invalidate`,
+  so it recomputed *during* invalidation — earlier than the effect flush — and
+  the compute count scaled with the number of changed sources in the batch. The
+  values were always correct, which is why it shipped unnoticed. The puller is
+  now an ordinary `Effect` over the backing memo, the composition
+  `lazily-spec/docs/reactive-graph.md` § "Signal eagerness" recommends, so it
+  obeys "effects are scheduled, not inline" and N writes in one batch produce
+  exactly one compute (normative clause 3, `#lzsignaleager`).
+- **`ThreadSafeContext.batch` did not coalesce effects.** Its flush touched each
+  changed cell outside the single-threaded `batch` boundary, leaving
+  `in_batch()` false, so every scheduled reader — an `Effect`, and therefore a
+  `Signal`'s puller — reran once per changed cell instead of once per batch. The
+  flush now runs inside that boundary. Same defect, same clause, second write
+  path.
+
+### Added
+
+- Reactive-graph conformance: the three `signal_*` / `dispose_signal_*` fixtures
+  replay against `Context` and `ThreadSafeContext`, including the `signal`,
+  `dispose_signal` and `batch` ops and the `computes_of` observable. They skip
+  on `AsyncContext`, which ships no signal constructor — recorded in the
+  runner's `EXPECTED_SKIPS` ledger as a gap in the public surface.
+
 ## 0.34.0
 
 ### Removed

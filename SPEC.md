@@ -71,9 +71,9 @@ Eager derived value — the third member of the `Slot → Cell → Signal` famil
 Where a `Slot` is **lazy** (invalidation marks it dirty and the value recomputes
 on the next read), a `Signal` is **eager**: it computes once at construction and
 recomputes immediately whenever a tracked dependency changes. It is composed from
-existing primitives — a memoized `Slot` plus a puller that re-pulls the slot on
-invalidation — and applies a memo/PartialEq guard so an eager recompute that
-yields an equal value suppresses the downstream cascade.
+existing primitives — a memoized `Slot` plus a puller `Effect` that re-pulls the
+slot when it is invalidated — and applies a memo/PartialEq guard so an eager
+recompute that yields an equal value suppresses the downstream cascade.
 
 **Types:**
 
@@ -99,6 +99,13 @@ yields an equal value suppresses the downstream cascade.
   intermediate unset state.
 - **Memo guard:** an eager recompute that yields an equal value suppresses
   `touch()` and downstream invalidation, exactly like a memoized slot.
+- **Once per flush, not once per write:** the puller is an `Effect`, so it is
+  scheduled rather than run inline. N writes to a Signal's dependencies inside
+  one `batch` (or one `ThreadSafeContext.batch`) re-materialize it exactly once,
+  at the outermost exit.
+- **Disposal removes only the puller:** the backing memo is untouched, so after
+  `dispose()` the value stays readable, stays correct on read, and no longer
+  re-materializes on write.
 - **Wire representation:** a Signal is not a separate wire type. On the
   `lazily-spec` wire it is the ordinary backing slot node that stores its
   materialized value; the puller is local execution state and is never

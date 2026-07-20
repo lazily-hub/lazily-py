@@ -4,9 +4,12 @@ Where a :class:`~lazily.slot.Slot` is **lazy** (invalidation only marks it dirty
 the value is recomputed on the next read), a :class:`Signal` is **eager**: it
 computes its value once at creation and recomputes immediately whenever a tracked
 dependency changes. A :class:`Signal` is composed from existing primitives — a
-memoized :class:`~lazily.slot.Slot` plus a puller that re-pulls the slot on
-invalidation — and applies a PartialEq/memo guard so an eager recompute that
-yields an equal value suppresses downstream cascades.
+memoized :class:`~lazily.slot.Slot` plus a puller :class:`~lazily.effect.Effect`
+that re-pulls the slot when it is invalidated — and applies a PartialEq/memo
+guard so an eager recompute that yields an equal value suppresses downstream
+cascades. The puller is an Effect rather than an invalidation hook so that it is
+*scheduled*: N writes inside one ``batch`` re-materialize the Signal once, at the
+flush, not once per write.
 
 This mirrors ``ctx.signal()`` in the Rust reference (`lazily-rs`) and the eager
 Signal wire representation in ``lazily-spec``: on the wire a Signal is just the
@@ -21,6 +24,7 @@ __all__ = ["Signal", "signal", "signal_def"]
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from .effect import Effect
 from .slot import Slot, _drain_resets, _reset_work, mypyc_attr, slot, slot_stack
 
 
@@ -32,30 +36,9 @@ C_in = TypeVar("C_in", contravariant=True)
 C_ctx = TypeVar("C_ctx", bound=dict)
 T = TypeVar("T")
 
-
-class _SignalSlot[C_in, C_ctx: dict, T](Slot[C_in, C_ctx, T]):
-    """Backing memoized slot whose ``reset`` eagerly re-pulls its owning Signal."""
-
-    __slots__ = ("_signal",)
-
-    _signal: Signal[T] | None
-
-    def __init__(
-        self,
-        callable: Callable[[C_ctx], T],
-        resolve_ctx: Callable[[C_in], C_ctx] | None = None,
-    ) -> None:
-        super().__init__(callable=callable, resolve_ctx=resolve_ctx)
-        self._signal = None
-
-    def reset(self, ctx: C_in) -> None:
-        super().reset(ctx)
-
-    def _invalidate(self, ctx: Any) -> None:
-        super()._invalidate(ctx)
-        sig = self._signal
-        if sig is not None and sig.is_active():
-            sig._eager_recompute()
+# First-materialization sentinel: ``None`` is a legal signal value, so the
+# initial pull is distinguished by identity rather than by comparing to None.
+_UNSET: Any = object()
 
 
 @mypyc_attr(allow_interpreted_subclasses=True)
@@ -75,7 +58,7 @@ class Signal[T]:
     __slots__ = (
         "_active",
         "_parents",
-        "_recomputing",
+        "_puller",
         "_slot",
         "_value",
         "ctx",
@@ -83,8 +66,8 @@ class Signal[T]:
 
     _parents: set[Slot[Any, Any, Any]] | None
     _active: bool
-    _recomputing: bool
-    _slot: _SignalSlot[dict, dict, T]
+    _puller: Effect
+    _slot: Slot[dict, dict, T]
     _value: T
     ctx: dict
 
@@ -94,25 +77,31 @@ class Signal[T]:
         # ~216 B, so deferring it keeps quiescent signals cheap.
         self._parents = None
         self._active = True
-        self._recomputing = False
-        self._slot = _SignalSlot(callable)
-        self._slot._signal = self
-        # Eager activation: compute once now so there is no intermediate unset
-        # value, and so dependency edges are established immediately.
-        self._value = self._slot(ctx)
+        self._value = _UNSET
+        self._slot = Slot(callable=callable)
+        # The eager puller is an ordinary Effect over the backing memo — the
+        # composition ``reactive-graph.md`` § "Signal eagerness" recommends.
+        # Running it now materializes the value once (clause 1) and establishes
+        # the dependency edges. Because the puller is an Effect it obeys
+        # "effects are scheduled, not inline": N writes inside one ``batch``
+        # coalesce into ONE re-materialization at the flush (clause 3). Pulling
+        # from the backing slot's ``_invalidate`` instead — which is what this
+        # class used to do — recomputes during invalidation, which is *earlier*
+        # than the flush, and costs one compute per changed source.
+        self._puller = Effect(self._pull)
+        self._puller(ctx)
 
-    def _eager_recompute(self) -> None:
-        if not self._active or self._recomputing:
-            return
-        self._recomputing = True
-        try:
-            new_value = self._slot(self.ctx)
-        finally:
-            self._recomputing = False
+    def _pull(self, ctx: dict) -> None:
+        """Puller-Effect body: re-materialize the backing memo into ``_value``."""
+        new_value = self._slot(ctx)
+        if self._value is _UNSET:
+            self._value = new_value
+            return None
         # Memo / PartialEq guard: an equal recompute suppresses the cascade.
         if new_value != self._value:
             self._value = new_value
             self.touch()
+        return None
 
     @property
     def value(self) -> T:
@@ -158,9 +147,13 @@ class Signal[T]:
 
         The value remains readable but reverts to lazy behavior: it will only be
         recomputed on the next explicit read of the backing slot, not eagerly.
+
+        Only the puller is disposed. The backing memo is untouched, so the value
+        stays readable, stays correct (it reverts to recompute-on-read), and no
+        longer re-materializes on write — ``reactive-graph.md`` clause 4.
         """
         self._active = False
-        self._slot._signal = None
+        self._puller.dispose()
 
 
 def signal[T](callable: Callable[[dict], T]) -> Slot[dict, dict, Signal[T]]:

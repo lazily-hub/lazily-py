@@ -28,8 +28,15 @@ disposal that forgets to dirty the survivors is hardest to notice.
 
 The whole corpus replays: the teardown-scope vocabulary (``begin_scope`` /
 ``end_scope`` / ``disarm``), ``effect``, ``dispose``, ``fanout`` / ``churn`` /
-``dispose_fanout`` / ``dispose_stale_handle``, and degree introspection
-(``dependents_of`` / ``dependencies_of``). Both fixture shapes execute:
+``dispose_fanout`` / ``dispose_stale_handle``, degree introspection
+(``dependents_of`` / ``dependencies_of``), and the signal-eagerness vocabulary
+(``signal`` / ``dispose_signal`` / ``batch`` with the ``computes_of``
+observable). ``computes_of`` is the cumulative number of times a node's compute
+has run, counted by the synthesized compute itself: an eager signal and a lazy
+memo return identical values for every read sequence in those fixtures, so a
+runner that inferred the count instead of measuring it would pass against a
+``signal()`` that is really a ``memo()``. Op support is per-context — see
+:data:`EXPECTED_SKIPS`. Both fixture shapes execute:
 ``steps``, and ``scenarios`` — which exists because a claim like
 ``observationally_equal`` is a *relation between two op streams* that a single
 ``steps`` array cannot express, so each scenario is replayed in its own context
@@ -64,7 +71,7 @@ from typing import Any
 
 import pytest
 
-from lazily import Cell, Effect, TeardownScope, slot
+from lazily import Cell, Effect, Signal, TeardownScope, batch, slot
 from lazily.async_context import AsyncCellHandle, AsyncContext, AsyncEffectHandle
 from lazily.slot import DisposedError
 from lazily.teardown import dispose_node
@@ -85,24 +92,54 @@ FIXTURES = (
     "churn_returns_to_baseline.json",
     "cross_scope_teardown_hazard.json",
     "disarm_disposes_nothing.json",
-    "disposal_does_not_run_surviving_effects.json",
     "dispose_detaches_edges_both_directions.json",
+    "dispose_signal_reverts_to_lazy.json",
+    "disposal_does_not_run_surviving_effects.json",
     "read_after_dispose_is_an_error.json",
     "recycled_id_inherits_nothing.json",
     "scope_teardown_equals_fold_of_disposals.json",
     "scoping_bounds_teardown_not_visibility.json",
+    "signal_materializes_once_per_batch.json",
+    "signal_materializes_without_a_read.json",
     "teardown_runs_members_in_reverse_creation_order.json",
     "transitive_invalidation_reaches_depth.json",
 )
 
-# Fixtures this binding executes end to end. Asserted exactly: a fixture that
-# stops replaying, and a fixture that starts replaying, both fail the build.
-EXPECTED_REPLAYED = frozenset(FIXTURES)
+# The three fixtures that exercise `Signal` eagerness (`#lzsignaleager`). Named
+# because support for them is per-context: `Signal` is a construct over the
+# *synchronous* graph, so `Context` and `ThreadSafeContext` replay them and
+# `AsyncContext` — which ships no signal constructor at all — cannot.
+SIGNAL_FIXTURES = frozenset(
+    {
+        "dispose_signal_reverts_to_lazy.json",
+        "signal_materializes_once_per_batch.json",
+        "signal_materializes_without_a_read.json",
+    }
+)
 
-# Fixtures skipped, with the *first* unsupported op or expectation encountered.
-# Empty, and it must stay empty: an entry here is a gap in lazily-py's public
-# surface, never a relaxation of the fixture.
-EXPECTED_SKIPS: dict[str, str] = {}
+# Fixtures each context executes end to end. Asserted exactly, per context: a
+# fixture that stops replaying, and a fixture that starts replaying, both fail
+# the build.
+EXPECTED_REPLAYED: dict[str, frozenset[str]] = {
+    "Context": frozenset(FIXTURES),
+    "ThreadSafeContext": frozenset(FIXTURES),
+    "AsyncContext": frozenset(FIXTURES) - SIGNAL_FIXTURES,
+}
+
+# Fixtures skipped per context, with the *first* unsupported op or expectation
+# encountered. An entry here is a gap in lazily-py's public surface, never a
+# relaxation of the fixture — which is exactly what the `AsyncContext` entries
+# record: `lazily.Signal` is bound to a plain-dict sync context and there is no
+# `AsyncContext.signal_async`, so the eagerness clauses are unverified on the
+# async graph. Building the composition by hand inside the runner would report a
+# conformance result for a surface callers cannot reach, so it is skipped and
+# reported instead.
+_ASYNC_NO_SIGNAL = "unsupported op `signal`"
+EXPECTED_SKIPS: dict[str, dict[str, str]] = {
+    "Context": {},
+    "ThreadSafeContext": {},
+    "AsyncContext": dict.fromkeys(sorted(SIGNAL_FIXTURES), _ASYNC_NO_SIGNAL),
+}
 
 # Fixture assertions an execution model does not satisfy today, as
 # ``<model>/<fixture>[<scenario>]#<step>:<key>``.
@@ -125,6 +162,7 @@ KNOWN_DIVERGENCES: frozenset[str] = frozenset()
 
 _SUPPORTED_OPS = frozenset(
     {
+        "batch",
         "begin_scope",
         "cell",
         "churn",
@@ -132,17 +170,25 @@ _SUPPORTED_OPS = frozenset(
         "disarm",
         "dispose",
         "dispose_fanout",
+        "dispose_signal",
         "dispose_stale_handle",
         "effect",
         "end_scope",
         "fanout",
         "read",
         "set_cell",
+        "signal",
     }
 )
+
+# Ops that need a signal constructor. Subtracted from a model's vocabulary when
+# the context it drives does not ship one.
+_SIGNAL_OPS = frozenset({"dispose_signal", "signal"})
+
 _SUPPORTED_EXPECT = frozenset(
     {
         "cleanup_order",
+        "computes_of",
         "dependencies_of",
         "dependents_of",
         "error",
@@ -181,12 +227,19 @@ class SyncModel:
     """The synchronous graph: :class:`Cell` + :class:`slot`, ambient tracking."""
 
     NAME = "Context"
+    SUPPORTED_OPS = _SUPPORTED_OPS
 
     def __init__(self) -> None:
         self.ctx: dict = {}
         self.scopes: dict[str, TeardownScope] = {}
         self.runs: list[str] = []
         self.cleanups: list[str] = []
+        # `computes_of`: cumulative compute invocations per node id, counted
+        # from the start of the scenario and never reset. Incremented by the
+        # synthesized compute itself, so it counts what actually ran rather than
+        # what the runner believes should have run — the whole point of the key
+        # is that an eager signal and a lazy memo are value-indistinguishable.
+        self.computes: dict[str, int] = {}
 
     # -- helpers --------------------------------------------------------- #
 
@@ -194,10 +247,15 @@ class SyncModel:
         """Read a node from inside a computation, registering the edge."""
         if isinstance(node, Cell):
             return node.value
+        if isinstance(node, Signal):
+            return node.value
         return node(self.ctx)
 
-    def _compute(self, reads: list[Any], offset: Any) -> Any:
+    def _compute(self, node_id: str, reads: list[Any], offset: Any) -> Any:
+        self.computes.setdefault(node_id, 0)
+
         def compute(_ctx: dict) -> Any:
+            self.computes[node_id] += 1
             total = offset
             for dep in reads:
                 total += self._value_of(dep)
@@ -225,11 +283,25 @@ class SyncModel:
             return self.scopes[scope].cell(value)
         return Cell(self.ctx, value)
 
-    async def computed(self, reads: list[Any], offset: Any, scope: str | None) -> Any:
-        compute = self._compute(reads, offset)
+    async def computed(
+        self, node_id: str, reads: list[Any], offset: Any, scope: str | None
+    ) -> Any:
+        compute = self._compute(node_id, reads, offset)
         if scope is not None:
             return self.scopes[scope].computed(compute)
         return slot(compute)
+
+    async def signal(self, node_id: str, reads: list[Any], offset: Any) -> Any:
+        return Signal(self.ctx, self._compute(node_id, reads, offset))
+
+    async def dispose_signal(self, node: Any) -> None:
+        # Clause 4: this disposes the eager puller, not the node. `Signal`
+        # exposes exactly that and nothing else, which is why the runner does
+        # not route it through `dispose_node`.
+        node.dispose()
+
+    async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
+        batch(lambda: [cell.set(value) for cell, value in writes])
 
     async def effect(self, name: str, reads: list[Any], scope: str | None) -> Any:
         body = self._body(name, reads)
@@ -241,7 +313,7 @@ class SyncModel:
 
     async def read(self, node: Any) -> tuple[str, Any]:
         try:
-            if isinstance(node, Cell):
+            if isinstance(node, (Cell, Signal)):
                 return _ok(node.value)
             return _ok(node(self.ctx))
         except DisposedError:
@@ -295,6 +367,13 @@ class ThreadSafeModel(SyncModel):
     async def set_cell(self, node: Any, value: Any) -> None:
         self.ts.set_cell(node, value)
 
+    async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
+        # The thread-safe batch, not the single-threaded one: its flush is a
+        # separate code path (it applies deferred writes under the lock before
+        # touching), so clause 3 is asserted against the boundary this context
+        # actually ships rather than assumed equivalent to `batch()`.
+        self.ts.batch(lambda: [self.ts.set_cell(cell, value) for cell, value in writes])
+
     async def begin_scope(self, name: str) -> None:
         # Opened through the thread-safe surface, so its scope passthrough is
         # covered rather than assumed equivalent.
@@ -312,12 +391,18 @@ class AsyncModel:
     """
 
     NAME = "AsyncContext"
+    # No signal constructor on the async graph: `lazily.Signal` is bound to a
+    # plain-dict sync context and `AsyncContext` exposes no `signal_async`. The
+    # signal fixtures skip here rather than being replayed against a
+    # hand-rolled composition the runner built for itself — see EXPECTED_SKIPS.
+    SUPPORTED_OPS = _SUPPORTED_OPS - _SIGNAL_OPS
 
     def __init__(self) -> None:
         self.ctx = AsyncContext()
         self.scopes: dict[str, Any] = {}
         self.runs: list[str] = []
         self.cleanups: list[str] = []
+        self.computes: dict[str, int] = {}
 
     # -- helpers --------------------------------------------------------- #
 
@@ -326,8 +411,11 @@ class AsyncModel:
             return cc.get_cell(node)
         return await cc.get_async(node)
 
-    def _compute(self, reads: list[Any], offset: Any) -> Any:
+    def _compute(self, node_id: str, reads: list[Any], offset: Any) -> Any:
+        self.computes.setdefault(node_id, 0)
+
         async def compute(cc: Any) -> Any:
+            self.computes[node_id] += 1
             total = offset
             for dep in reads:
                 total += await self._value_of(cc, dep)
@@ -355,11 +443,18 @@ class AsyncModel:
             return self.scopes[scope].cell(value)
         return self.ctx.cell(value)
 
-    async def computed(self, reads: list[Any], offset: Any, scope: str | None) -> Any:
-        compute = self._compute(reads, offset)
+    async def computed(
+        self, node_id: str, reads: list[Any], offset: Any, scope: str | None
+    ) -> Any:
+        compute = self._compute(node_id, reads, offset)
         if scope is not None:
             return self.scopes[scope].computed_async(compute)
         return self.ctx.computed_async(compute)
+
+    async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
+        self.ctx.batch(
+            lambda: [self.ctx.set_cell(cell, value) for cell, value in writes]
+        )
 
     async def effect(self, name: str, reads: list[Any], scope: str | None) -> Any:
         body = self._body(name, reads)
@@ -446,11 +541,16 @@ def _fixture_paths() -> list[Path]:
     return sorted(_SPEC_PATH.glob("*.json"))
 
 
-def _unsupported_reason(fixture: dict[str, Any]) -> str | None:
+def _unsupported_reason(
+    fixture: dict[str, Any], supported_ops: frozenset[str]
+) -> str | None:
     """Pre-flight the whole fixture so an unsupported one skips before any op runs.
 
     Returns the reason — naming the unsupported op or expectation — or ``None``
-    when every step is executable.
+    when every step is executable. ``supported_ops`` is the *model's* vocabulary
+    rather than the runner's: an op one context ships and another does not is a
+    per-context gap, and collapsing it into a single global set would either hide
+    the gap or stop the contexts that do support the op from replaying it.
     """
     shape = fixture.get("shape")
     if shape is None:
@@ -470,7 +570,7 @@ def _unsupported_reason(fixture: dict[str, Any]) -> str | None:
         for step in steps:
             op = step["op"]
             kind = op.get("type")
-            if kind not in _SUPPORTED_OPS:
+            if kind not in supported_ops:
                 return f"unsupported op `{kind}`"
             for key in step.get("expect") or {}:
                 if key not in _SUPPORTED_EXPECT:
@@ -592,7 +692,21 @@ async def _replay(
             reads = [node_of(r) for r in op.get("reads", [])]
             register(
                 op["id"],
-                await model.computed(reads, op.get("offset", 0), op.get("scope")),
+                await model.computed(
+                    op["id"], reads, op.get("offset", 0), op.get("scope")
+                ),
+            )
+        elif kind == "signal":
+            reads = [node_of(r) for r in op.get("reads", [])]
+            register(op["id"], await model.signal(op["id"], reads, op.get("offset", 0)))
+        elif kind == "dispose_signal":
+            await model.dispose_signal(node_of(op["id"]))
+        elif kind == "batch":
+            # One op carrying its writes, so the runner needs no nesting state.
+            # Every write goes inside ONE boundary: the point of the fixture is
+            # that N writes coalesce into one re-materialization at the exit.
+            await model.batch_writes(
+                [(node_of(w["id"]), w["value"]) for w in op["writes"]]
             )
         elif kind == "effect":
             reads = [node_of(r) for r in op.get("reads", [])]
@@ -714,9 +828,23 @@ async def _replay(
                     check("error", op_error, True)
                 else:
                     raise AssertionError(f"{name}: unknown expected error {want}")
+            elif key == "computes_of":
+                # Cumulative since the start of the scenario, counted by the
+                # synthesized compute itself. Sorts before `readable` and
+                # `value`, which matters: those keys read, and a read of a
+                # de-eagered signal recomputes.
+                for node_id, count in want.items():
+                    check(f"computes_of.{node_id}", model.computes.get(node_id), count)
             elif key == "value":
-                if expect.get("error") is None:
+                if expect.get("error") is not None:
+                    pass
+                elif kind == "read":
                     check("value", op_value, want)
+                else:
+                    # A `value` on a non-read op (a `signal` creation step) is a
+                    # claim about the node the op names, not about a returned
+                    # value.
+                    check("value", await read_id(op["id"]), _ok(want))
             elif key == "read":
                 for node_id, value in want.items():
                     check(f"read.{node_id}", await read_id(node_id), _ok(value))
@@ -832,7 +960,7 @@ def _run_corpus(model_cls: Any) -> None:
 
     for name in FIXTURES:
         fixture = json.loads((_SPEC_PATH / name).read_text())
-        reason = _unsupported_reason(fixture)
+        reason = _unsupported_reason(fixture, model_cls.SUPPORTED_OPS)
         if reason is not None:
             skipped[name] = reason
             continue
@@ -871,13 +999,15 @@ def _run_corpus(model_cls: Any) -> None:
     # Ledgers: all three fail loudly in both directions. A fixture that stops
     # replaying, one that starts, a skip reason that changes, and a divergence
     # that appears or disappears, all break the build.
-    assert replayed == set(EXPECTED_REPLAYED), (
+    expected_replayed = EXPECTED_REPLAYED[model_name]
+    expected_skips = EXPECTED_SKIPS[model_name]
+    assert replayed == set(expected_replayed), (
         f"{model_name}: replayed set drifted (replayed: {sorted(replayed)}, "
-        f"expected: {sorted(EXPECTED_REPLAYED)})"
+        f"expected: {sorted(expected_replayed)})"
     )
-    assert skipped == EXPECTED_SKIPS, (
+    assert skipped == expected_skips, (
         f"{model_name}: skip ledger is stale — update EXPECTED_SKIPS "
-        f"(observed: {skipped}, documented: {EXPECTED_SKIPS})"
+        f"(observed: {skipped}, documented: {expected_skips})"
     )
     # Entries are model-prefixed, so each model reconciles only its own slice:
     # a divergence recorded for one context must not excuse another.

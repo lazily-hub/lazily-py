@@ -26,6 +26,7 @@ __all__ = ["ThreadSafeContext"]
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from .batch import batch as _sync_batch
 from .teardown import TeardownScope
 
 
@@ -136,8 +137,16 @@ class ThreadSafeContext:
         # Phase 2 — one coalesced invalidation pass: touch each changed cell
         # exactly once, so dependents reached through many changed sources fire
         # once per batch (the coalesced frontier).
-        for cell in changed:
-            cell.touch()
+        #
+        # Run inside the single-threaded ``batch`` boundary so the *effect* half
+        # of the frontier coalesces too. Touching cells directly leaves
+        # ``in_batch()`` false, so every scheduled reader — an Effect, and
+        # therefore a Signal's eager puller — reruns inline once per changed
+        # cell instead of once per batch. That is one compute per write rather
+        # than one per flush, which ``reactive-graph.md`` § "Signal eagerness"
+        # clause 3 forbids. The lock is already held here, and the sync boundary
+        # is re-entrant, so this nests safely under a caller's own ``batch``.
+        _sync_batch(lambda: [cell.touch() for cell in changed])
         _ = touched  # retained for parity with the formal model's bookkeeping
 
     # -- direct graph-flush helpers (mirror the Lean pure kernel) -------- #
