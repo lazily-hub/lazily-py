@@ -49,14 +49,22 @@
   fixture shapes now execute, including `scenarios` and its
   `observationally_equal` relation. 110 ops and 144 assertions per context.
 
-  One finding is recorded rather than papered over:
-  `AsyncEffect` runs a body's cleanup at the end of the same flush when no rerun
-  is queued, where `Effect` holds it until the next rerun or disposal, so
-  `disarm_disposes_nothing` observes a cleanup the corpus expects not to have
-  run yet. The eager spelling is pinned by existing async tests and permitted by
-  `docs/async.md`; reconciling the two surfaces is a spec change and is tracked
-  in the runner's `KNOWN_DIVERGENCES` ledger, which is asserted exactly in both
-  directions.
+  All three contexts now replay all nine fixtures with **no divergences**: the
+  runner's `KNOWN_DIVERGENCES` ledger is empty and is asserted exactly in both
+  directions, so a regression fails the build.
+
+### Fixed
+
+- **`AsyncEffect` no longer runs a body's cleanup at the end of its own flush.**
+  The cleanup a body returns is now *retained* and runs on the next rerun
+  (before the next body) or on disposal, matching sync `Effect`, `lazily-go`,
+  and `lazily-dart`. The eager spelling released the resource an effect had just
+  acquired while the effect was still live and would rerun later — an effect
+  that subscribed and returned an unsubscribe closure unsubscribed itself
+  instantly. `lazily-spec/docs/async.md` § Conformance item 5 now makes the
+  *trigger* normative ("rerun or dispose and at no other time"), not merely the
+  ordering, which eager cleanup satisfied vacuously. This is a behavioural
+  change to a published async contract.
 
 ### Removed
 

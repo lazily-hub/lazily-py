@@ -273,11 +273,14 @@ def test_context_disposal_awaits_cleanup_and_makes_reads_inert() -> None:
 
         effect = ctx.effect_async(body)
         await effect.settle()
-        assert order == ["body", "cleanup"]
+        # The cleanup is retained, so it is still outstanding at disposal —
+        # without this the assertion below would hold vacuously and prove
+        # nothing about what disposal awaits.
+        assert order == ["body"]
 
         slot = ctx.computed_async(lambda cc: _const(1))
         await ctx.dispose_async()
-        # Disposal awaited every active cleanup future before returning.
+        # Disposal ran and awaited every active cleanup future before returning.
         assert order == ["body", "cleanup"]
         assert effect.state is EffectState.DISPOSED
         assert ctx.disposed
@@ -481,8 +484,13 @@ def test_effect_reruns_are_scheduled_not_inline() -> None:
     asyncio.run(scenario())
 
 
-def test_effect_cleanup_completes_before_the_next_body() -> None:
-    """Cancellation property 5 — cleanup before next body."""
+def test_effect_cleanup_is_triggered_by_rerun_or_dispose() -> None:
+    """Cancellation property 5 — the cleanup *trigger*, and its ordering.
+
+    The ordering half ("cleanup completes before the next body") is satisfied
+    vacuously by eager end-of-flush cleanup, so the trigger is asserted first:
+    after a body settles, its cleanup has not run.
+    """
 
     async def scenario() -> None:
         ctx = AsyncContext()
@@ -501,14 +509,14 @@ def test_effect_cleanup_completes_before_the_next_body() -> None:
 
         effect = ctx.effect_async(body)
         await effect.settle()
-        # The delegated AsyncEffect awaits the cleanup at the end of each flush
-        # when no rerun is queued (pinned by test_async_effect_cleanup_before_body),
-        # which is strictly stronger than "before the next body".
-        assert order == ["body1", "cleanup1"]
+        # The first body has run and its cleanup is retained, not executed:
+        # the effect is still live and will rerun.
+        assert order == ["body1"]
+        # The rerun is the trigger, and the cleanup precedes the next body.
         ctx.set_cell(src, 2)
         await effect.settle()
-        assert order == ["body1", "cleanup1", "body2", "cleanup2"]
-        # Every cleanup has already completed, so disposal adds nothing.
+        assert order == ["body1", "cleanup1", "body2"]
+        # Disposal is the other trigger, and runs the last retained cleanup.
         await effect.dispose_async()
         assert order == ["body1", "cleanup1", "body2", "cleanup2"]
         assert effect.state is EffectState.DISPOSED

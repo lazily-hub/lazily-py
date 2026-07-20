@@ -9,9 +9,10 @@ cleanup-before-body, batch-boundary scheduling, and disposal guarantees hold for
 
 The runtime :class:`AsyncEffect` wraps the pure kernel in an ``asyncio``
 implementation: invalidation only *queues* a rerun (it never starts one inline);
-the body runs when the executor fires it (at outermost batch exit); a body rerun
-cannot start while a cleanup future is pending (cleanup-before-body); disposal
-removes pending reruns, awaits the in-flight cleanup, and is terminal.
+the body runs when the executor fires it (at outermost batch exit); the cleanup a
+body returns is retained and runs only on the next rerun — completing before the
+next body starts (cleanup-before-body) — or on disposal, which removes pending
+reruns, awaits that cleanup, and is terminal.
 """
 
 from __future__ import annotations
@@ -101,19 +102,24 @@ CleanupFn = Callable[[], Awaitable[None]]
 class AsyncEffect:
     """An async reactive effect: a side-effecting observer that reruns whenever
     a tracked dependency invalidates, with an optional async cleanup closure
-    that completes before the next body rerun.
+    that runs on rerun or dispose — and at no other time.
 
     Mirrors ``lazily-spec/docs/async.md`` § "Async effects". Invalidation only
     queues a rerun; the body runs when :meth:`flush` is called (the batch
-    boundary). A rerun does not start until the previous cleanup completes.
+    boundary). The cleanup a body returns is *retained* until the next rerun or
+    :meth:`dispose`, and completes before the next body starts. Matches the
+    sync :class:`lazily.effect.Effect`, ``lazily-go``, and ``lazily-dart``.
     """
 
-    __slots__ = ("_body", "_cleanup_task", "_pending", "_state")
+    __slots__ = ("_body", "_cleanup", "_cleanup_task", "_pending", "_state")
 
     def __init__(self, body: Callable[[], Awaitable[CleanupFn | None]]) -> None:
         self._body = body
         self._state = EffectState.IDLE
         self._pending = False
+        # The cleanup returned by the last completed body, retained until the
+        # next rerun or disposal (never run at the end of its own flush).
+        self._cleanup: CleanupFn | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
 
     @property
@@ -133,42 +139,49 @@ class AsyncEffect:
         self._pending = True
 
     async def flush(self) -> None:
-        """Fire queued reruns at the batch boundary. Runs the body (after
-        awaiting any in-flight cleanup), and — if the body returns an async
-        cleanup closure — awaits it before the next rerun can start. A no-op if
-        nothing is queued."""
+        """Fire queued reruns at the batch boundary.
+
+        Each iteration runs the *retained* cleanup from the previous body first
+        and awaits it, then runs the body and retains the cleanup it returns for
+        the next rerun or for :meth:`dispose`. The cleanup is never run at the
+        end of the flush that produced it — ``docs/async.md`` § Conformance
+        item 5 makes the trigger (rerun or dispose) normative, not merely the
+        ordering. A no-op if nothing is queued."""
         while self._pending and self._state is not EffectState.DISPOSED:
-            # Wait for an in-flight cleanup before the next body rerun.
-            if self._cleanup_task is not None:
-                await self._cleanup_task
-                self._cleanup_task = None
             self._pending = False
-            self._state = EffectState.CLEANUP_RUNNING
-            cleanup = await self._run_body()
+            # Cleanup-before-body: the previous run's cleanup completes before
+            # the next body starts.
+            cleanup, self._cleanup = self._cleanup, None
             if cleanup is not None:
+                self._state = EffectState.CLEANUP_RUNNING
                 loop = asyncio.get_running_loop()
                 self._cleanup_task = loop.create_task(self._await_cleanup(cleanup))
-                # If a new rerun was queued during the body, stay pending; the
-                # next loop iteration awaits the cleanup first.
-                if not self._pending:
-                    await self._cleanup_task
-                    self._cleanup_task = None
-                    self._state = (
-                        EffectState.IDLE if not self._pending else EffectState.SCHEDULED
-                    )
-            else:
-                self._state = (
-                    EffectState.IDLE if not self._pending else EffectState.SCHEDULED
-                )
+                await self._cleanup_task
+                self._cleanup_task = None
+                if self._state is EffectState.DISPOSED:
+                    return
+            self._cleanup = await self._run_body()
+            if self._state is EffectState.DISPOSED:
+                # Disposed while the body was in flight: the cleanup it just
+                # produced still owns a resource, so release it here rather
+                # than dropping it — ``dispose`` has already returned.
+                cleanup, self._cleanup = self._cleanup, None
+                if cleanup is not None:
+                    await self._await_cleanup(cleanup)
+                return
+            self._state = EffectState.SCHEDULED if self._pending else EffectState.IDLE
 
     async def dispose(self) -> None:
-        """Remove pending reruns, await the in-flight cleanup, and go terminal.
-        No subsequent event revives a disposed effect."""
+        """Remove pending reruns, run and await the retained cleanup, and go
+        terminal. No subsequent event revives a disposed effect."""
         self._state = EffectState.DISPOSED
         self._pending = False
         if self._cleanup_task is not None:
             await self._cleanup_task
             self._cleanup_task = None
+        cleanup, self._cleanup = self._cleanup, None
+        if cleanup is not None:
+            await self._await_cleanup(cleanup)
 
     async def _run_body(self) -> CleanupFn | None:
         try:

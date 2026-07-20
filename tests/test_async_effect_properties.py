@@ -101,14 +101,26 @@ def test_invalidate_during_cleanup_defers() -> None:
 # =================================================================================
 
 
-def test_async_effect_cleanup_before_body() -> None:
+def test_async_effect_cleanup_runs_on_rerun_or_dispose_only() -> None:
+    """Conformance item 5 — the *trigger*, not just the ordering.
+
+    Asserting only "cleanup completes before the next body" is satisfied
+    vacuously by running cleanup eagerly at the end of the flush that produced
+    it, which is how this binding drifted from ``lazily-go``/``lazily-dart``.
+    So this pins the negative too: after a body runs, its cleanup has **not**
+    run yet.
+    """
     log: list[str] = []
+    n = 0
 
     async def body():
-        log.append("body")
+        nonlocal n
+        n += 1
+        run = n
+        log.append(f"body{run}")
 
         async def cleanup():
-            log.append("cleanup")
+            log.append(f"cleanup{run}")
 
         return cleanup
 
@@ -118,10 +130,23 @@ def test_async_effect_cleanup_before_body() -> None:
         eff.invalidate()  # queues a rerun, does not run inline
         assert eff.state is EffectState.SCHEDULED
         await eff.flush()  # fires the rerun at the batch boundary
-        assert "body" in log
-        # cleanup ran before the body returned to idle (cleanup awaited in flush)
-        assert log == ["body", "cleanup"]
+        # The cleanup is retained, NOT run at the end of its own flush.
+        assert log == ["body1"]
         assert eff.state is EffectState.IDLE
+
+        # A flush with nothing queued is a no-op — not a cleanup trigger.
+        await eff.flush()
+        assert log == ["body1"]
+
+        # Trigger 1: rerun. The retained cleanup completes before the next body.
+        eff.invalidate()
+        await eff.flush()
+        assert log == ["body1", "cleanup1", "body2"]
+
+        # Trigger 2: dispose, which runs the cleanup the last body retained.
+        await eff.dispose()
+        assert log == ["body1", "cleanup1", "body2", "cleanup2"]
+        assert eff.state is EffectState.DISPOSED
 
     asyncio.run(main())
 

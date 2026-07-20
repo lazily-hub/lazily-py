@@ -110,37 +110,11 @@ EXPECTED_SKIPS: dict[str, str] = {}
 # new divergence fails the build and a fixed one fails it until the entry is
 # removed.
 #
-# ## The one open finding: async effect cleanup fires eagerly
-#
-# ``disarm_disposes_nothing`` asserts ``cleanup_order: []`` at two points where
-# ``watch`` has run exactly once and has not been disposed — the sync contract
-# in ``lazily-spec/docs/reactive-graph.md``: "the cleanup runs before the next
-# body rerun and on dispose". :class:`~lazily.effect.Effect` holds to it.
-# :class:`~lazily.async_effect.AsyncEffect` does not: ``flush`` awaits the
-# cleanup at the end of the same flush whenever no rerun is queued
-# (``async_effect.py``, the ``if not self._pending`` branch), so a first run is
-# immediately followed by its own cleanup and the corpus observes ``['watch']``.
-#
-# This is **not** the disposal/teardown plane and it is not caused by anything
-# in this port: the effect is neither disposed nor invalidated at either step.
-# It is a pre-existing divergence between lazily-py's two effect surfaces that
-# the corpus is the first thing to observe, and it is deliberate on the async
-# side — ``tests/test_async_context.py::test_effect_cleanup_completes_before_
-# the_next_body`` and ``tests/test_async_effect_properties.py::test_async_
-# effect_cleanup_before_body`` both pin the eager spelling today, and
-# ``docs/async.md`` § "Cleanup ordering" states only the weaker "the previous
-# run's cleanup completes before the next body starts", which eager cleanup
-# satisfies vacuously.
-#
-# Reconciling the two surfaces changes a published async contract and belongs
-# upstream in lazily-spec, so it is recorded here rather than papered over by
-# relaxing the fixture or by quietly rewriting ``AsyncEffect``.
-KNOWN_DIVERGENCES: frozenset[str] = frozenset(
-    {
-        "AsyncContext/disarm_disposes_nothing.json#6:cleanup_order",
-        "AsyncContext/disarm_disposes_nothing.json#7:cleanup_order",
-    }
-)
+# There are no open findings: all three contexts replay the corpus identically.
+# (The async effect cleanup divergence recorded here was a real defect in
+# :class:`~lazily.async_effect.AsyncEffect`, not a fixture problem, and was
+# fixed by retaining the cleanup until rerun or dispose.)
+KNOWN_DIVERGENCES: frozenset[str] = frozenset()
 
 _SUPPORTED_OPS = frozenset(
     {
