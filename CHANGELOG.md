@@ -47,11 +47,23 @@
   `lazily-spec/conformance/reactive-graph` fixtures against all three shipped
   contexts (`Context`, `ThreadSafeContext`, `AsyncContext`), up from one; both
   fixture shapes now execute, including `scenarios` and its
-  `observationally_equal` relation. 110 ops and 144 assertions per context.
+  `observationally_equal` relation. The corpus is 11 fixtures as of
+  `lazily-spec` b6eb030 — 126 ops and 153 assertions per context.
 
-  All three contexts now replay all nine fixtures with **no divergences**: the
-  runner's `KNOWN_DIVERGENCES` ledger is empty and is asserted exactly in both
+  All three contexts replay every fixture with **no divergences**: the runner's
+  `KNOWN_DIVERGENCES` ledger is empty and is asserted exactly in both
   directions, so a regression fails the build.
+
+- **The three disposal semantics are mutation-verified.** A test never observed
+  failing is not yet evidence, so each semantic was individually broken and the
+  suite confirmed red: dropping the dirty-cone cascade, scheduling effects
+  during the teardown walk, and iterating scope members forward instead of
+  reversed. Each is caught by a direct test and — since `lazily-spec` added
+  `disposal_does_not_run_surviving_effects` and
+  `teardown_runs_members_in_reverse_creation_order` — by the corpus, on all
+  three contexts. The scope-ordering tests use three effects rather than two and
+  assert the whole ordered list, because with a single member every order is the
+  same order.
 
 ### Fixed
 

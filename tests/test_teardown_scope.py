@@ -443,6 +443,42 @@ def test_async_disposal_does_not_schedule_a_reached_effect() -> None:
     asyncio.run(main())
 
 
+def test_async_scope_tears_down_in_reverse_creation_order() -> None:
+    """Semantic 3 on the async path.
+
+    ``aclose`` has its own loop over ``owned``, so the synchronous test does not
+    cover it — a forward-iteration regression in one is invisible to the other.
+
+    Three effects, not two, and the assertion is on the whole ordered list: with
+    a single member every order is the same order, which is exactly why
+    ``scope_teardown_equals_fold_of_disposals`` could not discriminate here.
+    """
+
+    async def main() -> None:
+        ctx = AsyncContext()
+        order: list[str] = []
+
+        def member(name: str) -> Any:
+            async def body(_cc: Any) -> Any:
+                async def cleanup() -> None:
+                    order.append(name)
+
+                return cleanup
+
+            return body
+
+        scope = ctx.scope()
+        for name in ("first", "second", "third"):
+            handle = scope.effect_async(member(name))
+            await handle.settle()
+        assert order == [], "cleanup ran before any rerun or disposal"
+
+        await scope.aclose()
+        assert order == ["third", "second", "first"]
+
+    asyncio.run(main())
+
+
 def test_async_disarm_disposes_nothing() -> None:
     async def main() -> None:
         ctx = AsyncContext()

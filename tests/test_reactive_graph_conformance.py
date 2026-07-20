@@ -85,11 +85,13 @@ FIXTURES = (
     "churn_returns_to_baseline.json",
     "cross_scope_teardown_hazard.json",
     "disarm_disposes_nothing.json",
+    "disposal_does_not_run_surviving_effects.json",
     "dispose_detaches_edges_both_directions.json",
     "read_after_dispose_is_an_error.json",
     "recycled_id_inherits_nothing.json",
     "scope_teardown_equals_fold_of_disposals.json",
     "scoping_bounds_teardown_not_visibility.json",
+    "teardown_runs_members_in_reverse_creation_order.json",
     "transitive_invalidation_reaches_depth.json",
 )
 
@@ -110,11 +112,16 @@ EXPECTED_SKIPS: dict[str, str] = {}
 # new divergence fails the build and a fixed one fails it until the entry is
 # removed.
 #
-# There are no open findings: all three contexts replay the corpus identically.
-# (The async effect cleanup divergence recorded here was a real defect in
-# :class:`~lazily.async_effect.AsyncEffect`, not a fixture problem, and was
-# fixed by retaining the cleanup until rerun or dispose.)
+# Empty, and it must stay empty. The one entry this ledger ever held was
+# lazily-py's async effect running a body's cleanup at the end of the same
+# flush, observed by `disarm_disposes_nothing` at a step where nothing is
+# disposed or invalidated. It was escalated rather than papered over, and the
+# spec ruled the trigger normative — cleanup runs on rerun or dispose and at no
+# other time, `lazily-spec` b6eb030, `docs/async.md` § Conformance item 5 — so
+# py was the family outlier. Fixed in 83bdc68; the entry is gone rather than
+# grandfathered.
 KNOWN_DIVERGENCES: frozenset[str] = frozenset()
+
 
 _SUPPORTED_OPS = frozenset(
     {
