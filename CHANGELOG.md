@@ -1,5 +1,40 @@
 ## Unreleased
 
+## 0.34.0
+
+### Removed
+
+- **BREAKING** `Cell.subscribe`, `Slot.subscribe`, and `Signal.subscribe`, with their
+  registration tables and disposers. `lazily-spec` v0.35.0 makes observer APIs a
+  `MUST NOT` on every reactive: observation is a declared dependency edge, and a
+  callback list on a reactive bypasses batching, glitch-freedom, coalescing, and
+  scope teardown. `StateMachine.on_transition` is now an `Effect`; use a `Topic`
+  when you need every transition rather than the settled value.
+
+### Added
+
+- `AsyncContext` — py was the last of eight bindings without one.
+- Teardown scopes (`teardown_scope`, `TeardownScope`, `AsyncTeardownScope`),
+  handle-side `Slot.dispose` / `Cell.dispose`, and `dependent_count` /
+  `dependency_count` on every node kind.
+- Reactive-graph conformance runner: 11 canonical fixtures replayed against all
+  three contexts.
+
+### Fixed
+
+- Async effect cleanup ran at the end of the flush that ran the body rather than
+  on rerun or dispose. The canonical effect acquires in the body and releases in
+  the cleanup, so eager cleanup released while the effect was still live — an
+  effect that subscribed and returned an unsubscribe would unsubscribe itself
+  immediately. `lazily-spec` `b6eb030` makes the trigger normative.
+- `AsyncSlot` handed every waiter the same `asyncio.Future`, so one caller
+  cancelling its `get_async` killed the shared computation for all remaining
+  waiters.
+- Disposal did not stop an in-flight re-resolve, so a waiter mid-loop could
+  respawn and publish into a disposed graph.
+- Disposal did not dirty the surviving dependent cone, leaving a live reader
+  frozen on its cached value.
+
 ### Added
 
 - **Teardown scopes, per-node disposal, and degree introspection
