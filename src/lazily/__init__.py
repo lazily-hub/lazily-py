@@ -37,6 +37,7 @@ __all__ = [
     "AsyncSlot",
     "AsyncSlotHandle",
     "AsyncSlotMap",
+    "AsyncTeardownScope",
     "AwarenessCell",
     "BackpressurePolicy",
     "BarrierCell",
@@ -98,6 +99,7 @@ __all__ = [
     "DeltaOp",
     "DiscoveryCell",
     "DiscoveryCore",
+    "DisposedError",
     "DriverError",
     "Durable",
     "DurableOutbox",
@@ -250,6 +252,7 @@ __all__ = [
     "StoredOutbox",
     "Sum",
     "SyncDriver",
+    "TeardownScope",
     "TerminalConflict",
     "TextCrdt",
     "TextElement",
@@ -288,6 +291,7 @@ __all__ = [
     "WorkQueueDelivery",
     "WorkQueueItem",
     "WorkQueueReaderHandles",
+    "# -- new reactive-primitive families ---------------------------------- #",
     "align",
     "applied_receipt",
     "assign_stable_keys",
@@ -304,7 +308,6 @@ __all__ = [
     "cell_def",
     "command",
     "content_hash",
-    # -- new reactive-primitive families ---------------------------------- #
     "coordination",
     "count_positive_fold",
     "count_upto",
@@ -312,6 +315,7 @@ __all__ = [
     "crdt_registers",
     "crdt_tree",
     "decode_message",
+    "dispose_node",
     "effect",
     "encode_message",
     "ffi",
@@ -347,6 +351,7 @@ __all__ = [
     "spill_value",
     "stable_id",
     "sum_fold",
+    "teardown_scope",
     "temporal",
     "textcrdt",
     "thread_safe_reactive_family",
@@ -396,6 +401,7 @@ from .async_context import (
     AsyncContextDisposedError,
     AsyncEffectHandle,
     AsyncSlotHandle,
+    AsyncTeardownScope,
 )
 from .async_effect import AsyncEffect, EffectEvent, EffectState
 from .async_reactive_family import AsyncCellMap, AsyncReactiveMap, AsyncSlotMap
@@ -643,7 +649,7 @@ from .signaling import (
     SignalingFrame,
     SignalingFrameKind,
 )
-from .slot import BaseSlot, Slot, slot, slot_def
+from .slot import BaseSlot, DisposedError, Slot, slot, slot_def
 from .stable_id import (
     ANCHOR_PREFIX,
     CONTENT_PREFIX,
@@ -658,6 +664,7 @@ from .stable_id import (
 )
 from .state_machine import StateMachine
 from .statechart import ChartDef, StateChart
+from .teardown import TeardownScope, dispose_node, teardown_scope
 from .temporal import (
     CronCell,
     CronCore,

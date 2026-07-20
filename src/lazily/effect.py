@@ -28,7 +28,13 @@ __all__ = ["Effect", "effect"]
 from typing import TYPE_CHECKING, Any
 
 from .batch import enqueue_effect, in_batch
-from .slot import Slot, mypyc_attr, slot_stack
+from .slot import (
+    Slot,
+    _detach_from_dependencies,
+    _dirty_disposed_dependents,
+    mypyc_attr,
+    slot_stack,
+)
 
 
 if TYPE_CHECKING:
@@ -51,18 +57,19 @@ class Effect(Slot[Any, dict, None]):
     ``effect(run)`` in ``lazily-spec/docs/reactive-graph.md``.
     """
 
+    # ``_disposed`` lives on :class:`~lazily.slot.Slot` now, so every node kind
+    # answers ``disposed`` / ``dependent_count`` / ``dependency_count``
+    # uniformly; redeclaring it here would shadow the base slot.
     __slots__ = (
         "_body",
         "_cleanup",
         "_ctx",
-        "_disposed",
         "_running",
     )
 
     _body: Callable[[dict], Any | None]
     _cleanup: Any | None
     _ctx: dict | None
-    _disposed: bool
     _running: bool
 
     def __init__(self, body: Callable[[dict], Any | None]) -> None:
@@ -74,13 +81,7 @@ class Effect(Slot[Any, dict, None]):
         self._body = body
         self._cleanup = None
         self._ctx = None
-        self._disposed = False
         self._running = False
-
-    @property
-    def disposed(self) -> bool:
-        """Whether :meth:`dispose` has been called (terminal)."""
-        return self._disposed
 
     @property
     def is_running(self) -> bool:
@@ -102,6 +103,9 @@ class Effect(Slot[Any, dict, None]):
         self._run_cleanup()
         self._running = True
         slot_stack.append(self)
+        # Forward edges describe the current run and are rebuilt by the body's
+        # reads, exactly as in ``Slot.__call__``.
+        self._deps = None
         try:
             self._cleanup = self._body(ctx)
         finally:
@@ -143,11 +147,29 @@ class Effect(Slot[Any, dict, None]):
         if self._ctx is not None:
             self(self._ctx)
 
-    def dispose(self) -> None:
-        """Deschedule, drop edges, run cleanup. Terminal — no subsequent event
-        revives a disposed effect."""
+    def dispose(self) -> None:  # type: ignore[override]
+        """Deschedule, drop edges *in both directions*, run cleanup. Terminal —
+        no subsequent event revives a disposed effect.
+
+        Overrides :meth:`Slot.dispose` with a no-argument signature: an effect,
+        unlike a bare slot, already holds the context it last ran against, and
+        this spelling is the one that shipped.
+
+        Detaching the forward direction is what makes an effect's subscription
+        actually end. Leaving it attached is the leak
+        ``churn_returns_to_baseline`` measures: a subscribe/unsubscribe cycle
+        would grow the source's dependent set without bound even though the live
+        subscriber count never changes.
+        """
+        if self._disposed:
+            return
         self._disposed = True
+        _detach_from_dependencies(self)
+        pare = self._parents
         self._parents = None
+        ctx = self._ctx
+        if pare and ctx is not None:
+            _dirty_disposed_dependents(pare, ctx)
         self._run_cleanup()
 
     def _run_cleanup(self) -> None:

@@ -50,6 +50,7 @@ __all__ = [
     "AsyncContextDisposedError",
     "AsyncEffectHandle",
     "AsyncSlotHandle",
+    "AsyncTeardownScope",
 ]
 
 import asyncio
@@ -57,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 
 from .async_effect import AsyncEffect, EffectState
 from .async_slot import AsyncSlot, SlotState
+from .slot import DisposedError
 
 
 if TYPE_CHECKING:
@@ -80,25 +82,35 @@ class AsyncCellHandle[T]:
     tracking".
     """
 
-    __slots__ = ("_ctx", "_value")
+    __slots__ = ("_ctx", "_disposed", "_value")
 
     def __init__(self, ctx: AsyncContext, value: T) -> None:
         self._ctx = ctx
         self._value = value
+        self._disposed = False
+
+    @property
+    def disposed(self) -> bool:
+        """Whether this cell has been torn down (terminal)."""
+        return self._disposed
 
     def get(self) -> T:
         """Read the current value (synchronous, non-reactive)."""
+        if self._disposed:
+            raise DisposedError("read of disposed async cell")
         return self._value
 
     @property
     def peek(self) -> T:
         """Alias of :meth:`get`, for parity with the other bindings."""
-        return self._value
+        return self.get()
 
     def set(self, value: T) -> None:
         """Write a new value. Guarded by ``!=`` (the same PartialEq guard the
         synchronous :class:`~lazily.cell.Cell` uses), so an equal write is a
-        no-op and never invalidates."""
+        no-op and never invalidates. A write to a disposed cell is inert."""
+        if self._disposed:
+            return
         if value != self._value:
             self._value = value
             self._ctx._invalidate_dependents(self)
@@ -119,7 +131,15 @@ class AsyncSlotHandle[T]:
     owning context, and an optional equality memo guard.
     """
 
-    __slots__ = ("_compute", "_ctx", "_dependencies", "_eq", "_memo", "_slot")
+    __slots__ = (
+        "_compute",
+        "_ctx",
+        "_dependencies",
+        "_disposed",
+        "_eq",
+        "_memo",
+        "_slot",
+    )
 
     def __init__(
         self,
@@ -133,7 +153,13 @@ class AsyncSlotHandle[T]:
         self._eq = eq
         self._memo: Any = _MISSING
         self._dependencies: set[object] = set()
+        self._disposed = False
         self._slot: AsyncSlot[T] = AsyncSlot(self._run)
+
+    @property
+    def disposed(self) -> bool:
+        """Whether this slot has been torn down (terminal)."""
+        return self._disposed
 
     # -- lifecycle delegation ------------------------------------------- #
 
@@ -150,6 +176,8 @@ class AsyncSlotHandle[T]:
     def get(self) -> T | None:
         """Synchronous cached read: the value when ``Resolved``, else ``None``.
         The warm fast path; never spawns a computation."""
+        if self._disposed:
+            raise DisposedError("read of disposed async slot")
         return self._slot.get()
 
     async def get_async(self) -> T:
@@ -163,6 +191,8 @@ class AsyncSlotHandle[T]:
         in-flight computation out from under the remaining waiters. Cancellation
         property 1 requires the opposite: dropping one waiter is safe.
         """
+        if self._disposed:
+            raise DisposedError("read of disposed async slot")
         if self._ctx._disposed:
             raise AsyncContextDisposedError("AsyncContext disposed")
         return await asyncio.shield(self._slot.get_async())
@@ -248,6 +278,11 @@ class AsyncEffectHandle:
     def state(self) -> EffectState:
         """The delegated :class:`~lazily.async_effect.EffectState`."""
         return self._effect.state
+
+    @property
+    def disposed(self) -> bool:
+        """Whether this effect has been torn down (terminal)."""
+        return self._disposed
 
     async def dispose_async(self) -> None:
         """Remove pending reruns, await the in-flight body and cleanup, detach
@@ -452,6 +487,100 @@ class AsyncContext:
         """Dispose an async effect and await its cleanup."""
         await handle.dispose_async()
 
+    # -- per-node disposal (#lzspecedgeindex) ---------------------------- #
+
+    def dispose_slot(self, handle: AsyncSlotHandle[Any]) -> None:
+        """Tear down one computed slot: detach both edge directions, discard any
+        in-flight computation, and dirty whatever still reads it.
+
+        Terminal and idempotent. Handles are plain references, so dropping every
+        reference to a slot reclaims nothing on its own — the context's
+        ``_dependents`` table holds a *strong* reference to each dependent, so a
+        long-lived source otherwise retains every node that ever read it and
+        grows without bound under subscribe/unsubscribe churn.
+        """
+        if handle._disposed:
+            return
+        handle._disposed = True
+        self._slots.discard(handle)
+        # Forward direction: stop being a dependent of everything this slot read.
+        handle._detach()
+        # Reverse direction: unlink the survivors, then dirty them.
+        dependents = self._dependents.pop(handle, None)
+        handle._slot.hard_clear()
+        if dependents:
+            for dependent in dependents:
+                dependent._dependencies.discard(handle)
+            self._dirty_disposed_dependents(dependents)
+
+    def dispose_cell(self, handle: AsyncCellHandle[Any]) -> None:
+        """Tear down one source cell. Cells read nothing, so only the downstream
+        direction needs detaching. Same contract as :meth:`dispose_slot`."""
+        if handle._disposed:
+            return
+        handle._disposed = True
+        dependents = self._dependents.pop(handle, None)
+        if dependents:
+            for dependent in dependents:
+                dependent._dependencies.discard(handle)
+            self._dirty_disposed_dependents(dependents)
+
+    def _dirty_disposed_dependents(self, roots: set[Any]) -> None:
+        """Mark the surviving dependent cone stale — and schedule nothing.
+
+        The async twin of :func:`lazily.slot._dirty_disposed_dependents`, and it
+        exists for the same two reasons.
+
+        *Dirty, because detaching is not enough.* A dependent holding a resolved
+        value computed from the disposed node would keep serving it: the edge
+        that would have invalidated it is the one disposal just removed. This is
+        the defect ``lazily-rs`` 5db90d2 and ``lazily-js`` 4d20670 both fixed,
+        and the async path is where it is hardest to notice.
+
+        *Schedule nothing, because disposal is not a publish.* Reached effects
+        are deliberately skipped rather than passed to ``_schedule``: an effect
+        rerun during teardown re-enters a body that reads the node being torn
+        down, so teardown would stop being idempotent. They stay subscribed and
+        error on their next real rerun — the contract is "errors on next
+        recompute", not "errors during dispose".
+        """
+        visited: set[int] = {id(r) for r in roots}
+        frontier: list[Any] = list(roots)
+        while frontier:
+            node = frontier.pop()
+            if isinstance(node, AsyncEffectHandle):
+                continue
+            node._slot.invalidate()
+            for dependent in self._dependents.get(node, ()):
+                if id(dependent) in visited:
+                    continue
+                visited.add(id(dependent))
+                frontier.append(dependent)
+
+    def scope(self) -> AsyncTeardownScope:
+        """Open a teardown scope over this context. See
+        :class:`AsyncTeardownScope`."""
+        return AsyncTeardownScope(self)
+
+    # -- degree introspection (#lzspecedgeindex) ------------------------- #
+
+    def dependent_count(self, node: object) -> int:
+        """How many nodes currently depend on ``node`` — reverse edge degree.
+
+        A count, never the collection. This is the observable the disposal
+        contract is written against: a subscribe/unsubscribe cycle that disposes
+        what it creates must leave this at its starting value no matter how many
+        cycles run, and a binding that leaks reports total-ever-created instead
+        of live-subscriber count.
+        """
+        return len(self._dependents.get(node, ()))
+
+    def dependency_count(self, node: object) -> int:
+        """How many nodes ``node`` currently reads — forward edge degree.
+        Always ``0`` for a cell, which is a pure source."""
+        dependencies = getattr(node, "_dependencies", None)
+        return 0 if dependencies is None else len(dependencies)
+
     # -- batch ----------------------------------------------------------- #
 
     def batch[R](self, run: Callable[[], R]) -> R:
@@ -519,3 +648,95 @@ class AsyncContext:
         self._dependents.clear()
         self._effects.clear()
         self._slots.clear()
+
+
+class AsyncTeardownScope:
+    """A group of async nodes disposed together — the async twin of
+    :class:`lazily.teardown.TeardownScope`.
+
+    An *async* context manager, because disposing an async effect awaits its
+    in-flight body and cleanup; a synchronous ``__exit__`` could only drop those
+    on the floor::
+
+        async with ctx.scope() as conn:
+            doubled = conn.computed_async(...)
+            conn.effect_async(...)
+        # disposed here, in reverse creation order, cleanups awaited
+
+    The imperative form the conformance fixtures use is the same object without
+    the ``async with``: :meth:`aclose`.
+    """
+
+    __slots__ = ("_armed", "_ctx", "_owned")
+
+    def __init__(self, ctx: AsyncContext) -> None:
+        self._ctx = ctx
+        self._owned: list[Any] = []
+        self._armed = True
+
+    # -- membership ------------------------------------------------------ #
+
+    def cell[T](self, value: T) -> AsyncCellHandle[T]:
+        """Create a source cell owned by this scope."""
+        return self.adopt(self._ctx.cell(value))
+
+    def computed_async[T](
+        self, compute: Callable[[AsyncComputeContext], Awaitable[T]]
+    ) -> AsyncSlotHandle[T]:
+        """Create a computed slot owned by this scope."""
+        return self.adopt(self._ctx.computed_async(compute))
+
+    def effect_async(
+        self, body: Callable[[AsyncComputeContext], Awaitable[Any]]
+    ) -> AsyncEffectHandle:
+        """Register an effect owned by this scope."""
+        return self.adopt(self._ctx.effect_async(body))
+
+    def adopt[N](self, node: N) -> N:
+        """Take ownership of an existing node."""
+        self._owned.append(node)
+        return node
+
+    # -- lifetime -------------------------------------------------------- #
+
+    def __len__(self) -> int:
+        """How many nodes this scope currently owns."""
+        return len(self._owned)
+
+    @property
+    def armed(self) -> bool:
+        """Whether closing this scope will dispose its members."""
+        return self._armed
+
+    def disarm(self) -> None:
+        """Cancel this scope's teardown; closing it afterwards disposes nothing.
+        The nodes themselves are untouched."""
+        self._armed = False
+        self._owned = []
+
+    async def aclose(self) -> None:
+        """Dispose every member in reverse creation order, awaiting each effect's
+        cleanup. Idempotent.
+
+        Reverse order because effect cleanups are side effects: a dependent's
+        cleanup must not observe a graph where what it read is already gone.
+        """
+        if not self._armed:
+            return
+        owned = self._owned
+        self._owned = []
+        ctx = self._ctx
+        for node in reversed(owned):
+            if isinstance(node, AsyncEffectHandle):
+                await node.dispose_async()
+            elif isinstance(node, AsyncCellHandle):
+                ctx.dispose_cell(node)
+            else:
+                ctx.dispose_slot(node)
+
+    async def __aenter__(self) -> AsyncTeardownScope:
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> bool:
+        await self.aclose()
+        return False

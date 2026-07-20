@@ -21,18 +21,27 @@ is exactly how the ``lazily-dart`` and ``lazily-go`` invalidation-cascade
 defects hid: both were correct synchronously and broken asynchronously. The
 async path — where staleness is tracked by revision counters and in-flight
 state rather than a pull chain — is the one the transitive-depth fixture was
-written to discriminate (``#lzdartobservercow``).
+written to discriminate (``#lzdartobservercow``), and it is also where a
+disposal that forgets to dirty the survivors is hardest to notice.
 
-## Coverage and skips
+## Coverage
 
-``lazily-py`` models ``cell``, ``computed``, ``read`` and ``set_cell``. The
-remaining fixtures exercise a teardown-scope vocabulary (``begin_scope`` /
-``end_scope`` / ``disarm``, ``effect``, ``dispose``, ``fanout``, ``churn``,
-``dispose_stale_handle``) and degree introspection (``dependents_of`` /
-``dependencies_of``) that this binding does not expose. Those are skipped with
-the unsupported op named — never silently — and the skip ledger below is
-asserted exactly, so gaining support for an op fails the build until the ledger
-is updated rather than letting new coverage arrive unnoticed.
+The whole corpus replays: the teardown-scope vocabulary (``begin_scope`` /
+``end_scope`` / ``disarm``), ``effect``, ``dispose``, ``fanout`` / ``churn`` /
+``dispose_fanout`` / ``dispose_stale_handle``, and degree introspection
+(``dependents_of`` / ``dependencies_of``). Both fixture shapes execute:
+``steps``, and ``scenarios`` — which exists because a claim like
+``observationally_equal`` is a *relation between two op streams* that a single
+``steps`` array cannot express, so each scenario is replayed in its own context
+and the resulting observations compared.
+
+## Findings, not relaxations (``#lzspecconf``)
+
+Assertion failures are *recorded* rather than raised, so one run reports the
+whole corpus instead of stopping at the first divergence, and the recorded set
+is reconciled against :data:`KNOWN_DIVERGENCES` exactly. A new divergence fails
+the build and a fixed one fails it until its entry is removed. No fixture is
+ever edited and no assertion ever loosened to make that list shorter.
 
 ## Positive assertion (``#lzspecconf``)
 
@@ -48,14 +57,17 @@ kill.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from lazily import Cell, slot
-from lazily.async_context import AsyncCellHandle, AsyncContext, AsyncSlotHandle
+from lazily import Cell, Effect, TeardownScope, slot
+from lazily.async_context import AsyncCellHandle, AsyncContext, AsyncEffectHandle
+from lazily.slot import DisposedError
+from lazily.teardown import dispose_node
 from lazily.thread_safe import ThreadSafeContext
 
 
@@ -83,28 +95,95 @@ FIXTURES = (
 
 # Fixtures this binding executes end to end. Asserted exactly: a fixture that
 # stops replaying, and a fixture that starts replaying, both fail the build.
-EXPECTED_REPLAYED = frozenset({"transitive_invalidation_reaches_depth.json"})
+EXPECTED_REPLAYED = frozenset(FIXTURES)
 
 # Fixtures skipped, with the *first* unsupported op or expectation encountered.
-# Each entry is a gap in lazily-py's public surface, not a relaxation of the
-# fixture. Asserted exactly, so implementing an op forces its entry to be
-# removed rather than letting the new coverage arrive silently.
-EXPECTED_SKIPS = {
-    "churn_returns_to_baseline.json": "unsupported op `fanout`",
-    "cross_scope_teardown_hazard.json": "unsupported op `begin_scope`",
-    "disarm_disposes_nothing.json": "unsupported op `begin_scope`",
-    "dispose_detaches_edges_both_directions.json": "unsupported op `effect`",
-    "read_after_dispose_is_an_error.json": "unsupported op `dispose`",
-    "recycled_id_inherits_nothing.json": "unsupported op `fanout`",
-    # `scenarios`-shaped: `observationally_equal` is a relation between two op
-    # streams, which the `steps` replay loop cannot express. Its steps also need
-    # `begin_scope`/`disarm`.
-    "scope_teardown_equals_fold_of_disposals.json": "unsupported fixture shape `scenarios`",
-    "scoping_bounds_teardown_not_visibility.json": "unsupported op `begin_scope`",
-}
+# Empty, and it must stay empty: an entry here is a gap in lazily-py's public
+# surface, never a relaxation of the fixture.
+EXPECTED_SKIPS: dict[str, str] = {}
 
-_SUPPORTED_OPS = frozenset({"cell", "computed", "read", "set_cell"})
-_SUPPORTED_EXPECT = frozenset({"value", "read", "note"})
+# Fixture assertions an execution model does not satisfy today, as
+# ``<model>/<fixture>[<scenario>]#<step>:<key>``.
+#
+# Each entry is a finding against the implementation, not a relaxation of the
+# fixture: the runner asserts this set matches the observed one exactly, so a
+# new divergence fails the build and a fixed one fails it until the entry is
+# removed.
+#
+# ## The one open finding: async effect cleanup fires eagerly
+#
+# ``disarm_disposes_nothing`` asserts ``cleanup_order: []`` at two points where
+# ``watch`` has run exactly once and has not been disposed — the sync contract
+# in ``lazily-spec/docs/reactive-graph.md``: "the cleanup runs before the next
+# body rerun and on dispose". :class:`~lazily.effect.Effect` holds to it.
+# :class:`~lazily.async_effect.AsyncEffect` does not: ``flush`` awaits the
+# cleanup at the end of the same flush whenever no rerun is queued
+# (``async_effect.py``, the ``if not self._pending`` branch), so a first run is
+# immediately followed by its own cleanup and the corpus observes ``['watch']``.
+#
+# This is **not** the disposal/teardown plane and it is not caused by anything
+# in this port: the effect is neither disposed nor invalidated at either step.
+# It is a pre-existing divergence between lazily-py's two effect surfaces that
+# the corpus is the first thing to observe, and it is deliberate on the async
+# side — ``tests/test_async_context.py::test_effect_cleanup_completes_before_
+# the_next_body`` and ``tests/test_async_effect_properties.py::test_async_
+# effect_cleanup_before_body`` both pin the eager spelling today, and
+# ``docs/async.md`` § "Cleanup ordering" states only the weaker "the previous
+# run's cleanup completes before the next body starts", which eager cleanup
+# satisfies vacuously.
+#
+# Reconciling the two surfaces changes a published async contract and belongs
+# upstream in lazily-spec, so it is recorded here rather than papered over by
+# relaxing the fixture or by quietly rewriting ``AsyncEffect``.
+KNOWN_DIVERGENCES: frozenset[str] = frozenset(
+    {
+        "AsyncContext/disarm_disposes_nothing.json#6:cleanup_order",
+        "AsyncContext/disarm_disposes_nothing.json#7:cleanup_order",
+    }
+)
+
+_SUPPORTED_OPS = frozenset(
+    {
+        "begin_scope",
+        "cell",
+        "churn",
+        "computed",
+        "disarm",
+        "dispose",
+        "dispose_fanout",
+        "dispose_stale_handle",
+        "effect",
+        "end_scope",
+        "fanout",
+        "read",
+        "set_cell",
+    }
+)
+_SUPPORTED_EXPECT = frozenset(
+    {
+        "cleanup_order",
+        "dependencies_of",
+        "dependents_of",
+        "error",
+        "note",
+        "observed_by",
+        "observed_count",
+        "read",
+        "readable",
+        "scope_owned_count",
+        "value",
+    }
+)
+_SUPPORTED_SHAPES = frozenset({"scenarios", "steps"})
+
+# A read either produced a value or hit a disposed node. Modelled as a tagged
+# tuple rather than propagating the exception to the call site, so a failed read
+# is *compared* like any other observation instead of aborting the replay.
+_ERR: tuple[str, Any] = ("err", None)
+
+
+def _ok(value: Any) -> tuple[str, Any]:
+    return ("ok", value)
 
 
 # --------------------------------------------------------------------------- #
@@ -124,32 +203,103 @@ class SyncModel:
 
     def __init__(self) -> None:
         self.ctx: dict = {}
-        self.cells: dict[str, Cell[Any]] = {}
-        self.slots: dict[str, Any] = {}
+        self.scopes: dict[str, TeardownScope] = {}
+        self.runs: list[str] = []
+        self.cleanups: list[str] = []
 
-    def _node_value(self, node_id: str) -> Any:
-        """Read inside a computation, so the dependency edge is registered."""
-        if node_id in self.cells:
-            return self.cells[node_id].value
-        return self.slots[node_id](self.ctx)
+    # -- helpers --------------------------------------------------------- #
 
-    async def cell(self, node_id: str, value: Any) -> None:
-        self.cells[node_id] = Cell(self.ctx, value)
+    def _value_of(self, node: Any) -> Any:
+        """Read a node from inside a computation, registering the edge."""
+        if isinstance(node, Cell):
+            return node.value
+        return node(self.ctx)
 
-    async def computed(self, node_id: str, reads: list[str], offset: Any) -> None:
+    def _compute(self, reads: list[Any], offset: Any) -> Any:
         def compute(_ctx: dict) -> Any:
             total = offset
             for dep in reads:
-                total += self._node_value(dep)
+                total += self._value_of(dep)
             return total
 
-        self.slots[node_id] = slot(compute)
+        return compute
 
-    async def read(self, node_id: str) -> Any:
-        return self._node_value(node_id)
+    def _body(self, name: str, reads: list[Any]) -> Any:
+        def body(_ctx: dict) -> Any:
+            self.runs.append(name)
+            for dep in reads:
+                self._value_of(dep)
 
-    async def set_cell(self, node_id: str, value: Any) -> None:
-        self.cells[node_id].set(value)
+            def cleanup() -> None:
+                self.cleanups.append(name)
+
+            return cleanup
+
+        return body
+
+    # -- ops ------------------------------------------------------------- #
+
+    async def cell(self, value: Any, scope: str | None) -> Any:
+        if scope is not None:
+            return self.scopes[scope].cell(value)
+        return Cell(self.ctx, value)
+
+    async def computed(self, reads: list[Any], offset: Any, scope: str | None) -> Any:
+        compute = self._compute(reads, offset)
+        if scope is not None:
+            return self.scopes[scope].computed(compute)
+        return slot(compute)
+
+    async def effect(self, name: str, reads: list[Any], scope: str | None) -> Any:
+        body = self._body(name, reads)
+        if scope is not None:
+            return self.scopes[scope].effect(body)
+        handle = Effect(body)
+        handle(self.ctx)
+        return handle
+
+    async def read(self, node: Any) -> tuple[str, Any]:
+        try:
+            if isinstance(node, Cell):
+                return _ok(node.value)
+            return _ok(node(self.ctx))
+        except DisposedError:
+            return _ERR
+
+    async def set_cell(self, node: Any, value: Any) -> None:
+        node.set(value)
+
+    async def dispose(self, node: Any) -> None:
+        dispose_node(node, self.ctx)
+
+    async def begin_scope(self, name: str) -> None:
+        self.scopes[name] = TeardownScope(self.ctx)
+
+    async def end_scope(self, name: str) -> None:
+        self.scopes.pop(name).close()
+
+    async def disarm(self, name: str) -> None:
+        # Left in the map, disarmed: a later `end_scope` under the same name
+        # must be a no-op rather than a KeyError.
+        self.scopes[name].disarm()
+
+    def scope_owned(self, name: str) -> int:
+        return len(self.scopes[name])
+
+    def dependents_of(self, node: Any) -> int:
+        return node.dependent_count()
+
+    def dependencies_of(self, node: Any) -> int:
+        return node.dependency_count()
+
+    def is_effect(self, node: Any) -> bool:
+        return isinstance(node, Effect)
+
+    def is_effect_active(self, node: Any) -> bool:
+        return not node.disposed
+
+    async def settle(self) -> None:
+        """Synchronous models are quiescent the moment an op returns."""
 
 
 class ThreadSafeModel(SyncModel):
@@ -161,8 +311,13 @@ class ThreadSafeModel(SyncModel):
         super().__init__()
         self.ts = ThreadSafeContext()
 
-    async def set_cell(self, node_id: str, value: Any) -> None:
-        self.ts.set_cell(self.cells[node_id], value)
+    async def set_cell(self, node: Any, value: Any) -> None:
+        self.ts.set_cell(node, value)
+
+    async def begin_scope(self, name: str) -> None:
+        # Opened through the thread-safe surface, so its scope passthrough is
+        # covered rather than assumed equivalent.
+        self.scopes[name] = self.ts.scope(self.ctx)
 
 
 class AsyncModel:
@@ -170,38 +325,130 @@ class AsyncModel:
 
     The context that matters most here — revision-counter staleness plus
     in-flight state is where the pull chain that makes the lazy strategy work
-    can break without the synchronous path noticing.
+    can break without the synchronous path noticing, and where a teardown that
+    detaches edges without dirtying the survivors leaves a reader frozen on a
+    resolved value forever.
     """
 
     NAME = "AsyncContext"
 
     def __init__(self) -> None:
         self.ctx = AsyncContext()
-        self.cells: dict[str, AsyncCellHandle[Any]] = {}
-        self.slots: dict[str, AsyncSlotHandle[Any]] = {}
+        self.scopes: dict[str, Any] = {}
+        self.runs: list[str] = []
+        self.cleanups: list[str] = []
 
-    async def cell(self, node_id: str, value: Any) -> None:
-        self.cells[node_id] = self.ctx.cell(value)
+    # -- helpers --------------------------------------------------------- #
 
-    async def computed(self, node_id: str, reads: list[str], offset: Any) -> None:
+    async def _value_of(self, cc: Any, node: Any) -> Any:
+        if isinstance(node, AsyncCellHandle):
+            return cc.get_cell(node)
+        return await cc.get_async(node)
+
+    def _compute(self, reads: list[Any], offset: Any) -> Any:
         async def compute(cc: Any) -> Any:
             total = offset
             for dep in reads:
-                if dep in self.cells:
-                    total += cc.get_cell(self.cells[dep])
-                else:
-                    total += await cc.get_async(self.slots[dep])
+                total += await self._value_of(cc, dep)
             return total
 
-        self.slots[node_id] = self.ctx.computed_async(compute)
+        return compute
 
-    async def read(self, node_id: str) -> Any:
-        if node_id in self.cells:
-            return self.cells[node_id].get()
-        return await self.ctx.get_async(self.slots[node_id])
+    def _body(self, name: str, reads: list[Any]) -> Any:
+        async def body(cc: Any) -> Any:
+            self.runs.append(name)
+            for dep in reads:
+                await self._value_of(cc, dep)
 
-    async def set_cell(self, node_id: str, value: Any) -> None:
-        self.ctx.set_cell(self.cells[node_id], value)
+            def cleanup() -> None:
+                self.cleanups.append(name)
+
+            return cleanup
+
+        return body
+
+    # -- ops ------------------------------------------------------------- #
+
+    async def cell(self, value: Any, scope: str | None) -> Any:
+        if scope is not None:
+            return self.scopes[scope].cell(value)
+        return self.ctx.cell(value)
+
+    async def computed(self, reads: list[Any], offset: Any, scope: str | None) -> Any:
+        compute = self._compute(reads, offset)
+        if scope is not None:
+            return self.scopes[scope].computed_async(compute)
+        return self.ctx.computed_async(compute)
+
+    async def effect(self, name: str, reads: list[Any], scope: str | None) -> Any:
+        body = self._body(name, reads)
+        if scope is not None:
+            return self.scopes[scope].effect_async(body)
+        return self.ctx.effect_async(body)
+
+    async def read(self, node: Any) -> tuple[str, Any]:
+        try:
+            if isinstance(node, AsyncCellHandle):
+                return _ok(node.get())
+            return _ok(await self.ctx.get_async(node))
+        except DisposedError:
+            return _ERR
+
+    async def set_cell(self, node: Any, value: Any) -> None:
+        self.ctx.set_cell(node, value)
+
+    async def dispose(self, node: Any) -> None:
+        if isinstance(node, AsyncEffectHandle):
+            await node.dispose_async()
+        elif isinstance(node, AsyncCellHandle):
+            self.ctx.dispose_cell(node)
+        else:
+            self.ctx.dispose_slot(node)
+
+    async def begin_scope(self, name: str) -> None:
+        self.scopes[name] = self.ctx.scope()
+
+    async def end_scope(self, name: str) -> None:
+        await self.scopes.pop(name).aclose()
+
+    async def disarm(self, name: str) -> None:
+        self.scopes[name].disarm()
+
+    def scope_owned(self, name: str) -> int:
+        return len(self.scopes[name])
+
+    def dependents_of(self, node: Any) -> int:
+        return self.ctx.dependent_count(node)
+
+    def dependencies_of(self, node: Any) -> int:
+        return self.ctx.dependency_count(node)
+
+    def is_effect(self, node: Any) -> bool:
+        return isinstance(node, AsyncEffectHandle)
+
+    def is_effect_active(self, node: Any) -> bool:
+        return not node.disposed
+
+    async def settle(self) -> None:
+        """Drive the loop until every scheduled effect rerun has completed.
+
+        Async effect reruns are *spawned*, so a synchronous ``set_cell`` returns
+        before any body has run: ``observed_by``, ``observed_count`` and every
+        degree assertion are meaningless until the runtime has been let run.
+        This changes *when* the corpus's assertions are evaluated, never *what*
+        they assert — an effect that never runs still fails.
+        """
+        for _ in range(10_000):
+            await asyncio.sleep(0)
+            pending = [
+                e
+                for e in list(self.ctx._effects)
+                if e._task is not None and not e._task.done()
+            ]
+            if not pending:
+                return
+            await asyncio.gather(*(e.settle() for e in pending))
+        raise AssertionError("AsyncContext never reached quiescence")
 
 
 MODELS = (SyncModel, ThreadSafeModel, AsyncModel)
@@ -227,72 +474,357 @@ def _unsupported_reason(fixture: dict[str, Any]) -> str | None:
     shape = fixture.get("shape")
     if shape is None:
         return "fixture declares no `shape`"
-    if shape != "steps":
+    if shape not in _SUPPORTED_SHAPES:
         return f"unsupported fixture shape `{shape}`"
-    steps = fixture.get("steps")
-    if not steps:
-        return "fixture declares no `steps`"
-    for step in steps:
-        op = step["op"]
-        kind = op.get("type")
-        if kind not in _SUPPORTED_OPS:
-            return f"unsupported op `{kind}`"
-        for key in step.get("expect") or {}:
-            if key not in _SUPPORTED_EXPECT:
-                return f"unsupported expectation `{key}`"
+    if shape == "steps":
+        streams = [fixture.get("steps")]
+    else:
+        scenarios = fixture.get("scenarios")
+        if not scenarios:
+            return "fixture declares no `scenarios`"
+        streams = [s.get("steps") for s in scenarios]
+    for steps in streams:
+        if not steps:
+            return "fixture declares no `steps`"
+        for step in steps:
+            op = step["op"]
+            kind = op.get("type")
+            if kind not in _SUPPORTED_OPS:
+                return f"unsupported op `{kind}`"
+            for key in step.get("expect") or {}:
+                if key not in _SUPPORTED_EXPECT:
+                    return f"unsupported expectation `{key}`"
     return None
 
 
+class Observation:
+    """Everything a scenario leaves behind that ``observationally_equal`` compares."""
+
+    __slots__ = (
+        "after_publish_observed",
+        "after_publish_reads",
+        "cleanup_order",
+        "degrees",
+        "readable",
+        "reads",
+    )
+
+    def __init__(self) -> None:
+        self.cleanup_order: list[str] = []
+        self.readable: dict[str, bool] = {}
+        self.reads: dict[str, Any] = {}
+        self.after_publish_observed: list[str] = []
+        self.after_publish_reads: dict[str, Any] = {}
+        self.degrees: dict[str, int] = {}
+
+    def _key(self) -> tuple:
+        return (
+            self.cleanup_order,
+            sorted(self.readable.items()),
+            sorted(self.reads.items()),
+            self.after_publish_observed,
+            sorted(self.after_publish_reads.items()),
+            sorted(self.degrees.items()),
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Observation):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __repr__(self) -> str:
+        return f"Observation{self._key()!r}"
+
+
 class Report:
-    __slots__ = ("checks", "ops")
+    __slots__ = ("checks", "failures", "observation", "ops")
 
     def __init__(self) -> None:
         self.ops = 0
         self.checks = 0
+        self.failures: list[tuple[str, str, str]] = []
+        self.observation = Observation()
 
 
-async def _replay(model: Any, name: str, steps: list[dict[str, Any]]) -> Report:
+async def _replay(
+    model: Any,
+    name: str,
+    steps: list[dict[str, Any]],
+    tail: dict[str, Any] | None,
+) -> Report:
     report = Report()
+    nodes: dict[str, Any] = {}
+    # Handles are kept forever so `dispose_stale_handle` can dispose through a
+    # reference to a node that is already gone.
+    stale: dict[str, Any] = {}
+    # A live reader that once errored on a disposed dependency stays broken
+    # until it is itself rebuilt — it never silently recovers.
+    poisoned: set[str] = set()
+    step_index = -1
+
+    def check(key: str, got: Any, want: Any) -> None:
+        report.checks += 1
+        if got != want:
+            where = "expected" if step_index < 0 else str(step_index)
+            report.failures.append((where, key, f"got {got!r}, want {want!r}"))
+
+    def node_of(node_id: str) -> Any:
+        if node_id not in nodes:
+            raise AssertionError(f"{name}: op names unknown node {node_id}")
+        return nodes[node_id]
+
+    def register(node_id: str, handle: Any) -> None:
+        nodes[node_id] = handle
+        stale[node_id] = handle
+        poisoned.discard(node_id)
+
+    async def read_id(node_id: str) -> tuple[str, Any]:
+        if node_id in poisoned:
+            return _ERR
+        result = await model.read(node_of(node_id))
+        if result == _ERR:
+            poisoned.add(node_id)
+        return result
+
+    async def alive(node_id: str) -> bool:
+        handle = nodes.get(node_id)
+        if handle is None:
+            return False
+        if model.is_effect(handle):
+            return model.is_effect_active(handle)
+        return (await read_id(node_id)) != _ERR
+
     for index, step in enumerate(steps):
+        # Rebound rather than bound by the loop, because `check` closes over it
+        # to label a divergence with the step that produced it.
+        step_index = index
         op = step["op"]
         kind = op["type"]
-        where = f"{model.NAME}/{name}#{index} {op}"
+        runs_before = len(model.runs)
+        op_error = False
+        op_value: Any = None
+        report.ops += 1
 
         if kind == "cell":
-            await model.cell(op["id"], op["value"])
-            value = None
+            register(op["id"], await model.cell(op["value"], op.get("scope")))
         elif kind == "computed":
-            await model.computed(op["id"], op["reads"], op["offset"])
-            value = None
+            reads = [node_of(r) for r in op.get("reads", [])]
+            register(
+                op["id"],
+                await model.computed(reads, op.get("offset", 0), op.get("scope")),
+            )
+        elif kind == "effect":
+            reads = [node_of(r) for r in op.get("reads", [])]
+            register(op["id"], await model.effect(op["id"], reads, op.get("scope")))
         elif kind == "read":
-            value = await model.read(op["id"])
+            result = await read_id(op["id"])
+            if result == _ERR:
+                op_error = True
+            else:
+                op_value = result[1]
         elif kind == "set_cell":
-            await model.set_cell(op["id"], op["value"])
-            value = None
+            await model.set_cell(node_of(op["id"]), op["value"])
+        elif kind == "dispose":
+            # The entry stays in the map: a disposed id remains readable-as-an-
+            # error, and disposing it again must be a no-op.
+            await model.dispose(node_of(op["id"]))
+        elif kind == "fanout":
+            prefix = op["id_prefix"]
+            base = [node_of(r) for r in op.get("reads", [])]
+            for i in range(op["count"]):
+                # Subscribers are effects, not derived slots: the corpus asserts
+                # `observed_count` on a publish, and in a lazy binding only an
+                # eager reader observes a publish without being pulled.
+                node_id = f"{prefix}_{i}"
+                register(node_id, await model.effect(node_id, base, None))
+        elif kind == "dispose_fanout":
+            prefix = op["id_prefix"]
+            for i in range(op["count"]):
+                handle = nodes.get(f"{prefix}_{i}")
+                if handle is not None:
+                    await model.dispose(handle)
+        elif kind == "churn":
+            source = node_of(op["source"])
+            prefix = op["id_prefix"]
+            width = op["live_width"]
+            mode = op["mode"]
+            if mode == "dispose_then_create":
+                # Hold `live_width` subscribers; each cycle disposes one and
+                # creates its replacement, so the live count is invariant.
+                for cycle in range(op["cycles"]):
+                    node_id = f"{prefix}_{cycle % width}"
+                    handle = nodes.get(node_id)
+                    if handle is not None:
+                        await model.dispose(handle)
+                    nodes[node_id] = await model.effect(node_id, [source], None)
+            elif mode == "scope_per_cycle":
+                # One teardown scope per cycle; its subscriber is gone by the
+                # end of its own cycle.
+                scope_name = f"{prefix}__churn"
+                effect_name = f"{prefix}_scoped"
+                for _ in range(op["cycles"]):
+                    await model.begin_scope(scope_name)
+                    await model.effect(effect_name, [source], scope_name)
+                    await model.end_scope(scope_name)
+            else:
+                raise AssertionError(f"{name}: unknown churn mode {mode}")
+        elif kind == "begin_scope":
+            await model.begin_scope(op["scope"])
+        elif kind == "end_scope":
+            await model.end_scope(op["scope"])
+        elif kind == "disarm":
+            await model.disarm(op["scope"])
+        elif kind == "dispose_stale_handle":
+            of = op["handle_of"]
+            if of not in stale:
+                raise AssertionError(f"{name}: no recorded handle for {of}")
+            handle = stale[of]
+            want_kind = op["handle_kind"]
+            got_kind = (
+                "effect"
+                if model.is_effect(handle)
+                else "cell"
+                if isinstance(handle, (Cell, AsyncCellHandle))
+                else "slot"
+            )
+            assert got_kind == want_kind, (
+                f"{name}: handle_kind {want_kind} does not match recorded {got_kind}"
+            )
+            await model.dispose(handle)
         else:  # pragma: no cover - pre-flighted by _unsupported_reason
             raise AssertionError(f"unsupported op `{kind}`")
-        report.ops += 1
+
+        await model.settle()
+        observed = model.runs[runs_before:]
+        # `cleanup_order` is cumulative, not per-step: the individual-disposal
+        # scenario spreads three disposals over three steps and pins the whole
+        # order on the last one.
+        cleaned = list(model.cleanups)
 
         expect = step.get("expect")
         if not expect:
             continue
-        note = expect.get("note", "")
 
-        if "value" in expect:
-            assert value == expect["value"], (
-                f"{where}\nexpected value {expect['value']}, got {value}\n{note}"
+        # Sorted, matching lazily-rs, whose `serde_json` object is a `BTreeMap`:
+        # the evaluation order is part of what a fixture pins, because a `read`
+        # can re-register an edge that a `dependents_of` then counts.
+        for key in sorted(expect):
+            want = expect[key]
+            if key == "note":
+                continue
+            if key == "dependents_of":
+                for node_id, degree in want.items():
+                    check(
+                        f"dependents_of.{node_id}",
+                        model.dependents_of(node_of(node_id)),
+                        degree,
+                    )
+            elif key == "dependencies_of":
+                for node_id, degree in want.items():
+                    check(
+                        f"dependencies_of.{node_id}",
+                        model.dependencies_of(node_of(node_id)),
+                        degree,
+                    )
+            elif key == "error":
+                if want is None:
+                    check("error", op_error, False)
+                elif want == "read_after_dispose":
+                    check("error", op_error, True)
+                else:
+                    raise AssertionError(f"{name}: unknown expected error {want}")
+            elif key == "value":
+                if expect.get("error") is None:
+                    check("value", op_value, want)
+            elif key == "read":
+                for node_id, value in want.items():
+                    check(f"read.{node_id}", await read_id(node_id), _ok(value))
+            elif key == "readable":
+                for node_id, want_alive in want.items():
+                    check(f"readable.{node_id}", await alive(node_id), want_alive)
+            elif key == "observed_by":
+                check("observed_by", observed, list(want))
+            elif key == "observed_count":
+                check("observed_count", len(observed), want)
+            elif key == "cleanup_order":
+                # Only effects run a cleanup callback, so the expected order is
+                # projected onto its effect entries.
+                wanted = [i for i in want if model.is_effect(stale.get(i))]
+                check("cleanup_order", cleaned, wanted)
+            elif key == "scope_owned_count":
+                for scope_name, count in want.items():
+                    check(
+                        f"scope_owned_count.{scope_name}",
+                        model.scope_owned(scope_name),
+                        count,
+                    )
+            else:  # pragma: no cover - pre-flighted by _unsupported_reason
+                raise AssertionError(f"{name}: unknown expectation {key}")
+
+    # -- `scenarios`-shaped tail --------------------------------------------
+    step_index = -1  # the `expected` tail is not a numbered step
+    report.observation.cleanup_order = list(model.cleanups)
+    if tail is None:
+        return report
+
+    final = tail.get("final_state") or {}
+    for node_id, degree in (final.get("dependents_of") or {}).items():
+        got = model.dependents_of(node_of(node_id))
+        check(f"final.dependents_of.{node_id}", got, degree)
+        report.observation.degrees[node_id] = got
+    for node_id, want_alive in (final.get("readable") or {}).items():
+        got_alive = await alive(node_id)
+        check(f"final.readable.{node_id}", got_alive, want_alive)
+        report.observation.readable[node_id] = got_alive
+    for node_id, value in (final.get("read") or {}).items():
+        got_read = await read_id(node_id)
+        check(f"final.read.{node_id}", got_read, _ok(value))
+        report.observation.reads[node_id] = got_read[1]
+
+    publish = tail.get("after_publish") or {}
+    pop = publish.get("op")
+    if pop is not None:
+        assert pop["type"] == "set_cell", f"{name}: after_publish op must be set_cell"
+        before = len(model.runs)
+        await model.set_cell(node_of(pop["id"]), pop["value"])
+        await model.settle()
+        report.observation.after_publish_observed = model.runs[before:]
+        check(
+            "after_publish.observed_by",
+            report.observation.after_publish_observed,
+            list(publish.get("observed_by") or []),
+        )
+        for node_id, value in (publish.get("read") or {}).items():
+            got_read = await read_id(node_id)
+            check(f"after_publish.read.{node_id}", got_read, _ok(value))
+            report.observation.after_publish_reads[node_id] = got_read[1]
+        for node_id, degree in (publish.get("dependents_of") or {}).items():
+            check(
+                f"after_publish.dependents_of.{node_id}",
+                model.dependents_of(node_of(node_id)),
+                degree,
             )
-            report.checks += 1
-
-        if "read" in expect:
-            for node_id, want in expect["read"].items():
-                got = await model.read(node_id)
-                assert got == want, (
-                    f"{where}\nread({node_id}): expected {want}, got {got}\n{note}"
-                )
-                report.checks += 1
 
     return report
+
+
+async def _run_fixture(
+    model_cls: Any, name: str, fixture: dict[str, Any]
+) -> list[Report]:
+    """Replay one fixture, dispatching on its declared ``shape``.
+
+    Dispatch is on ``shape``, never on the filename: a filename special case
+    goes stale silently the moment a second scenarios-shaped fixture arrives.
+    """
+    if fixture["shape"] == "steps":
+        return [await _replay(model_cls(), name, fixture["steps"], None)]
+    # `scenarios`: each stream gets its own context, because the claim is a
+    # relation *between* the streams and a shared graph would confound it.
+    expected = fixture.get("expected")
+    return [
+        await _replay(model_cls(), name, scenario["steps"], expected)
+        for scenario in fixture["scenarios"]
+    ]
 
 
 def _run_corpus(model_cls: Any) -> None:
@@ -313,6 +845,7 @@ def _run_corpus(model_cls: Any) -> None:
 
     replayed: set[str] = set()
     skipped: dict[str, str] = {}
+    divergences: set[str] = set()
     total_ops = 0
     total_checks = 0
 
@@ -323,16 +856,40 @@ def _run_corpus(model_cls: Any) -> None:
             skipped[name] = reason
             continue
 
-        model = model_cls()
-        report = asyncio.run(_replay(model, name, fixture["steps"]))
-        assert report.ops > 0, f"{model_name}/{name}: replayed zero ops"
-        assert report.checks > 0, f"{model_name}/{name}: replayed zero assertions"
-        total_ops += report.ops
-        total_checks += report.checks
+        reports = asyncio.run(_run_fixture(model_cls, name, fixture))
+
+        # `observationally_equal`: the named scenarios must agree on every
+        # observable, not merely each satisfy `expected` independently.
+        pair = (fixture.get("expected") or {}).get("observationally_equal")
+        if pair:
+            names = [s["name"] for s in fixture["scenarios"]]
+            index = [names.index(scenario) for scenario in pair]
+            for left, right in itertools.pairwise(index):
+                assert reports[left].observation == reports[right].observation, (
+                    f"{model_name}/{name}: scenarios are not observationally equal\n"
+                    f"  {names[left]}: {reports[left].observation}\n"
+                    f"  {names[right]}: {reports[right].observation}"
+                )
+            total_checks += 1
+
+        ops = sum(r.ops for r in reports)
+        checks = sum(r.checks for r in reports)
+        assert ops > 0, f"{model_name}/{name}: replayed zero ops"
+        assert checks > 0, f"{model_name}/{name}: replayed zero assertions"
+        total_ops += ops
+        total_checks += checks
         replayed.add(name)
 
-    # Ledgers: both directions fail loudly. A fixture that stops replaying, one
-    # that starts, or a skip reason that changes, all break the build.
+        for scenario_index, report in enumerate(reports):
+            suffix = f"[{scenario_index}]" if len(reports) > 1 else ""
+            for where, key, detail in report.failures:
+                entry = f"{model_name}/{name}{suffix}#{where}:{key}"
+                print(f"  DIVERGENCE {entry} — {detail}")
+                divergences.add(entry)
+
+    # Ledgers: all three fail loudly in both directions. A fixture that stops
+    # replaying, one that starts, a skip reason that changes, and a divergence
+    # that appears or disappears, all break the build.
     assert replayed == set(EXPECTED_REPLAYED), (
         f"{model_name}: replayed set drifted (replayed: {sorted(replayed)}, "
         f"expected: {sorted(EXPECTED_REPLAYED)})"
@@ -340,6 +897,17 @@ def _run_corpus(model_cls: Any) -> None:
     assert skipped == EXPECTED_SKIPS, (
         f"{model_name}: skip ledger is stale — update EXPECTED_SKIPS "
         f"(observed: {skipped}, documented: {EXPECTED_SKIPS})"
+    )
+    # Entries are model-prefixed, so each model reconciles only its own slice:
+    # a divergence recorded for one context must not excuse another.
+    expected_divergences = {
+        e for e in KNOWN_DIVERGENCES if e.startswith(f"{model_name}/")
+    }
+    assert divergences == expected_divergences, (
+        f"{model_name}: divergence ledger is stale. A new entry is a finding "
+        f"against lazily-py, never a reason to edit the fixture "
+        f"(observed: {sorted(divergences)}, "
+        f"documented: {sorted(expected_divergences)})"
     )
 
     # Positive assertion: the runner must have actually executed something.

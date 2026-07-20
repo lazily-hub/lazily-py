@@ -26,6 +26,8 @@ __all__ = ["ThreadSafeContext"]
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from .teardown import TeardownScope
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -83,6 +85,21 @@ class ThreadSafeContext:
                 cell.set(value)
                 return
             self._pending.append(_PendingWrite(cell, value))
+
+    def scope(self, ctx: dict) -> TeardownScope:
+        """Open a teardown scope over ``ctx``.
+
+        The thread-safe context wraps the *write* path only — the graph it
+        serializes writes into is the ordinary synchronous one — so this returns
+        the same :class:`~lazily.teardown.TeardownScope` the sync surface uses,
+        and disposal semantics are identical. The method exists so a caller
+        holding only a :class:`ThreadSafeContext` never has to reach past it.
+
+        Teardown itself is *not* serialized by the lock: disposal mutates the
+        graph rather than queueing a write, so it belongs inside a
+        :meth:`batch`, or on the thread that owns the nodes.
+        """
+        return TeardownScope(ctx)
 
     def batch[R](self, run: Callable[[], R]) -> R:
         """Run ``run`` under the lock, queuing all ``set_cell`` writes, then at

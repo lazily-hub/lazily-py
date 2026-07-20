@@ -1,4 +1,12 @@
-__all__ = ["BaseSlot", "Slot", "resolve_identity", "slot", "slot_def", "slot_stack"]
+__all__ = [
+    "BaseSlot",
+    "DisposedError",
+    "Slot",
+    "resolve_identity",
+    "slot",
+    "slot_def",
+    "slot_stack",
+]
 
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
@@ -10,6 +18,21 @@ C_in = TypeVar("C_in", contravariant=True)
 C_ctx = TypeVar("C_ctx", bound=dict)
 C_dict = TypeVar("C_dict", bound=dict)
 T = TypeVar("T")
+
+
+# Non-native: mypyc cannot compile a subclass of a builtin exception type, and
+# this must stay catchable across the compiled/interpreted boundary.
+@mypyc_attr(native_class=False)
+class DisposedError(RuntimeError):
+    """Raised when a disposed reactive node is read.
+
+    Disposal is terminal and its contract is *errors on next recompute*
+    (``lazily-spec/conformance/reactive-graph/read_after_dispose_is_an_error``):
+    the node itself raises, and a surviving dependent that still names it raises
+    when its own recompute reaches the read. A live dependent must therefore be
+    *dirtied* by the disposal — see :func:`_dirty_disposed_dependents` — or it
+    would keep serving its cached value forever and never reach the error.
+    """
 
 
 def resolve_identity[C_ctx: dict](ctx: C_ctx) -> C_ctx:
@@ -82,6 +105,61 @@ def _drain_resets() -> None:
             node._invalidate(node_ctx)
     finally:
         _reset_active = False
+
+
+def _dirty_disposed_dependents(roots: "set[Slot[Any, Any, Any]]", ctx: Any) -> None:
+    """Dirty the cone that survives a disposal — and schedule nothing.
+
+    Two invariants, both learned by regression (``lazily-rs`` 5db90d2,
+    ``lazily-js`` 4d20670), live in this one function:
+
+    1. **Detaching edges is not enough.** A dependent that still holds a cached
+       value computed from the disposed node would keep serving it forever: the
+       edge that would have invalidated it is exactly the edge disposal just
+       removed. So every surviving transitive dependent has its cached value
+       dropped here, which is what makes ``read_after_dispose`` reachable from a
+       live reader rather than only from the disposed handle itself.
+
+    2. **Effects reached by this walk must not be scheduled.** Disposal is not a
+       publish. Running an effect during teardown re-enters a compute that reads
+       the node being torn down, so teardown would stop being idempotent and the
+       error would surface *inside* ``dispose`` instead of on the reader's next
+       recompute. Effects are therefore only unlinked from their own dependents
+       here; they stay subscribed and error on their next real rerun.
+
+    Iterative, sharing the shape of :func:`_drain_resets` but deliberately not
+    its work-stack: this walk must never reach :meth:`Effect._invalidate`.
+    """
+    stack: list[Slot[Any, Any, Any]] = list(roots)
+    while stack:
+        node = stack.pop()
+        if node._disposed:
+            continue
+        pare = node._parents
+        # Rebind before descending so a diamond is processed once and a cycle
+        # terminates: the second visit finds an empty edge set.
+        node._parents = None
+        node._drop_cached(ctx)
+        if pare:
+            stack.extend(pare)
+
+
+def _detach_from_dependencies(node: Any) -> None:
+    """Remove ``node`` from the reverse edge set of everything it reads.
+
+    This is the half of disposal the churn fixture measures: without it a
+    source's dependent set grows by one per subscribe and never shrinks, so a
+    workload with a constant live subscriber count still degrades without bound
+    in both memory and propagation cost (``#lzspecedgeindex``).
+    """
+    deps = node._deps
+    node._deps = None
+    if not deps:
+        return
+    for dependency in deps:
+        parents = dependency._parents
+        if parents is not None:
+            parents.discard(node)
 
 
 def _suspend_drain() -> None:
@@ -173,9 +251,11 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
     See :class:`~lazily.cell.Cell` for the rationale.
     """
 
-    __slots__ = ("_parents",)
+    __slots__ = ("_deps", "_disposed", "_parents")
 
     _parents: "set[Slot[Any, Any, Any]] | None"
+    _deps: "set[Any] | None"
+    _disposed: bool
 
     def __init__(
         self,
@@ -189,12 +269,91 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         # so identity-based parent tracking replaces per-read ``partial``
         # allocation (which previously leaked without bound).
         self._parents = None
+        # The forward direction: what this node read during its current run.
+        # Lazily materialized for the same reason ``_parents`` is. Disposal
+        # needs it — without a forward edge set there is no way to remove this
+        # node from each dependency's ``_parents`` short of scanning the whole
+        # graph, and leaving those edges behind is exactly the unbounded growth
+        # ``churn_returns_to_baseline`` measures.
+        self._deps = None
+        self._disposed = False
+
+    @property
+    def disposed(self) -> bool:
+        """Whether :meth:`dispose` has been called (terminal)."""
+        return self._disposed
+
+    def dependent_count(self) -> int:
+        """How many nodes currently depend on this one — reverse edge degree.
+
+        A count, never the collection: the edge sets are internal invalidation
+        state, and handing them out would let a caller mutate the graph or hold
+        a node alive. This is the observable ``#lzspecedgeindex`` is written
+        against.
+        """
+        pare = self._parents
+        return 0 if pare is None else len(pare)
+
+    def dependency_count(self) -> int:
+        """How many nodes this one currently reads — forward edge degree."""
+        deps = self._deps
+        return 0 if deps is None else len(deps)
+
+    def dispose(self, ctx: C_in) -> None:
+        """Tear down this slot: detach both edge directions, drop its cache, and
+        dirty whatever still reads it. Terminal and idempotent.
+
+        Takes the context for the same reason :meth:`__call__` and :meth:`reset`
+        do — a plain :class:`Slot` is context-free by design, and its cached
+        value lives in the caller's context mapping rather than on the object.
+
+        Nothing stops a live reader from still naming this slot; that reader
+        raises :class:`DisposedError` on its next recompute, which the dirtying
+        below is what makes reachable.
+        """
+        if self._disposed:
+            return
+        self._disposed = True
+        resolve = self.resolve_ctx
+        if resolve is resolve_identity:
+            resolved: Any = ctx
+        else:
+            resolved = resolve(ctx)
+        resolved.pop(self, None)
+        _detach_from_dependencies(self)
+        pare = self._parents
+        self._parents = None
+        if pare:
+            _dirty_disposed_dependents(pare, resolved)
+
+    def _drop_cached(self, ctx: Any) -> None:
+        """Drop this node's cached value during a disposal walk.
+
+        Deliberately *not* :meth:`_invalidate`: that entry point reruns effects
+        and re-enters the shared work-stack, and a disposal must schedule
+        nothing (see :func:`_dirty_disposed_dependents`).
+        """
+        resolve = self.resolve_ctx
+        if resolve is resolve_identity:
+            resolved: Any = ctx
+        else:
+            resolved = resolve(ctx)
+        resolved.pop(self, None)
 
     def __call__(self, ctx: C_in) -> T:
+        if self._disposed:
+            raise DisposedError(f"read of disposed slot {self!r}")
         if slot_stack:
+            reader = slot_stack[-1]
             if self._parents is None:
                 self._parents = set()
-            self._parents.add(slot_stack[-1])
+            self._parents.add(reader)
+            # Symmetric forward edge. Both directions are recorded in the same
+            # branch so they cannot drift: a reverse edge without its forward
+            # partner is an edge disposal can never find.
+            if reader._deps is None:
+                reader._deps = set()
+            reader._deps.add(self)
 
         resolve = self.resolve_ctx
         if resolve is resolve_identity:
@@ -207,6 +366,10 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
 
         try:
             slot_stack.append(self)
+            # Forward edges describe the *current* run, so they are dropped
+            # before the body and rebuilt by its reads. Mirrors the reverse
+            # direction, which ``_invalidate`` rebinds for the same reason.
+            self._deps = None
             resolved[self] = _callable_of(self)(resolved)
         finally:
             slot_stack.pop()
@@ -225,6 +388,10 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         # safe: the edges are rebound to None BEFORE propagating, so a parent
         # that re-enters reset finds an empty set. The wave's visited guard
         # (``_drain_resets``) makes a second pass a no-op.
+        if self._disposed:
+            # A disposed node has no cache and no edges; it is also not a route
+            # the wave may propagate through.
+            return
         resolve = self.resolve_ctx
         if resolve is resolve_identity:
             resolved = ctx

@@ -1,5 +1,63 @@
 ## Unreleased
 
+### Added
+
+- **Teardown scopes, per-node disposal, and degree introspection
+  (`#lzspecedgeindex`).**
+  Until now a `Cell` or `Slot` lived as long as the context mapping that cached
+  it. Handles are plain references, but the *reverse* edge set on every source
+  is a strong reference to each reader, so dropping every handle to a node
+  reclaimed nothing and a source's dependent set grew by one per subscribe and
+  never shrank. A workload with a constant live subscriber count degraded
+  without bound in both memory and propagation cost, since every publish walks
+  that list.
+
+  - `Slot.dispose(ctx)`, `Cell.dispose()`, and the existing `Effect.dispose()`
+    now detach **both** edge directions and go terminal. Reading a disposed node
+    raises the new `lazily.DisposedError`; disposing twice is a no-op; writing
+    to a disposed cell is inert.
+  - `TeardownScope` / `teardown_scope(ctx)` group nodes created through them and
+    dispose the group in reverse creation order. It is a context manager —
+    Python has no `Drop`, and `with` is the construct that already means "this
+    block owns these, release them on the way out". `disarm()` cancels the
+    teardown without touching the nodes. `ThreadSafeContext.scope(ctx)` returns
+    the same object; `AsyncContext.scope()` returns the `async with` twin,
+    `AsyncTeardownScope`, because disposing an async effect awaits its cleanup.
+  - `AsyncContext.dispose_slot` / `dispose_cell`, and
+    `dependent_count` / `dependency_count` on every node kind — counts, never
+    the collections, so introspection cannot become a path into the graph.
+
+  Disposal **dirties the surviving dependent cone**: detaching edges alone would
+  leave a live reader serving a cached value computed from a node that no longer
+  exists, because the edge that would have invalidated it is the one disposal
+  just removed. Effects reached by that walk are marked and deliberately *not*
+  scheduled — disposal is not a publish, and rerunning an effect during teardown
+  re-enters a body that reads the node being torn down. The contract is "errors
+  on the next recompute".
+
+  Slots now track forward edges (`dependency_count`) as well as reverse ones.
+  Disposal cannot remove a node from its dependencies' reverse sets without
+  them, and the fixture that measures the leak asserts on edge-set *size*, so an
+  implementation that filtered disposed entries at query time would report
+  conformant while still leaking.
+
+### Changed — tests
+
+- The reactive-graph conformance runner replays **all nine** canonical
+  `lazily-spec/conformance/reactive-graph` fixtures against all three shipped
+  contexts (`Context`, `ThreadSafeContext`, `AsyncContext`), up from one; both
+  fixture shapes now execute, including `scenarios` and its
+  `observationally_equal` relation. 110 ops and 144 assertions per context.
+
+  One finding is recorded rather than papered over:
+  `AsyncEffect` runs a body's cleanup at the end of the same flush when no rerun
+  is queued, where `Effect` holds it until the next rerun or disposal, so
+  `disarm_disposes_nothing` observes a cleanup the corpus expects not to have
+  run yet. The eager spelling is pinned by existing async tests and permitted by
+  `docs/async.md`; reconciling the two surfaces is a spec change and is tracked
+  in the runner's `KNOWN_DIVERGENCES` ledger, which is asserted exactly in both
+  directions.
+
 ### Removed
 
 - **The reactive observer APIs are gone (`Cell.subscribe`, `Signal.subscribe`,

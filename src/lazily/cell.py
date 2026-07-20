@@ -4,7 +4,16 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from .batch import notify_change as _notify_change
-from .slot import BaseSlot, Slot, _drain_resets, _reset_work, mypyc_attr, slot_stack
+from .slot import (
+    BaseSlot,
+    DisposedError,
+    Slot,
+    _dirty_disposed_dependents,
+    _drain_resets,
+    _reset_work,
+    mypyc_attr,
+    slot_stack,
+)
 
 
 C_in = TypeVar("C_in", contravariant=True)
@@ -29,15 +38,17 @@ class Cell[T]:
     the settled value, that is a :class:`~lazily.queue.Topic`.
     """
 
-    __slots__ = ("_parents", "_value", "ctx")
+    __slots__ = ("_disposed", "_parents", "_value", "ctx")
 
     _parents: set[Slot[Any, Any, Any]] | None
+    _disposed: bool
     _value: T
     ctx: dict
 
     def __init__(self, ctx: dict, initial_value: T) -> None:
         self.ctx = ctx
         self._value = initial_value
+        self._disposed = False
         # Auto-discovered parents (Slots/Signals/Effects reading this cell),
         # tracked by object identity so repeated reads never grow the fan-out.
         # Lazily materialized: an empty CPython ``set()`` is ~216 B, so
@@ -49,16 +60,29 @@ class Cell[T]:
 
     @property
     def value(self) -> T:
+        if self._disposed:
+            raise DisposedError("read of disposed cell")
         if slot_stack:
             # Track the running parent by identity so repeated reads during one
             # computation, and re-reads across reruns, do not grow the fan-out.
+            reader = slot_stack[-1]
             if self._parents is None:
                 self._parents = set()
-            self._parents.add(slot_stack[-1])
+            self._parents.add(reader)
+            # Symmetric forward edge, so the reader's disposal can find and
+            # detach this cell's reverse edge (see ``Slot.__call__``).
+            if reader._deps is None:
+                reader._deps = set()
+            reader._deps.add(self)
         return self._value
 
     @value.setter
     def value(self, value: T) -> None:
+        if self._disposed:
+            # Disposal is terminal: a write to a torn-down source is inert
+            # rather than an error, so teardown ordering never matters to a
+            # writer that outlives the cell.
+            return
         _value = self._value
         self._value = value
         if self._value != _value:
@@ -74,7 +98,45 @@ class Cell[T]:
         """Alias for value= property setter"""
         self.value = value
 
+    @property
+    def disposed(self) -> bool:
+        """Whether :meth:`dispose` has been called (terminal)."""
+        return self._disposed
+
+    def dependent_count(self) -> int:
+        """How many nodes currently read this cell — reverse edge degree."""
+        pare = self._parents
+        return 0 if pare is None else len(pare)
+
+    def dependency_count(self) -> int:
+        """Always ``0``. A cell is a pure source and reads nothing.
+
+        Present so degree introspection is uniform across node kinds — the
+        Python spelling of ``lazily-rs``'s sealed ``GraphNode`` trait.
+        """
+        return 0
+
+    def dispose(self) -> None:
+        """Tear down this source: detach its dependents and dirty them.
+
+        Terminal and idempotent. Unlike :meth:`Slot.dispose` this takes no
+        context — a cell already owns the one it was created against.
+
+        A cell has no dependencies, so only the downstream direction needs
+        detaching; the dirtying is what stops a surviving reader from serving a
+        cached value derived from a source that no longer exists.
+        """
+        if self._disposed:
+            return
+        self._disposed = True
+        pare = self._parents
+        self._parents = None
+        if pare:
+            _dirty_disposed_dependents(pare, self.ctx)
+
     def touch(self) -> None:
+        if self._disposed:
+            return
         # The auto-discovered parents are the only fan-out: they are reactive
         # edges, so rebind-then-clear (they re-establish on recompute) and push
         # them into the coalesced invalidation wave — no tuple alloc.
