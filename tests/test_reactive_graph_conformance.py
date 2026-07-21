@@ -103,6 +103,12 @@ FIXTURES = (
     "dispose_detaches_edges_both_directions.json",
     "dispose_signal_reverts_to_lazy.json",
     "disposal_does_not_run_surviving_effects.json",
+    "exact_fold_paths_stay_exact.json",
+    "feedback_drain_bound_reports_exhaustion.json",
+    "merge_cell_acquires_no_dependency_edge.json",
+    "merge_feed_through_a_formula_coalesces.json",
+    "merge_folds_synchronously_in_batch.json",
+    "merge_per_settled_cone_not_per_write.json",
     "read_after_dispose_is_an_error.json",
     "recycled_id_inherits_nothing.json",
     "scope_teardown_equals_fold_of_disposals.json",
@@ -125,13 +131,37 @@ SIGNAL_FIXTURES = frozenset(
     }
 )
 
+# The six merge-feed fixtures landed on spec main (#lzmergefeed, lazily-spec
+# Step 3). This runner does not model them and skips each in *every* context —
+# they are accounted-for skips, not silent drops. Five drive the `merge_cell`
+# op, the accumulate/fold write surface lazily-py's reactive graph ships no node
+# kind for, so the pre-flight rejects them on that op. The sixth,
+# `feedback_drain_bound_reports_exhaustion`, uses only supported ops but asserts
+# the novel `drain_exhausted` key (parked upstream too), so the pre-flight
+# rejects it on that expectation. Each reason below is exactly the string
+# `_unsupported_reason` returns for the *first* unsupported op or expectation, so
+# an upstream change that makes one replayable — or shifts the offending step —
+# surfaces as a loud skip-ledger diff rather than a quiet pass.
+_MERGE_CELL_UNSUPPORTED = "unsupported op `merge_cell`"
+MERGEFEED_SKIPS: dict[str, str] = {
+    "exact_fold_paths_stay_exact.json": _MERGE_CELL_UNSUPPORTED,
+    "feedback_drain_bound_reports_exhaustion.json": (
+        "unsupported expectation `drain_exhausted`"
+    ),
+    "merge_cell_acquires_no_dependency_edge.json": _MERGE_CELL_UNSUPPORTED,
+    "merge_feed_through_a_formula_coalesces.json": _MERGE_CELL_UNSUPPORTED,
+    "merge_folds_synchronously_in_batch.json": _MERGE_CELL_UNSUPPORTED,
+    "merge_per_settled_cone_not_per_write.json": _MERGE_CELL_UNSUPPORTED,
+}
+MERGEFEED_FIXTURES = frozenset(MERGEFEED_SKIPS)
+
 # Fixtures each context executes end to end. Asserted exactly, per context: a
 # fixture that stops replaying, and a fixture that starts replaying, both fail
 # the build.
 EXPECTED_REPLAYED: dict[str, frozenset[str]] = {
-    "Context": frozenset(FIXTURES),
-    "ThreadSafeContext": frozenset(FIXTURES),
-    "AsyncContext": frozenset(FIXTURES) - SIGNAL_FIXTURES,
+    "Context": frozenset(FIXTURES) - MERGEFEED_FIXTURES,
+    "ThreadSafeContext": frozenset(FIXTURES) - MERGEFEED_FIXTURES,
+    "AsyncContext": frozenset(FIXTURES) - MERGEFEED_FIXTURES - SIGNAL_FIXTURES,
 }
 
 # Fixtures skipped per context, with the *first* unsupported op or expectation
@@ -144,9 +174,12 @@ EXPECTED_REPLAYED: dict[str, frozenset[str]] = {
 # reported instead.
 _ASYNC_NO_SIGNAL = "unsupported op `signal`"
 EXPECTED_SKIPS: dict[str, dict[str, str]] = {
-    "Context": {},
-    "ThreadSafeContext": {},
-    "AsyncContext": dict.fromkeys(sorted(SIGNAL_FIXTURES), _ASYNC_NO_SIGNAL),
+    "Context": dict(MERGEFEED_SKIPS),
+    "ThreadSafeContext": dict(MERGEFEED_SKIPS),
+    "AsyncContext": {
+        **MERGEFEED_SKIPS,
+        **dict.fromkeys(sorted(SIGNAL_FIXTURES), _ASYNC_NO_SIGNAL),
+    },
 }
 
 # Fixture assertions an execution model does not satisfy today, as
