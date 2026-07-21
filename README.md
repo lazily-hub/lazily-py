@@ -1,31 +1,48 @@
 # lazily
 
-Lazy reactive primitives for Python — Slots, Cells, and Signals with automatic
-dependency tracking and cache invalidation, plus the language-agnostic
-`lazily-spec` wire protocol for mirroring graph state across processes and
-languages.
+Lazy reactive primitives for Python — the **Cell kernel** (`SourceCell` /
+`FormulaCell` over the `Cell` genus, plus `Effect`) with automatic dependency
+tracking and cache invalidation, plus the language-agnostic `lazily-spec` wire
+protocol for mirroring graph state across processes and languages.
 
 [![PyPI](https://img.shields.io/pypi/v/lazily.svg)](https://pypi.org/project/lazily/)
 
 ## Overview
 
-`lazily` provides a small reactive family for context-aware computation:
+`lazily` is the Python port of the **Cell kernel** (`#lzcellkernel`): one genus,
+`Cell<T, K>`, over two value kinds, plus the value-less `Effect` sink.
 
-- **Slot** — a lazily-computed cached value that automatically tracks its dependencies (`slot` / `slot_def`).
-- **Cell** — a mutable value that invalidates dependent Slots when it changes (`cell` / `cell_def`, `Cell`, `CellSlot`).
-- **Signal** — an *eager* derived value that recomputes the instant a dependency invalidates, with no intermediate unset value (`signal` / `signal_def`).
+- **`SourceCell`** — a value written from *outside* (`set` / `merge`); the
+  writable kind. Construct with `source` / `cell` (`SourceCell` / `Cell` /
+  `CellSlot`). A [`MergeCell`](#merge-algebra) is a `SourceCell` whose write
+  folds under a non-`KeepLatest` policy (`Cell ≡ MergeCell(KeepLatest)`).
+- **`FormulaCell`** — a value computed from *upstream*, via a formula. Construct
+  with `formula(ctx, f)`. **Guarded by default** and **lazy by default**.
+- **`Effect`** — a value-less sink outside the hierarchy; nothing can depend on
+  it.
 
-Values are **lazy by default**: dependents are marked dirty on invalidation but
-only recompute when accessed. When you need eager push-style semantics —
-recompute immediately, observe `v1 → v2` with no unset window — reach for
-**`Signal`**, which layers a puller over a memoized Slot. The
-`Slot → Cell → Signal` progression lets you choose lazy or eager per derived
-value within one graph. An equal recompute is suppressed by a `PartialEq`/memo
-guard, so unchanged values never cascade downstream work.
+A `FormulaCell` is **lazy by default**: dependents are marked dirty on
+invalidation but only recompute when accessed. When you need eager push-style
+semantics — recompute immediately, observe `v1 → v2` with no unset window —
+**drive** it: `formula(ctx, f).drive()`. Driving attaches a scheduled puller
+`Effect` over the backing memo (drivenness is graph state — a `_driven` bit plus
+a side table — not a distinct type), so N writes inside one `batch` re-materialize
+the formula **once**, at the flush. An equal recompute is suppressed by a
+`PartialEq`/memo guard, so unchanged values never cascade downstream work.
 
-There is **no dedicated `Context` class** — a plain `dict` is the context. Slots
-use themselves as dictionary keys to cache values, so any dict works as the
-reactive "world."
+> **Migration note.** The eager `Signal` is retired: `Signal(ctx, f)` is now a
+> back-compat alias for `formula(ctx, f).drive()`, and `signal` / `signal_def`
+> remain as deprecated decorators. Python has no compile-time read/write split
+> (see the design's §4): the split is a **convention** — a `SourceCell` has
+> `set` / `merge`, a `FormulaCell` does not — not a runtime gate. Old names
+> (`Cell`, `slot`, `Signal`, `MergeCell`, …) are kept as working aliases.
+
+There is **no dedicated `Context` class** — a plain `dict` is the context, so the
+Rust reference's `ctx.formula(f)` is spelled `formula(ctx, f)` here. `Slot` is
+retained both as the lower-level unguarded lazy memo (`slot` / `slot_def`) and as
+the **storage position** that holds a node: a `Slot` uses itself as the
+dictionary key that caches its value, so any dict works as the reactive "world"
+(`lazily-spec` §5.0 "`Slot`-as-storage").
 
 ## Feature coverage
 
@@ -37,7 +54,7 @@ notes and platform carve-outs lives in
 <!-- coverage-table:start -->
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: |
-| Reactive graph — core `Cell` / `Slot` / `Effect` (+ derived `Signal` = `Slot.eager`) / memo / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reactive graph — kernel `Cell<T, K>` (`SourceCell` / `FormulaCell` / `Effect`) + driven `FormulaCell` (`formula().drive()`) / guarded formulas / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Keyed-map materialization (`SlotMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thread-safe keyed map (`ThreadSafeSlotMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Async keyed map (`AsyncSlotMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -52,7 +69,7 @@ notes and platform carve-outs lives in
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Broadcast topic (`TopicCell`) — independent cursors + durable replay + safe GC (`#lztopiccell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Competing-consumer work queue (`WorkQueueCell`) — exclusive leases + ack/nack + redelivery + DLQ (`#lzworkqueue`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Merge algebra + `MergeCell` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ MergeCell<KeepLatest>`, `Reactive`/`Source` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Merge algebra + `SourceCell<T, M>` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ SourceCell<KeepLatest>`, read-genus/write-`Source<M>` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |

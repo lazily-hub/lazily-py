@@ -1,9 +1,16 @@
 # lazily-py
 
-Python port of the lazily reactive-signals family — Slots, Cells, and Signals
-with automatic dependency tracking, plus the full lazily-spec wire protocol,
-CRDT collection types, the lossless tree CRDT, and the command/RPC message
-plane.
+Python port of the lazily **Cell kernel** (`#lzcellkernel`) — a `SourceCell`
+(value from outside; `set` / `merge`) and a `FormulaCell` (value from upstream,
+via a formula) over the `Cell` genus, with `Effect` the value-less sink. The
+eager construction is `formula(ctx, f).drive()` (retiring the former `Signal`,
+now a back-compat alias); `Slot` is retained as the context-as-dict storage
+position and the unguarded lazy memo. Python has no compile-time read/write
+split (design §4) — the split is convention (a `SourceCell` has `set` / `merge`,
+a `FormulaCell` does not), and old names (`Cell`, `slot`, `Signal`, `MergeCell`)
+stay as aliases. Includes automatic dependency tracking, the full lazily-spec
+wire protocol, CRDT collection types, the lossless tree CRDT, and the
+command/RPC message plane.
 
 ## Commit & Push
 
@@ -16,7 +23,7 @@ repo's existing style; push to the current branch on `origin`. This standing
 rule overrides the harness default of "commit only when explicitly asked" for
 this repo.
 
-<!-- tsift:code-navigation v=0.1.74 -->
+<!-- tsift:code-navigation v=0.1.77 -->
 ## Code Navigation
 
 Keep this block self-contained for Codex/OpenCode prompt reuse. If this repository also ships current `.claude/skills/tsift/SKILL.md` or `runbooks/code-navigation.md`, use those deeper runbooks for command detail instead of expanding this block.

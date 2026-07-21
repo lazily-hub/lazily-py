@@ -3,8 +3,12 @@ lazily — a lazy/reactive evaluation library for Python with context-aware
 callable wrappers.
 
 This package provides a simple and elegant way to implement lazy evaluation and
-dependency injection patterns in Python applications. The core reactive family is
-``Slot`` (lazy memo) → ``Cell`` (mutable source) → ``Signal`` (eager derived).
+dependency injection patterns in Python applications. The core is the **Cell
+kernel** (``#lzcellkernel``): a ``SourceCell`` (value from outside; ``set`` /
+``merge``) and a ``FormulaCell`` (value from upstream, via a formula) over the
+``Cell`` genus, with ``Effect`` the value-less sink outside the hierarchy. The
+eager construction is ``formula(ctx, f).drive()`` (the former ``Signal``); the
+lazy ``slot`` primitive is retained as the context-as-dict storage position.
 
 The :mod:`lazily.ipc` submodule implements the language-agnostic ``lazily-spec``
 wire protocol (Snapshot / Delta) so a Python graph's state can be mirrored to
@@ -115,6 +119,7 @@ __all__ = [
     "EphemeralValue",
     "ExpiryPolicy",
     "Fold",
+    "FormulaCell",
     "FramedTransport",
     "Health",
     "HealthCell",
@@ -240,6 +245,8 @@ __all__ = [
     "Snapshot",
     "SnapshotProvider",
     "SortKey",
+    "SourceCell",
+    "SourceCellSlot",
     "SpillMode",
     "SpillPage",
     "SpillStore",
@@ -320,6 +327,8 @@ __all__ = [
     "encode_message",
     "ffi",
     "ffi_bytes_of",
+    "formula",
+    "formula_def",
     "in_batch",
     "ipc",
     "key_between",
@@ -346,6 +355,8 @@ __all__ = [
     "similarity",
     "slot",
     "slot_def",
+    "source",
+    "source_def",
     "spill_message",
     "spill_state",
     "spill_value",
@@ -408,7 +419,16 @@ from .async_reactive_family import AsyncCellMap, AsyncReactiveMap, AsyncSlotMap
 from .async_slot import AsyncSlot, SlotEvent, SlotState
 from .batch import batch, batch_context, in_batch
 from .benchmarks import Benchmark, BenchmarkResult, run_benchmarks
-from .cell import Cell, CellSlot, cell, cell_def
+from .cell import (
+    Cell,
+    CellSlot,
+    SourceCell,
+    SourceCellSlot,
+    cell,
+    cell_def,
+    source,
+    source_def,
+)
 from .collection import CellMap, EntryKind, ReactiveMap, SlotMap
 from .command import (
     COMMAND_PLANE_FEATURE,
@@ -641,7 +661,7 @@ from .service import (
     ServiceRegistry,
     ServiceRegistryCore,
 )
-from .signal import Signal, signal, signal_def
+from .signal import FormulaCell, Signal, formula, formula_def, signal, signal_def
 from .signaling import (
     PermissionMode,
     RoomCore,

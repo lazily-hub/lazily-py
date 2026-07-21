@@ -71,7 +71,16 @@ from typing import Any
 
 import pytest
 
-from lazily import Cell, Effect, Signal, TeardownScope, batch, slot
+from lazily import (
+    Cell,
+    Effect,
+    FormulaCell,
+    Signal,
+    TeardownScope,
+    batch,
+    formula,
+    slot,
+)
 from lazily.async_context import AsyncCellHandle, AsyncContext, AsyncEffectHandle
 from lazily.slot import DisposedError
 from lazily.teardown import dispose_node
@@ -172,18 +181,23 @@ _SUPPORTED_OPS = frozenset(
         "dispose_fanout",
         "dispose_signal",
         "dispose_stale_handle",
+        "drive",
         "effect",
         "end_scope",
         "fanout",
         "read",
         "set_cell",
         "signal",
+        "undrive",
     }
 )
 
-# Ops that need a signal constructor. Subtracted from a model's vocabulary when
-# the context it drives does not ship one.
-_SIGNAL_OPS = frozenset({"dispose_signal", "signal"})
+# Ops that need a signal / formula-drive constructor. Subtracted from a model's
+# vocabulary when the context it drives does not ship one. `drive` / `undrive`
+# are the Cell-kernel spellings dual-accepted alongside `signal` /
+# `dispose_signal` (#lzcellkernel): a driven `FormulaCell` is the former
+# `Signal`, so the same per-context support gate applies.
+_SIGNAL_OPS = frozenset({"dispose_signal", "drive", "signal", "undrive"})
 
 _SUPPORTED_EXPECT = frozenset(
     {
@@ -247,7 +261,9 @@ class SyncModel:
         """Read a node from inside a computation, registering the edge."""
         if isinstance(node, Cell):
             return node.value
-        if isinstance(node, Signal):
+        if isinstance(node, FormulaCell):
+            # Covers both a driven formula (`formula().drive()`) and the
+            # back-compat `Signal` subclass — both read via `.value`.
             return node.value
         return node(self.ctx)
 
@@ -300,6 +316,17 @@ class SyncModel:
         # not route it through `dispose_node`.
         node.dispose()
 
+    async def drive(self, node_id: str, reads: list[Any], offset: Any) -> Any:
+        # Cell-kernel spelling of `signal` (#lzcellkernel): construct a lazy
+        # `FormulaCell` and drive it. `formula().drive()` returns the same handle
+        # mutated, so the eager reader is what gets registered.
+        return formula(self.ctx, self._compute(node_id, reads, offset)).drive()
+
+    async def undrive(self, node: Any) -> None:
+        # Cell-kernel spelling of `dispose_signal`: stop eager recomputation and
+        # dispose the puller; the value reverts to lazy.
+        node.undrive()
+
     async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
         batch(lambda: [cell.set(value) for cell, value in writes])
 
@@ -313,7 +340,7 @@ class SyncModel:
 
     async def read(self, node: Any) -> tuple[str, Any]:
         try:
-            if isinstance(node, (Cell, Signal)):
+            if isinstance(node, (Cell, FormulaCell)):
                 return _ok(node.value)
             return _ok(node(self.ctx))
         except DisposedError:
@@ -701,6 +728,11 @@ async def _replay(
             register(op["id"], await model.signal(op["id"], reads, op.get("offset", 0)))
         elif kind == "dispose_signal":
             await model.dispose_signal(node_of(op["id"]))
+        elif kind == "drive":
+            reads = [node_of(r) for r in op.get("reads", [])]
+            register(op["id"], await model.drive(op["id"], reads, op.get("offset", 0)))
+        elif kind == "undrive":
+            await model.undrive(node_of(op["id"]))
         elif kind == "batch":
             # One op carrying its writes, so the runner needs no nesting state.
             # Every write goes inside ONE boundary: the point of the fixture is

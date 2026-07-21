@@ -1,4 +1,13 @@
-__all__ = ["Cell", "CellSlot", "cell", "cell_def"]
+__all__ = [
+    "Cell",
+    "CellSlot",
+    "SourceCell",
+    "SourceCellSlot",
+    "cell",
+    "cell_def",
+    "source",
+    "source_def",
+]
 
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -23,7 +32,12 @@ T = TypeVar("T")
 
 @mypyc_attr(allow_interpreted_subclasses=True)
 class Cell[T]:
-    """A reactive leaf source: a mutable value other reactives depend on.
+    """A **source cell**: a mutable value, written from outside, that other
+    reactives depend on. Canonically :data:`SourceCell` in the Cell kernel
+    (``#lzcellkernel``) — the value comes from *outside* (``set`` / ``merge``),
+    the writable kind of the genus. ``Cell`` is retained as the genus/leaf name.
+    A :class:`~lazily.merge.MergeCell` is a ``SourceCell`` whose write folds under
+    a non-``KeepLatest`` policy (``Cell ≡ MergeCell(KeepLatest)``).
 
     **No reactive in this library exposes an observer API** — not Cell, not
     :class:`~lazily.signal.Signal`. Observation in this graph is a declared
@@ -190,3 +204,35 @@ def cell_def[C_in, C_ctx: dict, T](
         return CellSlot[C_in, C_ctx, T](callable=callable, resolve_ctx=resolve_ctx)
 
     return outer
+
+
+# -- Cell kernel vocabulary (#lzcellkernel) ---------------------------------- #
+# ``SourceCell`` is the canonical name for the writable kind of the genus. The
+# native class keeps the name ``Cell`` (so mypyc native-struct reads and the
+# ``isinstance(node, Cell)`` checks across the family are untouched) and these are
+# name aliases. Python has no compile-time read/write split (design §4): the
+# split is expressed by which methods a kind *has* — a ``SourceCell`` has
+# ``set`` / ``merge``; a :class:`~lazily.signal.FormulaCell` does not — and is a
+# convention, not a runtime gate (§4 rejected downgrading the guarantee to a
+# panic; Python simply has neither).
+SourceCell = Cell
+SourceCellSlot = CellSlot
+
+
+def source[C_ctx: dict, T](
+    callable: Callable[[C_ctx], T] = _none_as_t,
+) -> CellSlot[C_ctx, C_ctx, T]:
+    """Create a slot that returns a :data:`SourceCell` (default ``KeepLatest``).
+
+    The Cell-kernel spelling of :func:`cell`; for a non-``KeepLatest`` fold use
+    :func:`~lazily.merge.merge_cell`, which builds a
+    :class:`~lazily.merge.MergeCell` (a ``SourceCell`` with policy ``M``).
+    """
+    return CellSlot(callable=callable)
+
+
+def source_def[C_in, C_ctx: dict, T](
+    resolve_ctx: Callable[[C_in], C_ctx],
+) -> Callable[[Callable[[C_ctx], T]], CellSlot[C_in, C_ctx, T]]:
+    """Cell-kernel spelling of :func:`cell_def`."""
+    return cell_def(resolve_ctx)
