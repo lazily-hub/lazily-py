@@ -73,12 +73,11 @@ import pytest
 
 from lazily import (
     Cell,
+    Computed,
     Effect,
-    FormulaCell,
-    Signal,
     TeardownScope,
     batch,
-    formula,
+    computed,
     slot,
 )
 from lazily.async_context import AsyncCellHandle, AsyncContext, AsyncEffectHandle
@@ -192,11 +191,11 @@ _SUPPORTED_OPS = frozenset(
     }
 )
 
-# Ops that need a signal / formula-drive constructor. Subtracted from a model's
+# Ops that need an eager-computed constructor. Subtracted from a model's
 # vocabulary when the context it drives does not ship one. `drive` / `undrive`
-# are the Cell-kernel spellings dual-accepted alongside `signal` /
-# `dispose_signal` (#lzcellkernel): a driven `FormulaCell` is the former
-# `Signal`, so the same per-context support gate applies.
+# are v1 back-compat op aliases dual-accepted alongside `signal` /
+# `dispose_signal` (#lzcellkernel): an eager `Computed` is the former `Signal`,
+# so the same per-context support gate applies.
 _SIGNAL_OPS = frozenset({"dispose_signal", "drive", "signal", "undrive"})
 
 _SUPPORTED_EXPECT = frozenset(
@@ -261,8 +260,8 @@ class SyncModel:
         """Read a node from inside a computation, registering the edge."""
         if isinstance(node, Cell):
             return node.value
-        if isinstance(node, FormulaCell):
-            # Covers both a driven formula (`formula().drive()`) and the
+        if isinstance(node, Computed):
+            # Covers both an eager computed (`computed().eager()`) and the
             # back-compat `Signal` subclass — both read via `.value`.
             return node.value
         return node(self.ctx)
@@ -308,24 +307,27 @@ class SyncModel:
         return slot(compute)
 
     async def signal(self, node_id: str, reads: list[Any], offset: Any) -> Any:
-        return Signal(self.ctx, self._compute(node_id, reads, offset))
+        # v2 Cell kernel (#lzcellkernel): the fixture `signal` op maps to a
+        # guarded `computed` made eager. `computed().eager()` returns the same
+        # handle mutated, so the eager reader is what gets registered.
+        return computed(self.ctx, self._compute(node_id, reads, offset)).eager()
 
     async def dispose_signal(self, node: Any) -> None:
-        # Clause 4: this disposes the eager puller, not the node. `Signal`
-        # exposes exactly that and nothing else, which is why the runner does
-        # not route it through `dispose_node`.
-        node.dispose()
+        # Clause 4: this reverts the eager computed to lazy (disposes the puller),
+        # it does not dispose the node — the fixture `dispose_signal` op maps to
+        # `.lazy()`, which is why the runner does not route it through
+        # `dispose_node`.
+        node.lazy()
 
     async def drive(self, node_id: str, reads: list[Any], offset: Any) -> Any:
-        # Cell-kernel spelling of `signal` (#lzcellkernel): construct a lazy
-        # `FormulaCell` and drive it. `formula().drive()` returns the same handle
-        # mutated, so the eager reader is what gets registered.
-        return formula(self.ctx, self._compute(node_id, reads, offset)).drive()
+        # v1 back-compat op alias of `signal`: construct a lazy `Computed` and
+        # make it eager.
+        return computed(self.ctx, self._compute(node_id, reads, offset)).eager()
 
     async def undrive(self, node: Any) -> None:
-        # Cell-kernel spelling of `dispose_signal`: stop eager recomputation and
-        # dispose the puller; the value reverts to lazy.
-        node.undrive()
+        # v1 back-compat op alias of `dispose_signal`: stop eager recomputation
+        # and dispose the puller; the value reverts to lazy.
+        node.lazy()
 
     async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
         batch(lambda: [cell.set(value) for cell, value in writes])
@@ -340,7 +342,7 @@ class SyncModel:
 
     async def read(self, node: Any) -> tuple[str, Any]:
         try:
-            if isinstance(node, (Cell, FormulaCell)):
+            if isinstance(node, (Cell, Computed)):
                 return _ok(node.value)
             return _ok(node(self.ctx))
         except DisposedError:

@@ -4,11 +4,13 @@ callable wrappers.
 
 This package provides a simple and elegant way to implement lazy evaluation and
 dependency injection patterns in Python applications. The core is the **Cell
-kernel** (``#lzcellkernel``): a ``SourceCell`` (value from outside; ``set`` /
-``merge``) and a ``FormulaCell`` (value from upstream, via a formula) over the
-``Cell`` genus, with ``Effect`` the value-less sink outside the hierarchy. The
-eager construction is ``formula(ctx, f).drive()`` (the former ``Signal``); the
-lazy ``slot`` primitive is retained as the context-as-dict storage position.
+kernel** (``#lzcellkernel``): a ``Source`` cell (value from outside; ``set`` /
+``merge``) and a ``Computed`` cell (value from upstream, via a compute function),
+with ``Effect`` the value-less sink outside the hierarchy. ``Cell`` is the value
+node the ``Source`` handle is bound to. Every cell is **guarded** (an equal
+recompute suppresses the cascade); there is no unguarded mode — for a
+non-``__eq__`` value use the lower-level ``slot`` storage primitive. The eager
+construction is ``computed(ctx, f).eager()`` (the former ``Signal``).
 
 The :mod:`lazily.ipc` submodule implements the language-agnostic ``lazily-spec``
 wire protocol (Snapshot / Delta) so a Python graph's state can be mirrored to
@@ -85,6 +87,7 @@ __all__ = [
     "CommandStatus",
     "CommandSubmit",
     "CommandTransport",
+    "Computed",
     "CrdtOp",
     "CrdtPlaneRuntime",
     "CrdtSync",
@@ -245,8 +248,10 @@ __all__ = [
     "Snapshot",
     "SnapshotProvider",
     "SortKey",
+    "Source",
     "SourceCell",
     "SourceCellSlot",
+    "SourceSlot",
     "SpillMode",
     "SpillPage",
     "SpillStore",
@@ -314,6 +319,8 @@ __all__ = [
     "cell",
     "cell_def",
     "command",
+    "computed",
+    "computed_def",
     "content_hash",
     "coordination",
     "count_positive_fold",
@@ -422,8 +429,10 @@ from .benchmarks import Benchmark, BenchmarkResult, run_benchmarks
 from .cell import (
     Cell,
     CellSlot,
+    Source,
     SourceCell,
     SourceCellSlot,
+    SourceSlot,
     cell,
     cell_def,
     source,
@@ -661,7 +670,17 @@ from .service import (
     ServiceRegistry,
     ServiceRegistryCore,
 )
-from .signal import FormulaCell, Signal, formula, formula_def, signal, signal_def
+from .signal import (
+    Computed,
+    FormulaCell,
+    Signal,
+    computed,
+    computed_def,
+    formula,
+    formula_def,
+    signal,
+    signal_def,
+)
 from .signaling import (
     PermissionMode,
     RoomCore,

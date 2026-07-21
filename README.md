@@ -1,46 +1,55 @@
 # lazily
 
-Lazy reactive primitives for Python — the **Cell kernel** (`SourceCell` /
-`FormulaCell` over the `Cell` genus, plus `Effect`) with automatic dependency
-tracking and cache invalidation, plus the language-agnostic `lazily-spec` wire
-protocol for mirroring graph state across processes and languages.
+Lazy reactive primitives for Python — the **Cell kernel** (`Source` / `Computed`
+cells, plus `Effect`) with automatic dependency tracking and cache invalidation,
+plus the language-agnostic `lazily-spec` wire protocol for mirroring graph state
+across processes and languages.
 
 [![PyPI](https://img.shields.io/pypi/v/lazily.svg)](https://pypi.org/project/lazily/)
 
 ## Overview
 
-`lazily` is the Python port of the **Cell kernel** (`#lzcellkernel`): one genus,
-`Cell<T, K>`, over two value kinds, plus the value-less `Effect` sink.
+`lazily` is the Python port of the **Cell kernel** (`#lzcellkernel`): two value
+kinds — `Source` and `Computed` — plus the value-less `Effect` sink. `Cell` is
+the value node the `Source` handle is bound to.
 
-- **`SourceCell`** — a value written from *outside* (`set` / `merge`); the
-  writable kind. Construct with `source` / `cell` (`SourceCell` / `Cell` /
-  `CellSlot`). A [`MergeCell`](#merge-algebra) is a `SourceCell` whose write
-  folds under a non-`KeepLatest` policy (`Cell ≡ MergeCell(KeepLatest)`).
-- **`FormulaCell`** — a value computed from *upstream*, via a formula. Construct
-  with `formula(ctx, f)`. **Guarded by default** and **lazy by default**.
+- **`Source`** — a value written from *outside* (`set` / `merge`); the writable
+  kind. Construct with `source` / `cell` (handle `Source`, native class `Cell`,
+  slot `SourceSlot` / `CellSlot`). A [`MergeCell`](#merge-algebra) is a `Source`
+  whose write folds under a non-`KeepLatest` policy (`Cell ≡ Source(KeepLatest)`).
+- **`Computed`** — a value computed from *upstream*, via a compute function.
+  Construct with `computed(ctx, f)`. **Guarded by default** and **lazy by
+  default**.
 - **`Effect`** — a value-less sink outside the hierarchy; nothing can depend on
   it.
 
-A `FormulaCell` is **lazy by default**: dependents are marked dirty on
-invalidation but only recompute when accessed. When you need eager push-style
-semantics — recompute immediately, observe `v1 → v2` with no unset window —
-**drive** it: `formula(ctx, f).drive()`. Driving attaches a scheduled puller
-`Effect` over the backing memo (drivenness is graph state — a `_driven` bit plus
-a side table — not a distinct type), so N writes inside one `batch` re-materialize
-the formula **once**, at the flush. An equal recompute is suppressed by a
-`PartialEq`/memo guard, so unchanged values never cascade downstream work.
+A `Computed` is **lazy by default**: dependents are marked dirty on invalidation
+but only recompute when accessed. When you need eager push-style semantics —
+recompute immediately, observe `v1 → v2` with no unset window — make it
+**eager**: `computed(ctx, f).eager()`. Going eager attaches a scheduled puller
+`Effect` over the backing memo (eagerness is graph state — an `_eager` bit plus a
+side table — not a distinct type), so N writes inside one `batch` re-materialize
+the computed **once**, at the flush. **Every cell is guarded** — an equal
+recompute is suppressed by the `PartialEq` guard (matching TC39
+`Signal.Computed`), so unchanged values never cascade downstream work. There is
+**no unguarded mode**: for a genuinely non-`__eq__` value, hold it in the
+lower-level, unguarded `slot` storage primitive instead. The former separate
+`memo` construction is retired — `computed` now *is* the guarded form.
 
 > **Migration note.** The eager `Signal` is retired: `Signal(ctx, f)` is now a
-> back-compat alias for `formula(ctx, f).drive()`, and `signal` / `signal_def`
-> remain as deprecated decorators. Python has no compile-time read/write split
-> (see the design's §4): the split is a **convention** — a `SourceCell` has
-> `set` / `merge`, a `FormulaCell` does not — not a runtime gate. Old names
-> (`Cell`, `slot`, `Signal`, `MergeCell`, …) are kept as working aliases.
+> back-compat alias for `computed(ctx, f).eager()`, and `signal` / `signal_def`
+> remain as deprecated decorators. The v1 kernel names `SourceCell` /
+> `FormulaCell` / `formula` / `.drive()` / `.undrive()` / `is_driven` remain as
+> aliases of `Source` / `Computed` / `computed` / `.eager()` / `.lazy()` /
+> `is_eager`. Python has no compile-time read/write split (see the design's §4):
+> the split is a **convention** — a `Source` has `set` / `merge`, a `Computed`
+> does not — not a runtime gate. Old names (`Cell`, `slot`, `Signal`,
+> `MergeCell`, …) are kept as working aliases.
 
 There is **no dedicated `Context` class** — a plain `dict` is the context, so the
-Rust reference's `ctx.formula(f)` is spelled `formula(ctx, f)` here. `Slot` is
-retained both as the lower-level unguarded lazy memo (`slot` / `slot_def`) and as
-the **storage position** that holds a node: a `Slot` uses itself as the
+Rust reference's `ctx.computed(f)` is spelled `computed(ctx, f)` here. `Slot` is
+retained both as the lower-level unguarded storage primitive (`slot` / `slot_def`)
+and as the **storage position** that holds a node: a `Slot` uses itself as the
 dictionary key that caches its value, so any dict works as the reactive "world"
 (`lazily-spec` §5.0 "`Slot`-as-storage").
 
@@ -54,7 +63,7 @@ notes and platform carve-outs lives in
 <!-- coverage-table:start -->
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: |
-| Reactive graph — kernel `Cell<T, K>` (`SourceCell` / `FormulaCell` / `Effect`) + driven `FormulaCell` (`formula().drive()`) / guarded formulas / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reactive graph — two cell kinds (nodes `SourceCell` / `ComputedCell`; handles `Source<T, M>` / `Computed<T>`) + `Effect` sink + eager `Computed` (`computed().eager()`) / all cells guarded / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Keyed-map materialization (`SlotMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thread-safe keyed map (`ThreadSafeSlotMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Async keyed map (`AsyncSlotMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -69,7 +78,7 @@ notes and platform carve-outs lives in
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Broadcast topic (`TopicCell`) — independent cursors + durable replay + safe GC (`#lztopiccell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Competing-consumer work queue (`WorkQueueCell`) — exclusive leases + ack/nack + redelivery + DLQ (`#lzworkqueue`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Merge algebra + `SourceCell<T, M>` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ SourceCell<KeepLatest>`, read-genus/write-`Source<M>` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Merge algebra + `Source<T, M>` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ Source<KeepLatest>`, read-any-cell/write-`Source` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -213,11 +222,11 @@ that Slot; assigning `cell.value = x` (or `cell.set(x)`) compares old and new vi
 
 ### Signal
 
-A `Signal` is the **eager** counterpart to a lazy Slot — one step further along
-the `Slot → Cell → Signal` progression. Where a Slot marks itself dirty on
-invalidation and recomputes on the next read, a Signal recomputes *the instant a
-dependency is invalidated*, before the mutating call returns. The value is always
-materialized, so observers never see an intermediate unset value.
+A `Signal` is the **eager** counterpart to a lazy `Computed` — the back-compat
+name for `computed(ctx, f).eager()`. Where a lazy cell marks itself dirty on
+invalidation and recomputes on the next read, an eager one recomputes *the
+instant a dependency is invalidated*, before the mutating call returns. The value
+is always materialized, so observers never see an intermediate unset value.
 
 ```python
 from lazily import CellSlot, signal

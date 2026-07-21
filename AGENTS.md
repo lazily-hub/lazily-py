@@ -1,16 +1,20 @@
 # lazily-py
 
-Python port of the lazily **Cell kernel** (`#lzcellkernel`) — a `SourceCell`
-(value from outside; `set` / `merge`) and a `FormulaCell` (value from upstream,
-via a formula) over the `Cell` genus, with `Effect` the value-less sink. The
-eager construction is `formula(ctx, f).drive()` (retiring the former `Signal`,
-now a back-compat alias); `Slot` is retained as the context-as-dict storage
-position and the unguarded lazy memo. Python has no compile-time read/write
-split (design §4) — the split is convention (a `SourceCell` has `set` / `merge`,
-a `FormulaCell` does not), and old names (`Cell`, `slot`, `Signal`, `MergeCell`)
-stay as aliases. Includes automatic dependency tracking, the full lazily-spec
-wire protocol, CRDT collection types, the lossless tree CRDT, and the
-command/RPC message plane.
+Python port of the lazily **Cell kernel** (`#lzcellkernel`) — a `Source` cell
+(value from outside; `set` / `merge`) and a `Computed` cell (value from upstream,
+via a compute function), with `Effect` the value-less sink. `Cell` is the value
+node the `Source` handle is bound to (kept as the native class for mypyc +
+`isinstance` stability). Every cell is **guarded** — an equal recompute
+suppresses the downstream cascade (matching TC39 `Signal.Computed`) — with **no
+unguarded mode**; for a non-`__eq__` value hold it in the lower-level, unguarded
+`slot` storage primitive. The eager construction is `computed(ctx, f).eager()`
+(retiring the former `Signal`, now a back-compat alias); `Slot` is retained as
+the context-as-dict storage position. Python has no compile-time read/write split
+(design §4) — the split is convention (a `Source` has `set` / `merge`, a
+`Computed` does not), and old names (`Cell`, `slot`, `Signal`, `MergeCell`,
+`SourceCell`, `FormulaCell`, `formula`, `.drive()`) stay as aliases. Includes
+automatic dependency tracking, the full lazily-spec wire protocol, CRDT
+collection types, the lossless tree CRDT, and the command/RPC message plane.
 
 ## Commit & Push
 

@@ -1,8 +1,10 @@
 __all__ = [
     "Cell",
     "CellSlot",
+    "Source",
     "SourceCell",
     "SourceCellSlot",
+    "SourceSlot",
     "cell",
     "cell_def",
     "source",
@@ -33,11 +35,13 @@ T = TypeVar("T")
 @mypyc_attr(allow_interpreted_subclasses=True)
 class Cell[T]:
     """A **source cell**: a mutable value, written from outside, that other
-    reactives depend on. Canonically :data:`SourceCell` in the Cell kernel
-    (``#lzcellkernel``) — the value comes from *outside* (``set`` / ``merge``),
-    the writable kind of the genus. ``Cell`` is retained as the genus/leaf name.
-    A :class:`~lazily.merge.MergeCell` is a ``SourceCell`` whose write folds under
-    a non-``KeepLatest`` policy (``Cell ≡ MergeCell(KeepLatest)``).
+    reactives depend on. The v2 Cell-kernel handle name (``#lzcellkernel``) is
+    :data:`Source` — the value comes from *outside* (``set`` / ``merge``), the
+    writable value kind. ``Cell`` is the value-node concept and stays the native
+    class name (for mypyc native-struct reads and ``isinstance`` stability across
+    the family); :data:`Source` is the concrete handle bound to it. A
+    :class:`~lazily.merge.MergeCell` is a ``Source`` whose write folds under a
+    non-``KeepLatest`` policy (``Cell ≡ Source(KeepLatest)``).
 
     **No reactive in this library exposes an observer API** — not Cell, not
     :class:`~lazily.signal.Signal`. Observation in this graph is a declared
@@ -207,14 +211,19 @@ def cell_def[C_in, C_ctx: dict, T](
 
 
 # -- Cell kernel vocabulary (#lzcellkernel) ---------------------------------- #
-# ``SourceCell`` is the canonical name for the writable kind of the genus. The
+# v2: ``Source`` is the concrete handle name for the writable value kind. The
 # native class keeps the name ``Cell`` (so mypyc native-struct reads and the
-# ``isinstance(node, Cell)`` checks across the family are untouched) and these are
-# name aliases. Python has no compile-time read/write split (design §4): the
-# split is expressed by which methods a kind *has* — a ``SourceCell`` has
-# ``set`` / ``merge``; a :class:`~lazily.signal.FormulaCell` does not — and is a
-# convention, not a runtime gate (§4 rejected downgrading the guarantee to a
-# panic; Python simply has neither).
+# ``isinstance(node, Cell)`` checks across the family are untouched) and ``Source``
+# is a name alias bound to it — the reconciliation of "``Cell`` is the value-node
+# concept, the bare kind name is the handle" for a language whose mypyc native
+# class must keep its identity. Python has no compile-time read/write split
+# (design §4): the split is expressed by which methods a kind *has* — a
+# ``Source`` has ``set`` / ``merge``; a :class:`~lazily.signal.Computed` does not
+# — and is a convention, not a runtime gate (§4 rejected downgrading the
+# guarantee to a panic; Python simply has neither). ``SourceCell`` /
+# ``SourceCellSlot`` remain as v1 back-compat aliases.
+Source = Cell
+SourceSlot = CellSlot
 SourceCell = Cell
 SourceCellSlot = CellSlot
 
@@ -222,11 +231,11 @@ SourceCellSlot = CellSlot
 def source[C_ctx: dict, T](
     callable: Callable[[C_ctx], T] = _none_as_t,
 ) -> CellSlot[C_ctx, C_ctx, T]:
-    """Create a slot that returns a :data:`SourceCell` (default ``KeepLatest``).
+    """Create a slot that returns a :data:`Source` cell (default ``KeepLatest``).
 
     The Cell-kernel spelling of :func:`cell`; for a non-``KeepLatest`` fold use
     :func:`~lazily.merge.merge_cell`, which builds a
-    :class:`~lazily.merge.MergeCell` (a ``SourceCell`` with policy ``M``).
+    :class:`~lazily.merge.MergeCell` (a ``Source`` with policy ``M``).
     """
     return CellSlot(callable=callable)
 
