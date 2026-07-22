@@ -457,6 +457,48 @@ def test_memo_guard_republishes_the_previous_value_object() -> None:
     asyncio.run(scenario())
 
 
+def test_computed_ripple_when_async_gates_on_custom_predicate() -> None:
+    async def scenario() -> None:
+        ctx = AsyncContext()
+        src = ctx.source(0)
+        # Propagate only when the /10 bucket changes; suppress within a bucket.
+        slot = ctx.computed_ripple_when_async(
+            lambda cc: _const((cc.get(src), cc.get(src) // 10)),
+            lambda old, new: old[1] != new[1],
+        )
+        first = await slot.get_async()
+        assert first == (0, 0)
+
+        ctx.set(src, 3)  # same bucket -> suppressed, previous object republished
+        again = await slot.get_async()
+        assert again is first
+
+        ctx.set(src, 12)  # bucket changed -> propagates a fresh value
+        crossed = await slot.get_async()
+        assert crossed == (12, 1)
+        assert crossed is not first
+
+    asyncio.run(scenario())
+
+
+def test_computed_ripple_when_async_always_propagate_is_pass_through() -> None:
+    async def scenario() -> None:
+        ctx = AsyncContext()
+        src = ctx.source(0)
+        # Always-propagate predicate: even an equal recompute publishes anew.
+        slot = ctx.computed_ripple_when_async(
+            lambda cc: _const([cc.get(src) * 0]),  # always [0]
+            lambda old, new: True,
+        )
+        first = await slot.get_async()
+        ctx.set(src, 5)
+        again = await slot.get_async()
+        assert again == [0]
+        assert again is not first  # pass-through: a fresh object each time
+
+    asyncio.run(scenario())
+
+
 # --------------------------------------------------------------------------- #
 # Point 6 — async effects: serialized, cleanup-before-body, executor-scheduled
 # --------------------------------------------------------------------------- #
@@ -701,6 +743,7 @@ def test_context_api_surface_matches_the_spec_table() -> None:
         "get",
         "get_async",
         "memo_async",
+        "computed_ripple_when_async",
         "effect_async",
         "dispose_async_effect",
         "dispose_async",

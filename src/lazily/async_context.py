@@ -513,6 +513,27 @@ class AsyncContext:
         self._slots.add(slot)
         return slot
 
+    def computed_ripple_when_async[T](
+        self,
+        compute: Callable[[AsyncComputeContext], Awaitable[T]],
+        changed: Callable[[T, T], bool],
+    ) -> AsyncSlotHandle[T]:
+        """Async :meth:`computed_async` with an explicit **propagate** predicate.
+
+        The async mirror of the single-threaded
+        :func:`lazily.signal.computed_ripple_when`: propagation is gated by
+        ``changed(old, new)`` — ``True`` propagates the recompute downstream,
+        ``False`` suppresses it (the previous value object is republished, as with
+        :meth:`memo_async`). It composes over the memo guard by negation, since
+        the memo guard's ``eq`` is "equal = suppress" and ``changed`` is its
+        complement: ``computed_async(f)`` ~ ``computed_ripple_when_async(f,
+        !=)`` and the always-propagate ``changed`` is the pass-through.
+
+        ``changed`` MUST be a **pure** function of ``(old, new)`` — value-carried
+        state (a version/counter field) is fine, external mutable state is not.
+        """
+        return self.memo_async(compute, lambda old, new: not changed(old, new))
+
     async def get_async[T](self, handle: AsyncSlotHandle[T]) -> T:
         """Await a slot's value."""
         return await handle.get_async()

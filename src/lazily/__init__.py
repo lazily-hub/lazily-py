@@ -317,6 +317,7 @@ __all__ = [
     "command",
     "computed",
     "computed_def",
+    "computed_ripple_when",
     "content_hash",
     "coordination",
     "count_positive_fold",
@@ -664,6 +665,7 @@ from .signal import (
     Computed,
     computed,
     computed_def,
+    computed_ripple_when,
 )
 from .signaling import (
     PermissionMode,

@@ -43,6 +43,7 @@ __all__ = [
     "Computed",
     "computed",
     "computed_def",
+    "computed_ripple_when",
 ]
 
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -95,6 +96,7 @@ class Computed[T]:
     """
 
     __slots__ = (
+        "_changed",
         "_eager",
         "_parents",
         "_puller",
@@ -108,9 +110,20 @@ class Computed[T]:
     _puller: Effect | None
     _slot: Slot[dict, dict, T]
     _value: T
+    # Propagate predicate ``changed(old, new)`` -> ``True`` to propagate, ``False``
+    # to suppress. ``None`` means the default natural-equality guard (propagate iff
+    # ``old != new``), so ``computed(f)`` and ``computed_ripple_when(f, !=)``
+    # take the same path. MUST be pure in ``(old, new)`` — see
+    # :func:`computed_ripple_when`.
+    _changed: Callable[[T, T], bool] | None
     ctx: dict
 
-    def __init__(self, ctx: dict, callable: Callable[[dict], T]) -> None:
+    def __init__(
+        self,
+        ctx: dict,
+        callable: Callable[[dict], T],
+        changed: Callable[[T, T], bool] | None = None,
+    ) -> None:
         self.ctx = ctx
         # Lazily materialized on first parent: an empty CPython ``set()`` is
         # ~216 B, so deferring it keeps quiescent computeds cheap.
@@ -118,6 +131,7 @@ class Computed[T]:
         self._eager = False
         self._puller = None
         self._value = _UNSET
+        self._changed = changed
         self._slot = Slot(callable=callable)
 
     # -- eager / lazy: the eager construction (§9.3.1) ----------------------
@@ -168,13 +182,28 @@ class Computed[T]:
         return self._eager
 
     def _pull(self, ctx: dict) -> None:
-        """Puller-Effect body: re-materialize the backing memo into ``_value``."""
+        """Puller-Effect body: re-materialize the backing memo into ``_value``.
+
+        Propagation is gated by :attr:`_changed`: the default (``None``) is the
+        natural-equality guard (propagate iff ``old != new``); a custom predicate
+        (from :func:`computed_ripple_when`) propagates iff ``changed(old,
+        new)`` is ``True``. A **suppressed** recompute leaves ``_value`` on the
+        last *propagated* value (it is not overwritten), so the stored ``old`` for
+        the next comparison is always the last value that actually propagated —
+        matching the Rust ``slot_with_equals`` engine.
+        """
         new_value = self._slot(ctx)
         if self._value is _UNSET:
             self._value = new_value
             return None
-        # PartialEq guard: an equal recompute suppresses the cascade.
-        if new_value != self._value:
+        changed = self._changed
+        if changed is None:
+            # PartialEq guard: an equal recompute suppresses the cascade.
+            propagate = new_value != self._value
+        else:
+            # Custom propagate guard: ``changed(old, new)`` gates the cascade.
+            propagate = changed(self._value, new_value)
+        if propagate:
             self._value = new_value
             self.touch()
         return None
@@ -247,6 +276,65 @@ def computed[T](ctx: dict, callable: Callable[[dict], T]) -> Computed[T]:
     Rust reference's ``ctx.computed(f)`` becomes ``computed(ctx, f)`` here.
     """
     return Computed(ctx, callable)
+
+
+def computed_ripple_when[T](
+    ctx: dict,
+    callable: Callable[[dict], T],
+    changed: Callable[[T, T], bool],
+) -> Computed[T]:
+    """Create a **guarded** :class:`Computed` with an explicit change predicate.
+
+    Like :func:`computed`, but downstream propagation is gated by ``changed(old,
+    new)`` instead of the value's natural equality: ``changed`` returns ``True``
+    to **propagate** the recompute downstream and ``False`` to **suppress** it
+    (treat it as "no meaningful change"). So the two identities hold::
+
+        computed(ctx, f)                              # natural-equality guard
+        computed_ripple_when(ctx, f, lambda o, n: o != n)   # ...same thing
+
+        # pass-through: always propagate (no suppression), the escape for a
+        # value with no cheap/meaningful equality
+        computed_ripple_when(ctx, f, lambda o, n: True)
+
+    Use it for a **custom significance policy** — dedup a large value by a
+    version/hash field, epsilon float compare, hysteresis, a monotonic gate, or
+    "propagate every N" when the counter lives in the value.
+
+    The value is **always computed** (the predicate needs ``new``); ``changed``
+    gates only the downstream cascade, not the computation — it is a *propagate*
+    guard, not a *compute* guard. A suppressed recompute leaves the exposed value
+    on the last value that actually propagated (mirroring the Rust
+    ``slot_with_equals`` engine), so ``old`` in the next ``changed(old, new)`` is
+    always the last propagated value.
+
+    ``changed`` MUST be a **pure** function of ``(old, new)``. Reading
+    value-carried state is fine and stays deterministic — a version/counter/
+    sequence field that rides *inside* the value (as in "propagate every N",
+    ``lambda o, n: n // N != o // N``). Capturing **external mutable** state is
+    not: under laziness the predicate keys off recompute/read frequency rather
+    than off the values, which breaks determinism.
+
+    As with the natural-equality guard, suppression is observable only on the
+    **eager** form (``.eager()``): a lazy computed recomputes through its backing
+    memo on every read and does not hold a settled value to guard against. Call
+    :meth:`~Computed.eager` for the guarded, materialized form::
+
+        input = source(lambda c: 0)
+        # propagate only when the /10 bucket changes, ignoring the raw payload
+        derived = computed_ripple_when(
+            ctx,
+            lambda c: (input(c).value, input(c).value // 10),
+            lambda o, n: o[1] != n[1],
+        ).eager()
+
+    Note the ``(ctx, callable, changed)`` signature: lazily-py uses a
+    context-as-dict model (there is no ``Context`` object with a
+    ``.computed_ripple_when`` method), so the Rust reference's
+    ``ctx.computed_ripple_when(f, changed)`` becomes
+    ``computed_ripple_when(ctx, f, changed)`` here.
+    """
+    return Computed(ctx, callable, changed=changed)
 
 
 def computed_def[C_in, T](
