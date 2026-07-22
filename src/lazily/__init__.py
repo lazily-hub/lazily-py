@@ -56,6 +56,7 @@ __all__ = [
     "BlobRouter",
     "BlobView",
     "BoundDim",
+    "BoundHandle",
     "BreakerState",
     "BulkheadCell",
     "BulkheadCore",
@@ -434,7 +435,6 @@ from .cell import (
     Source,
     SourceSlot,
     cell,
-    cell_def,
     source,
     source_def,
 )
@@ -464,6 +464,7 @@ from .command import (
     rejected_receipt,
 )
 from .compute import (
+    BoundHandle,
     Compute,
     ComputeEffect,
     ComputeOps,
@@ -692,7 +693,7 @@ from .signaling import (
     SignalingFrame,
     SignalingFrameKind,
 )
-from .slot import BaseSlot, DisposedError, Slot, slot, slot_def
+from .slot import BaseSlot, DisposedError, Slot, cell_def, slot, slot_def
 from .stable_id import (
     ANCHOR_PREFIX,
     CONTENT_PREFIX,

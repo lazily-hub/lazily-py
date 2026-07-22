@@ -4,7 +4,6 @@ __all__ = [
     "Source",
     "SourceSlot",
     "cell",
-    "cell_def",
     "source",
     "source_def",
 ]
@@ -18,8 +17,10 @@ from .slot import (
     BaseSlot,
     DisposedError,
     Slot,
+    _ctx_base,
     _dirty_disposed_dependents,
     _drain_resets,
+    _register_edge,
     _reset_work,
     mypyc_attr,
     slot_stack,
@@ -62,8 +63,11 @@ class Cell[T]:
     _value: T
     ctx: dict
 
-    def __init__(self, ctx: dict, initial_value: T) -> None:
-        self.ctx = ctx
+    def __init__(self, ctx: Any, initial_value: T) -> None:
+        # ``ctx`` may be a per-recompute :class:`~lazily.compute.Compute` view
+        # (when a cell is constructed inside a compute body); capture the STABLE
+        # underlying dict, never the transient wrapper (``#lzcellkernel`` item 3).
+        self.ctx = _ctx_base(ctx)
         self._value = initial_value
         self._disposed = False
         # Auto-discovered parents (Slots/Signals/Effects reading this cell),
@@ -75,22 +79,24 @@ class Cell[T]:
     def __call__(self) -> T:
         return self.value
 
+    def _subscribe(self, reader: Any) -> None:
+        """Register ``self -> reader``: the recomputing ``reader`` depends on this
+        cell. Called by a :class:`~lazily.slot.BoundHandle` on a tracked read
+        (``name(ctx).value``) — value-threaded, no ambient stack."""
+        _register_edge(self, reader)
+
     @property
     def value(self) -> T:
         if self._disposed:
             raise DisposedError("read of disposed cell")
+        # A value-threaded read subscribes via :meth:`_subscribe` before this
+        # getter (see ``BoundHandle`` / ``Compute.read``). A **bare** read
+        # (``cell.value`` with no threaded ctx) still tracks through the ambient
+        # bridge: the recomputing node is ``slot_stack[-1]`` (``#lzcellkernel``
+        # residual — the ambient bridge is retained until every bare-read call
+        # site is migrated).
         if slot_stack:
-            # Track the running parent by identity so repeated reads during one
-            # computation, and re-reads across reruns, do not grow the fan-out.
-            reader = slot_stack[-1]
-            if self._parents is None:
-                self._parents = set()
-            self._parents.add(reader)
-            # Symmetric forward edge, so the reader's disposal can find and
-            # detach this cell's reverse edge (see ``Slot.__call__``).
-            if reader._deps is None:
-                reader._deps = set()
-            reader._deps.add(self)
+            _register_edge(self, slot_stack[-1])
         return self._value
 
     @value.setter
@@ -174,6 +180,17 @@ def _none_as_t(_: dict) -> Any:
     return None
 
 
+def _apply(fn: Any, ctx: Any) -> Any:
+    """Call ``fn(ctx)`` with no static arg coercion.
+
+    The wrapped source/derived callable runs under a per-recompute ``Compute``
+    view (not a raw dict). Routing the call through an ``Any``-typed indirection
+    stops the compiled caller from coercing the view to ``dict`` (which mypyc
+    would reject at runtime), while the callable still receives the view so its
+    reads are value-threaded."""
+    return fn(ctx)
+
+
 @mypyc_attr(allow_interpreted_subclasses=True)
 class CellSlot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, Cell[T]]):
     __slots__ = ()
@@ -183,8 +200,12 @@ class CellSlot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, Cell[T]]):
         callable: Callable[[C_ctx], T] = _none_as_t,
         resolve_ctx: Callable[[C_in], C_ctx] | None = None,
     ) -> None:
+        # The wrapped ``callable`` runs under a per-recompute ``Compute`` view;
+        # route the call through :func:`_apply` so the compiled call does not
+        # coerce the view to ``dict`` (which mypyc would reject at runtime).
         super().__init__(
-            callable=lambda ctx: Cell(ctx, callable(ctx)), resolve_ctx=resolve_ctx
+            callable=lambda ctx: Cell(ctx, _apply(callable, ctx)),
+            resolve_ctx=resolve_ctx,
         )
 
 
@@ -243,15 +264,3 @@ def cell[C_ctx: dict, T](
         stacklevel=2,
     )
     return CellSlot(callable=callable)
-
-
-def cell_def[C_in, C_ctx: dict, T](
-    resolve_ctx: Callable[[C_in], C_ctx],
-) -> Callable[[Callable[[C_ctx], T]], CellSlot[C_in, C_ctx, T]]:
-    """Deprecated v1 alias for :func:`source_def`."""
-    warnings.warn(
-        "cell_def() is deprecated; use source_def() instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return source_def(resolve_ctx)

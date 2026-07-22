@@ -49,7 +49,15 @@ __all__ = [
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from .effect import Effect
-from .slot import Slot, _drain_resets, _reset_work, mypyc_attr, slot_stack
+from .slot import (
+    Slot,
+    _ctx_base,
+    _drain_resets,
+    _register_edge,
+    _reset_work,
+    mypyc_attr,
+    slot_stack,
+)
 
 
 if TYPE_CHECKING:
@@ -120,11 +128,14 @@ class Computed[T]:
 
     def __init__(
         self,
-        ctx: dict,
+        ctx: Any,
         callable: Callable[[dict], T],
         changed: Callable[[T, T], bool] | None = None,
     ) -> None:
-        self.ctx = ctx
+        # ``ctx`` may be a per-recompute :class:`~lazily.compute.Compute` view
+        # (a computed constructed inside a compute body); capture the stable
+        # underlying dict, never the transient wrapper (``#lzcellkernel`` item 3).
+        self.ctx = _ctx_base(ctx)
         # Lazily materialized on first parent: an empty CPython ``set()`` is
         # ~216 B, so deferring it keeps quiescent computeds cheap.
         self._parents = None
@@ -181,8 +192,12 @@ class Computed[T]:
         """Whether this computed is currently eager (has an active puller)."""
         return self._eager
 
-    def _pull(self, ctx: dict) -> None:
+    def _pull(self, ctx: Any) -> None:
         """Puller-Effect body: re-materialize the backing memo into ``_value``.
+
+        ``ctx`` is the puller Effect's per-recompute :class:`~lazily.compute.Compute`
+        view (not a raw dict); reading the backing memo through it subscribes the
+        puller to the memo, so an upstream change reruns the puller.
 
         Propagation is gated by :attr:`_changed`: the default (``None``) is the
         natural-equality guard (propagate iff ``old != new``); a custom predicate
@@ -208,24 +223,36 @@ class Computed[T]:
             self.touch()
         return None
 
+    def _subscribe(self, reader: Any) -> None:
+        """Register the recomputing ``reader`` as a dependent of this computed.
+
+        Called by a :class:`~lazily.slot.BoundHandle` on a tracked read
+        (``name(ctx).value``). A **lazy** computed holds no settled value and
+        never :meth:`touch`\\ es on its own — its live upstream edges are on the
+        backing memo (``_slot``), the node an upstream change actually
+        invalidates. So the reader is subscribed to the memo as well, or an
+        upstream change would never reach it. An eager computed propagates through
+        its own handle and needs only the direct edge.
+        """
+        _register_edge(self, reader)
+        if not self._eager:
+            _register_edge(self._slot, reader)
+
     @property
     def value(self) -> T:
-        """The current value; auto-subscribes the reading slot.
+        """The current value.
 
         Eager: returns the materialized value. Lazy: recomputes through the
-        backing memo on read.
+        backing memo on read. A value-threaded read subscribes via
+        :meth:`_subscribe` (see ``BoundHandle`` / ``Compute.read``); a **bare**
+        read still tracks through the ambient bridge (``slot_stack[-1]``,
+        ``#lzcellkernel`` residual).
         """
         if slot_stack:
-            # Identity-based parent tracking (mirrors Cell/Slot): avoids a
-            # per-read ``functools.partial`` allocation that does not deduplicate
-            # in a set and would otherwise grow without bound.
-            if self._parents is None:
-                self._parents = set()
-            self._parents.add(slot_stack[-1])
+            self._subscribe(slot_stack[-1])
         if not self._eager:
-            # Lazy: recompute on read via the backing memo. The reading slot is
-            # tracked as a dependency of the backing memo too (same slot_stack
-            # frame), so an upstream change still invalidates the reader.
+            # Lazy: recompute on read via the backing memo. The memo pushes itself
+            # onto the ambient bridge, so its own reads attribute to it.
             return self._slot(self.ctx)
         return self._value
 
@@ -259,7 +286,7 @@ class Computed[T]:
         self.lazy()
 
 
-def computed[T](ctx: dict, callable: Callable[[dict], T]) -> Computed[T]:
+def computed[T](ctx: Any, callable: Callable[[dict], T]) -> Computed[T]:
     """Create a lazy, guarded :class:`Computed` bound to ``ctx``.
 
     The canonical derived-value constructor of the Cell kernel and **guarded by
@@ -279,7 +306,7 @@ def computed[T](ctx: dict, callable: Callable[[dict], T]) -> Computed[T]:
 
 
 def computed_ripple_when[T](
-    ctx: dict,
+    ctx: Any,
     callable: Callable[[dict], T],
     changed: Callable[[T, T], bool],
 ) -> Computed[T]:

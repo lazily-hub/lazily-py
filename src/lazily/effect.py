@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 from .batch import enqueue_effect, in_batch
 from .slot import (
     Slot,
+    _compute_cls,
     _detach_from_dependencies,
     _dirty_disposed_dependents,
     mypyc_attr,
@@ -76,8 +77,8 @@ class Effect(Slot[Any, dict, None]):
     def __init__(self, body: Callable[[dict], Any | None]) -> None:
         # Slot.__init__ sets up `_parents` and the placeholder callable; we
         # override `__call__` and `reset` so the slot machinery is used only for
-        # dependency tracking (the Effect pushes itself onto `slot_stack` during
-        # the body so Cells/Slots/Signals auto-subscribe to it).
+        # dependency tracking (the Effect mints a per-recompute `Compute` view
+        # carrying itself, so Cells/Slots/Signals read through it subscribe to it).
         super().__init__(callable=lambda _ctx: None)
         self._body = body
         self._cleanup = None
@@ -103,14 +104,18 @@ class Effect(Slot[Any, dict, None]):
         # next body starts.
         self._run_cleanup()
         self._running = True
+        # Rebind forward edges (drop the previous run's deps and our reverse link
+        # in each), then mint a per-recompute compute view carrying THIS effect
+        # (for value-threaded ``ctx.read`` / dict-proxy access) AND push it onto
+        # the ambient bridge (for bare reads inside the body).
+        _detach_from_dependencies(self)
+        view = _compute_cls()(ctx, self)
         slot_stack.append(self)
-        # Forward edges describe the current run and are rebuilt by the body's
-        # reads, exactly as in ``Slot.__call__``.
-        self._deps = None
         try:
-            self._cleanup = self._body(ctx)
+            self._cleanup = self._body(view)
         finally:
             slot_stack.pop()
+            view._close()
             self._running = False
 
     def reset(self, ctx: Any) -> None:

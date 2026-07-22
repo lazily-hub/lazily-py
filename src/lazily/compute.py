@@ -45,18 +45,31 @@ Fortification (as far as Python allows):
   construction (``lazily-rs`` proves this as
   ``registerReads_dependent_is_recomputing_node``).
 
-The legacy ambient ``slot_stack`` in :mod:`lazily.slot` is **retained as a
-narrow compatibility bridge** for the existing ``f(ctx_dict)`` closures that read
-cells through the no-argument ``.value`` getter — exactly as ``lazily-rs`` kept
-its thread-local frame as a bridge for the ``Fn(&Self)`` reactive-graph closures.
-Any closure that reads through a :class:`Compute` (never through ``.value``)
-tracks purely by value-threading and pushes nothing onto ``slot_stack``.
+:class:`Compute` is the **value-threaded** tracking surface, and it doubles as a
+*dict-proxying* context view (carrying the recomputing node as ``node`` plus the
+stable ``underlying`` dict), so an existing ``def f(ctx): ...ctx-as-dict...`` body
+keeps working unchanged while a ``ctx.read(node)`` (and the ``name(ctx).value``
+:class:`~lazily.slot.BoundHandle` path) attributes edges by value.
+
+``#lzcellkernel`` residual — the ambient ``slot_stack`` bridge in
+:mod:`lazily.slot` is **retained**, not deleted. Full removal is blocked by
+pervasive bare-read call sites (``obj.value`` / ``obj.get()`` / ``obj.method()``
+reads *inside* reactive bodies, in both the test suite and the feature modules)
+that a value-threaded ``ctx``-carried surface cannot reach without rewriting each
+call site. Every recompute driver therefore still pushes its node onto
+``slot_stack`` for the duration of its body, and a bare read attributes to
+``slot_stack[-1]``; an explicit ``Compute.read`` suspends the bridge
+(:func:`_read_untracked`) so a value-threaded read never double-attributes. The
+value-threaded machinery here is the migration target: once each bare-read site
+is moved onto ``ctx.read`` / ``name(ctx).value``, the bridge can be dropped. The
+thread-safe / async engines keep their own scoping and are untouched.
 """
 
 from __future__ import annotations
 
 
 __all__ = [
+    "BoundHandle",
     "Compute",
     "ComputeEffect",
     "ComputeOps",
@@ -72,7 +85,7 @@ from .batch import batch as _batch
 from .cell import Cell, _none_as_t, source
 from .effect import Effect
 from .signal import Computed, computed, computed_ripple_when
-from .slot import Slot, _detach_from_dependencies, slot_stack
+from .slot import Slot, _detach_from_dependencies, _register_edge, slot_stack
 from .teardown import dispose_node
 
 
@@ -92,42 +105,80 @@ class StaleComputeError(RuntimeError):
     """
 
 
-_MISSING: Any = object()
+def _subscribe_reader(node: Any, reader: Any) -> None:
+    """Register the recomputing ``reader`` as a dependent of ``node``.
 
-
-def _register_edge(dep: Any, node: Any) -> None:
-    """Register the symmetric dependency edge ``dep -> node`` (value-threaded).
-
-    ``node`` (the recomputing node) becomes a dependent of ``dep``; ``dep`` is
-    recorded in ``node``'s forward-edge set when ``node`` keeps one (a
-    :class:`~lazily.slot.Slot` / :class:`~lazily.effect.Effect` does, so its
-    disposal can find and detach the edge). Both directions are written in one
-    place, exactly as the ambient ``slot_stack`` path does — a reverse edge
-    without its forward partner is one disposal can never find.
-
-    The attribution target is ``node``, the *value* threaded through the compute
-    view — **never** ``slot_stack[-1]``. That is the whole point.
+    Delegates to ``node._subscribe`` when the node kind defines it (Cell /
+    Computed / Slot — a lazy Computed additionally subscribes the reader to its
+    backing memo), else falls back to a direct edge. A non-node value (a bare
+    callable or literal read through the view) subscribes nothing.
     """
-    parents = dep._parents
-    if parents is None:
-        parents = set()
-        dep._parents = parents
-    parents.add(node)
-    node_deps = getattr(node, "_deps", _MISSING)
-    if node_deps is not _MISSING:
-        if node_deps is None:
-            node_deps = set()
-            node._deps = node_deps
-        node_deps.add(dep)
+    sub = getattr(node, "_subscribe", None)
+    if sub is not None:
+        sub(reader)
+    elif hasattr(node, "_parents"):
+        _register_edge(node, reader)
+
+
+class BoundHandle:
+    """A reactive value handle bound to the reader that obtained it.
+
+    Returned by ``name(ctx)`` when ``ctx`` is a compute view and the slot yields a
+    reactive value node (a :class:`~lazily.cell.Cell` / a
+    :class:`~lazily.signal.Computed`). It carries the recomputing node so that the
+    subsequent ``.value`` / ``.get()`` / ``()`` read registers the dependency edge
+    against that node — value-threaded, no ambient stack. Any other attribute or
+    method is forwarded to the wrapped target unchanged, so the handle is
+    transparent for ``.set`` / ``.value =`` writes (which do not track) and for
+    ``.eager`` / ``.merge`` / ``.dispose`` / etc.
+
+    Kept in this (interpreted) module because it needs a property setter and
+    ``__getattr__``; :func:`lazily.slot._bound_handle` constructs it lazily.
+    """
+
+    __slots__ = ("_reader", "_target")
+
+    def __init__(self, target: Any, reader: Any) -> None:
+        self._target = target
+        self._reader = reader
+
+    @property
+    def value(self) -> Any:
+        self._target._subscribe(self._reader)
+        return self._target.value
+
+    @value.setter
+    def value(self, v: Any) -> None:
+        self._target.value = v
+
+    def get(self) -> Any:
+        self._target._subscribe(self._reader)
+        return self._target.value
+
+    def set(self, v: Any) -> None:
+        self._target.set(v)
+
+    def __call__(self) -> Any:
+        self._target._subscribe(self._reader)
+        return self._target.value
+
+    def __getattr__(self, name: str) -> Any:
+        # Only reached when normal lookup misses (not one of the tracked accessors
+        # above and not a __slots__ member); forward to the wrapped target.
+        return getattr(self._target, name)
+
+    def __repr__(self) -> str:
+        return f"<BoundHandle {self._target!r}>"
 
 
 def _read_untracked(node: Any, ctx: Any) -> Any:
     """Read ``node``'s value forming **no** dependency edge.
 
-    The ambient ``slot_stack`` is suspended for the duration so that, even if an
-    outer legacy recompute has a frame pushed, this read attributes to nothing —
-    the read is genuinely untracked, which is what makes
-    :meth:`Compute.untracked` an escape rather than a second tracking path.
+    A value-threaded ``Compute.read`` has already registered the edge explicitly;
+    the actual value read must not *also* attribute through the ambient bridge, so
+    ``slot_stack`` is suspended for the duration. ``node(ctx)`` then recomputes a
+    slot against the underlying dict with no ambient reader, so its own reads
+    attribute to it (via the view its recompute mints), never to the caller.
     """
     saved = list(slot_stack)
     slot_stack.clear()
@@ -154,15 +205,13 @@ class ComputeOps(Protocol):
     handle methods generic over ``<C: ComputeOps>``.
 
     ``read`` is the tracked/untracked value read (``lazily-rs`` ``ComputeOps::get``;
-    renamed because Python's ``dict.get`` — the context is a dict — owns ``get``
-    for key lookup, so the reactive read cannot reuse that name on the underlying
-    context without collision). ``get`` is provided as a thin alias for parity
-    with the Rust vocabulary. ``get_rc`` has no Python analog (there is no ``Rc``
-    handle to clone) and is intentionally omitted.
+    renamed because the surface **proxies the context dict**, so ``get`` is the
+    dict's ``get(key)`` — the reactive read cannot reuse that name without
+    collision). ``get_rc`` has no Python analog (there is no ``Rc`` handle to
+    clone) and is intentionally omitted.
     """
 
     def read(self, node: Any) -> Any: ...
-    def get(self, node: Any) -> Any: ...
     def set(self, cell: Any, value: Any) -> None: ...
     def source(self, callable: Any = ...) -> Any: ...
     def computed(self, callable: Any) -> Any: ...
@@ -189,14 +238,53 @@ class Context:
     def __init__(self, ctx: dict) -> None:
         self.ctx = ctx
 
-    def read(self, node: Any) -> Any:
-        return _read_untracked(node, self.ctx)
+    @property
+    def underlying(self) -> dict:
+        """The stable underlying context dict."""
+        return self.ctx
 
-    def get(self, node: Any) -> Any:
+    def read(self, node: Any) -> Any:
         return _read_untracked(node, self.ctx)
 
     def set(self, cell: Any, value: Any) -> None:
         cell.set(value)
+
+    # -- dict proxy: a body may treat the untracked surface as its ctx dict ---- #
+    def __getitem__(self, key: Any) -> Any:
+        return self.ctx[key]
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self.ctx[key] = value
+
+    def __delitem__(self, key: Any) -> None:
+        del self.ctx[key]
+
+    def __contains__(self, key: Any) -> bool:
+        return key in self.ctx
+
+    def __iter__(self) -> Any:
+        return iter(self.ctx)
+
+    def __len__(self) -> int:
+        return len(self.ctx)
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        return self.ctx.get(key, default)
+
+    def keys(self) -> Any:
+        return self.ctx.keys()
+
+    def values(self) -> Any:
+        return self.ctx.values()
+
+    def items(self) -> Any:
+        return self.ctx.items()
+
+    def pop(self, key: Any, *default: Any) -> Any:
+        return self.ctx.pop(key, *default)
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        return self.ctx.setdefault(key, default)
 
     def source(self, callable: Callable[[Any], Any] = _none_as_t) -> Any:
         return source(callable)(self.ctx)
@@ -250,6 +338,17 @@ class Compute:
         self.node = node
         self._active = True
 
+    @property
+    def underlying(self) -> dict:
+        """The stable underlying context dict.
+
+        A cell/slot CONSTRUCTED inside this recompute must capture *this* dict,
+        not the transient view — the view is retired when the recompute returns
+        (``#lzcellkernel`` item 3). The construction paths read it via
+        :func:`lazily.slot._ctx_base`.
+        """
+        return self._ctx
+
     def _guard(self) -> None:
         if not self._active:
             raise StaleComputeError(
@@ -258,30 +357,64 @@ class Compute:
             )
 
     def read(self, node: Any) -> Any:
-        """Tracked read: register ``node -> self.node`` and return the value.
+        """Tracked read: subscribe ``self.node`` to ``node`` and return the value.
 
-        A **lazy** :class:`~lazily.signal.Computed` needs a second edge. A lazy
-        computed holds no settled value and never :meth:`~lazily.signal.Computed.touch`\\ es
-        on its own — only its *eager* form does, from the puller. Its live
-        upstream edges live on the **backing memo** (``_slot``), which is the node
-        an upstream change actually invalidates. Registering only ``node ->
-        self.node`` (the handle) would leave ``self.node`` subscribed to a node
-        that never propagates, so an upstream change would never reach the reader
-        (the ``lazy computed`` / ``chained lazy`` MISS the ambient ``.value`` path
-        catches by pushing the reader onto ``slot_stack`` through the memo read).
-        We therefore also subscribe ``self.node`` to the backing memo, so
-        ``upstream -> memo -> self.node`` propagates. Eager computeds and raw
-        slots need no second edge — they propagate through their own handle.
+        Subscription is delegated to ``node._subscribe`` (the same path a
+        :class:`~lazily.slot.BoundHandle` uses for ``name(ctx).value``), so every
+        node kind subscribes correctly — in particular a **lazy**
+        :class:`~lazily.signal.Computed` subscribes the reader to its backing memo
+        as well (a lazy computed holds no settled value and never
+        :meth:`~lazily.signal.Computed.touch`\\ es on its own; its live upstream
+        edges are on the memo, the node an upstream change actually invalidates).
+        Eager computeds and raw slots need only the direct edge — they propagate
+        through their own handle.
         """
         self._guard()
-        _register_edge(node, self.node)
-        if isinstance(node, Computed) and not node._eager:
-            _register_edge(node._slot, self.node)
+        _subscribe_reader(node, self.node)
         return _read_untracked(node, self._ctx)
 
-    def get(self, node: Any) -> Any:
-        """Alias for :meth:`read` (``lazily-rs`` ``ComputeOps::get`` spelling)."""
-        return self.read(node)
+    # -- dict proxy: existing ``def f(ctx): ...ctx-as-dict...`` bodies keep ----- #
+    # working unchanged, but reads *through the reactive surface* are tracked.
+    def __getitem__(self, key: Any) -> Any:
+        self._guard()
+        return self._ctx[key]
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self._guard()
+        self._ctx[key] = value
+
+    def __delitem__(self, key: Any) -> None:
+        self._guard()
+        del self._ctx[key]
+
+    def __contains__(self, key: Any) -> bool:
+        return key in self._ctx
+
+    def __iter__(self) -> Any:
+        return iter(self._ctx)
+
+    def __len__(self) -> int:
+        return len(self._ctx)
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        """Dict ``get(key)`` on the proxied context (not a reactive read; use
+        :meth:`read` to read a node)."""
+        return self._ctx.get(key, default)
+
+    def keys(self) -> Any:
+        return self._ctx.keys()
+
+    def values(self) -> Any:
+        return self._ctx.values()
+
+    def items(self) -> Any:
+        return self._ctx.items()
+
+    def pop(self, key: Any, *default: Any) -> Any:
+        return self._ctx.pop(key, *default)
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        return self._ctx.setdefault(key, default)
 
     def set(self, cell: Any, value: Any) -> None:
         self._guard()
@@ -337,7 +470,7 @@ def eval_tracked(ctx: dict, node: Any, fn: Callable[[Compute], Any]) -> Any:
     (:func:`~lazily.slot._detach_from_dependencies` drops the deps of the
     previous run so a conditional read that took the other branch this time does
     not retain the branch it skipped), matching the dynamic-dependency contract.
-    No ``slot_stack`` frame is pushed: tracking is entirely value-threaded.
+    Tracking is entirely value-threaded; there is no ambient frame.
     """
     _detach_from_dependencies(node)
     view = Compute(ctx, node)
@@ -351,10 +484,11 @@ class ComputeEffect(Effect):
     """A value-threaded effect: reruns on change, tracks through a :class:`Compute`.
 
     The fortified counterpart of :class:`~lazily.effect.Effect`. Its body takes a
-    :class:`Compute` (not the raw ctx dict) and reads dependencies through it, so
-    tracking is value-threaded and **pushes nothing onto ``slot_stack``** — the
-    ambient bridge is bypassed entirely on this path. Reuses the base
-    :class:`~lazily.effect.Effect` invalidation machinery (``reset`` /
+    :class:`Compute` and reads dependencies through it, so tracking is
+    value-threaded. Since the base :class:`~lazily.effect.Effect` now *also* mints
+    a :class:`Compute` for its body (the ambient stack is gone), the two paths
+    coincide; this subclass is kept for the explicit ``tracked_effect`` /
+    ``Compute``-typed-body API. Reuses the base invalidation machinery (``reset`` /
     ``_invalidate`` / the shared work-stack), so a change to a tracked dependency
     reruns the body exactly as for an ordinary effect.
     """

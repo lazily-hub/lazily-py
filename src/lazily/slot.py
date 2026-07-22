@@ -2,10 +2,10 @@ __all__ = [
     "BaseSlot",
     "DisposedError",
     "Slot",
+    "cell_def",
     "resolve_identity",
     "slot",
     "slot_def",
-    "slot_stack",
 ]
 
 import warnings
@@ -55,6 +55,141 @@ def _callable_of(slot_obj: Any) -> Callable[[Any], Any]:
     attribute *write* in ``__init__``; only the (cache-miss) read is generic.
     """
     return slot_obj.callable
+
+
+# ---------------------------------------------------------------------------
+# Value-threaded dependency tracking (the fortified compute view, #lzcellkernel)
+#
+# The recomputing node is threaded into each recompute *as a value*, through a
+# per-recompute :class:`~lazily.compute.Compute` view minted by the recompute
+# driver (``Slot.__call__`` / ``BaseSlot.__call__`` / ``Effect.__call__`` /
+# the ``Computed`` backing memo). A read through that view registers the edge
+# against the view's node — there is NO module-global "current node" stack.
+#
+# A read with no view in scope (a bare ``cell.value`` / ``handle.get()`` with no
+# ``ctx`` threaded) is simply untracked: correct by the fortification contract.
+# ---------------------------------------------------------------------------
+
+_MISSING: Any = object()
+
+
+def _register_edge(dep: Any, reader: Any) -> None:
+    """Register the symmetric dependency edge ``dep -> reader`` (value-threaded).
+
+    ``reader`` (the recomputing node) becomes a dependent of ``dep``; ``dep`` is
+    recorded in ``reader``'s forward-edge set so ``reader``'s disposal can find
+    and detach the edge. Both directions are written in one place, exactly as the
+    old ambient path did — a reverse edge without its forward partner is one
+    disposal can never find.
+
+    The attribution target is ``reader``, the *value* threaded through the compute
+    view — never a module global.
+    """
+    parents = dep._parents
+    if parents is None:
+        parents = set()
+        dep._parents = parents
+    parents.add(reader)
+    reader_deps = reader._deps
+    if reader_deps is None:
+        reader_deps = set()
+        reader._deps = reader_deps
+    reader_deps.add(dep)
+
+
+# Lazily-cached reference to :class:`lazily.compute.Compute`. ``compute`` imports
+# ``slot`` (this module is the base), so a module-level import here would be
+# circular; the class is captured on first use instead. By the time any recompute
+# runs, ``compute`` has been imported (via the package ``__init__``).
+_COMPUTE_CLS: Any = None
+
+
+def _compute_cls() -> Any:
+    global _COMPUTE_CLS
+    c = _COMPUTE_CLS
+    if c is None:
+        from .compute import Compute
+
+        _COMPUTE_CLS = Compute
+        return Compute
+    return c
+
+
+def _ctx_base(ctx: Any) -> Any:
+    """The stable underlying dict for ``ctx``.
+
+    If ``ctx`` is a :class:`~lazily.compute.Compute` view (the transient
+    per-recompute wrapper), return its stable underlying dict — so a cell/slot
+    CONSTRUCTED inside a compute captures the durable context, never the wrapper
+    that is retired when the recompute returns (``#lzcellkernel`` item 3).
+    """
+    c = _compute_cls()
+    if isinstance(ctx, c):
+        return ctx.underlying
+    return ctx
+
+
+def _ctx_unwrap(ctx: Any) -> Any:
+    """Return ``(base_dict, reader_or_None)`` for ``ctx``.
+
+    ``reader`` is the recomputing node when ``ctx`` is a compute view, else
+    ``None`` (an untracked top-level call). ``base_dict`` is always the stable
+    underlying dict, so ``resolve_ctx`` and the cache map operate below the
+    wrapper (``#lzcellkernel`` item 4).
+    """
+    c = _compute_cls()
+    if isinstance(ctx, c):
+        return (ctx.underlying, ctx.node)
+    return (ctx, None)
+
+
+# :class:`lazily.compute.BoundHandle` — the reader-bound value handle returned by
+# ``name(ctx)`` on a value-threaded read. It is defined in the interpreted
+# ``compute`` module (it needs a property setter + ``__getattr__``, which mypyc
+# cannot compile on a non-native class) and captured here lazily, like
+# :func:`_compute_cls`.
+_BOUND_HANDLE_CLS: Any = None
+
+
+def _bound_handle(target: Any, reader: Any) -> Any:
+    global _BOUND_HANDLE_CLS
+    c = _BOUND_HANDLE_CLS
+    if c is None:
+        from .compute import BoundHandle
+
+        _BOUND_HANDLE_CLS = BoundHandle
+        c = BoundHandle
+    return c(target, reader)
+
+
+def _wrap_read(result: Any, reader: Any) -> Any:
+    """Wrap ``result`` in a ``BoundHandle`` iff it is a trackable value node.
+
+    Detection is duck-typed (``_subscribe``) to avoid importing ``Cell`` /
+    ``Computed`` into this base module. A non-reactive result (a plain value a
+    slot computed) is returned unchanged, as is any read with no reader in scope.
+
+    NOTE (``#lzcellkernel`` residual): value-threaded wrapping is currently
+    **disabled** in favour of the ambient ``slot_stack`` bridge below — the full
+    ambient-removal is blocked by pervasive bare-read call sites (``obj.value`` /
+    ``obj.get()`` / ``obj.method()`` reads inside reactive bodies, in tests and
+    feature modules) that a value-threaded ``name(ctx)`` handle cannot reach. The
+    machinery is retained (and used by :meth:`Compute.read`) so the removal can be
+    finished per-call-site later; see the module note in ``compute.py``.
+    """
+    if reader is not None and getattr(result, "_subscribe", None) is not None:
+        return _bound_handle(result, reader)
+    return result
+
+
+# The ambient current-node bridge (``#lzcellkernel`` residual). Retained as the
+# tracking carrier for **bare** reads (``cell.value`` / ``cell.get()`` inside a
+# reactive body with no threaded ``ctx``), which the value-threaded surfaces
+# cannot reach. Each recompute driver pushes the recomputing node here for the
+# duration of its body; a bare ``.value`` read attributes to ``slot_stack[-1]``.
+# Explicit ``Compute.read`` reads suspend it (see ``compute._read_untracked``),
+# so a value-threaded read never double-attributes through the ambient path.
+slot_stack: list[Any] = []
 
 
 # ---------------------------------------------------------------------------
@@ -189,12 +324,17 @@ class BaseSlot[C_in, C_ctx: dict, T]:
 
     __slots__ = ("callable", "resolve_ctx")
 
-    callable: Callable[[C_ctx], T]
+    # The callable receives a per-recompute ``Compute`` view (a dict-proxying
+    # tracking surface), NOT a raw dict — so its parameter is typed ``Any``. This
+    # also stops mypyc from coercing a callable *defined in a compiled module*
+    # (a wrapping lambda) to a ``dict`` parameter at entry, which would reject the
+    # view at runtime.
+    callable: Callable[[Any], T]
     resolve_ctx: Callable[[C_in], C_ctx]
 
     def __init__(
         self,
-        callable: Callable[[C_ctx], T] | None = None,
+        callable: Callable[[Any], T] | None = None,
         resolve_ctx: Callable[[C_in], C_ctx] | None = None,
     ) -> None:
         if callable is not None:
@@ -206,41 +346,46 @@ class BaseSlot[C_in, C_ctx: dict, T]:
         )
 
     def __call__(self, ctx: C_in) -> T:
+        base, reader = _ctx_unwrap(ctx)
         resolve = self.resolve_ctx
-        if resolve is resolve_identity:
-            resolved: C_ctx = ctx  # type: ignore[assignment]
-        else:
-            resolved = resolve(ctx)
+        resolved: Any = base if resolve is resolve_identity else resolve(base)
         if self in resolved:
-            return resolved[self]
-        resolved[self] = _callable_of(self)(resolved)
-        return resolved[self]
+            return _wrap_read(resolved[self], reader)
+        # BaseSlot is the non-tracking base: it registers no slot edge of its
+        # own. When a reader is in scope, its callable runs under a compute view
+        # carrying the OUTER reader, so any reactive reads the callable performs
+        # (e.g. a source cell whose initial value reads another node) attribute to
+        # that reader — exactly as the ambient path attributed them to the frame
+        # on the stack.
+        if reader is not None:
+            view = _compute_cls()(resolved, reader)
+            try:
+                resolved[self] = _callable_of(self)(view)
+            finally:
+                view._close()
+        else:
+            resolved[self] = _callable_of(self)(resolved)
+        return _wrap_read(resolved[self], reader)
 
     def __repr__(self) -> str:
         return f"<Slot {_callable_of(self)}>"
 
     def get(self, ctx: C_in) -> T | None:
+        base = _ctx_base(ctx)
         resolve = self.resolve_ctx
-        if resolve is resolve_identity:
-            resolved: C_ctx = ctx  # type: ignore[assignment]
-        else:
-            resolved = resolve(ctx)
+        resolved: Any = base if resolve is resolve_identity else resolve(base)
         return resolved.get(self)
 
     def reset(self, ctx: C_in) -> None:
+        base = _ctx_base(ctx)
         resolve = self.resolve_ctx
-        if resolve is resolve_identity:
-            resolved: C_ctx = ctx  # type: ignore[assignment]
-        else:
-            resolved = resolve(ctx)
+        resolved: Any = base if resolve is resolve_identity else resolve(base)
         resolved.pop(self, None)
 
     def is_in(self, ctx: C_in) -> bool:
+        base = _ctx_base(ctx)
         resolve = self.resolve_ctx
-        if resolve is resolve_identity:
-            resolved: C_ctx = ctx  # type: ignore[assignment]
-        else:
-            resolved = resolve(ctx)
+        resolved: Any = base if resolve is resolve_identity else resolve(base)
         return self in resolved
 
 
@@ -260,7 +405,7 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
 
     def __init__(
         self,
-        callable: Callable[[C_ctx], T] | None = None,
+        callable: Callable[[Any], T] | None = None,
         resolve_ctx: Callable[[C_in], C_ctx] | None = None,
     ) -> None:
         super().__init__(callable=callable, resolve_ctx=resolve_ctx)
@@ -341,47 +486,47 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
             resolved = resolve(ctx)
         resolved.pop(self, None)
 
+    def _subscribe(self, reader: Any) -> None:
+        """Register ``self -> reader`` (a reader depends on this slot's value)."""
+        _register_edge(self, reader)
+
     def __call__(self, ctx: C_in) -> T:
         if self._disposed:
             raise DisposedError(f"read of disposed slot {self!r}")
-        if slot_stack:
+        base, reader = _ctx_unwrap(ctx)
+        # A reader in scope depends on this slot's value; the reader is the value
+        # threaded through the compute view, or (bare read) the ambient top.
+        if reader is None and slot_stack:
             reader = slot_stack[-1]
-            if self._parents is None:
-                self._parents = set()
-            self._parents.add(reader)
-            # Symmetric forward edge. Both directions are recorded in the same
-            # branch so they cannot drift: a reverse edge without its forward
-            # partner is an edge disposal can never find.
-            if reader._deps is None:
-                reader._deps = set()
-            reader._deps.add(self)
+        if reader is not None:
+            _register_edge(self, reader)
 
         resolve = self.resolve_ctx
-        if resolve is resolve_identity:
-            resolved: C_ctx = ctx  # type: ignore[assignment]
-        else:
-            resolved = resolve(ctx)
+        resolved: Any = base if resolve is resolve_identity else resolve(base)
 
         if self in resolved:
-            return resolved[self]
+            return _wrap_read(resolved[self], reader)
 
+        # Forward edges describe the *current* run, so they are dropped before the
+        # body and rebuilt by its reads. Mint a per-recompute compute view
+        # carrying THIS slot (for value-threaded ``ctx.read`` / dict-proxy access)
+        # AND push it onto the ambient bridge (for bare reads inside the body).
+        self._deps = None
+        view = _compute_cls()(resolved, self)
+        slot_stack.append(self)
         try:
-            slot_stack.append(self)
-            # Forward edges describe the *current* run, so they are dropped
-            # before the body and rebuilt by its reads. Mirrors the reverse
-            # direction, which ``_invalidate`` rebinds for the same reason.
-            self._deps = None
-            resolved[self] = _callable_of(self)(resolved)
+            resolved[self] = _callable_of(self)(view)
         finally:
             slot_stack.pop()
+            view._close()
 
-        return resolved[self]
+        return _wrap_read(resolved[self], reader)
 
     def reset(self, ctx: C_in) -> None:
         # Push self onto the iterative work-stack; the drain clears the cache,
         # snapshots + clears the downstream edges, and propagates to parents in
         # one coalesced wave (see ``_drain_resets``).
-        _reset_work.append((self, ctx))
+        _reset_work.append((self, _ctx_base(ctx)))
         _drain_resets()
 
     def _invalidate(self, ctx: Any) -> None:
@@ -411,13 +556,11 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         # them into the coalesced invalidation wave — no tuple alloc.
         pare = self._parents
         if pare:
+            base = _ctx_base(ctx)
             self._parents = None
             for parent in pare:
-                _reset_work.append((parent, ctx))
+                _reset_work.append((parent, base))
             _drain_resets()
-
-
-slot_stack: list[Slot[Any, Any, Any]] = []
 
 
 class slot[C_dict: dict, T](Slot[C_dict, C_dict, T]):
@@ -443,7 +586,7 @@ class slot[C_dict: dict, T](Slot[C_dict, C_dict, T]):
         super().__init__(callable=callable)
 
 
-def slot_def[C_in, C_ctx: dict, T](
+def cell_def[C_in, C_ctx: dict, T](
     resolve_ctx: Callable[[C_in], C_ctx],
 ) -> Callable[[Callable[[C_ctx], T]], Slot[C_in, C_ctx, T]]:
     """Decorator factory for a context-cached, storage-sense :class:`Slot` with a
@@ -452,9 +595,29 @@ def slot_def[C_in, C_ctx: dict, T](
     The resolver variant of the storage-sense :class:`Slot` primitive (the Python
     analog of ``lazily-rs``'s surviving storage-sense ``Slot``). For a *guarded*
     derived value use :func:`~lazily.signal.computed_def` instead.
+
+    ``cell_def`` is the v2 spelling (source/computed/cell vocabulary,
+    ``#lzcellkernel``); it supersedes :func:`slot_def`, which remains as a
+    deprecated alias.
     """
 
     def outer(callable: Callable[[C_ctx], T]) -> Slot[C_in, C_ctx, T]:
         return Slot[C_in, C_ctx, T](callable=callable, resolve_ctx=resolve_ctx)
 
     return outer
+
+
+def slot_def[C_in, C_ctx: dict, T](
+    resolve_ctx: Callable[[C_in], C_ctx],
+) -> Callable[[Callable[[C_ctx], T]], Slot[C_in, C_ctx, T]]:
+    """Deprecated alias for :func:`cell_def`.
+
+    Retained so existing ``@slot_def(resolve_ctx)`` call sites keep working; new
+    code should use :func:`cell_def`.
+    """
+    warnings.warn(
+        "slot_def() is deprecated; use cell_def()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return cell_def(resolve_ctx)
