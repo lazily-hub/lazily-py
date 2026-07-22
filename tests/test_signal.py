@@ -1,37 +1,37 @@
-"""Tests for the eager ``Signal`` primitive (Slot → Cell → Signal family)."""
+"""Tests for the eager ``Computed`` (``computed(ctx, f).eager()``)."""
 
 from __future__ import annotations
 
-from lazily import Signal, cell, signal, slot
+from lazily import Slot, computed, source
 
 
-def test_signal_eager_value_at_creation() -> None:
+def test_computed_eager_value_at_creation() -> None:
     ctx: dict = {}
-    n = cell(lambda c: 1)
-    doubled = Signal(ctx, lambda c: n(c).value * 2)
+    n = source(lambda c: 1)
+    doubled = computed(ctx, lambda c: n(c).value * 2).eager()
     # Eager: value is materialized at construction, no read needed first.
     assert doubled.value == 2
 
 
-def test_signal_recomputes_eagerly_on_dependency_change() -> None:
+def test_computed_recomputes_eagerly_on_dependency_change() -> None:
     ctx: dict = {}
-    n = cell(lambda c: 1)
-    doubled = Signal(ctx, lambda c: n(c).value * 2)
+    n = source(lambda c: 1)
+    doubled = computed(ctx, lambda c: n(c).value * 2).eager()
     assert doubled.value == 2
 
     n(ctx).value = 5
-    # No read of the cell needed to refresh — the Signal already recomputed.
+    # No read of the cell needed to refresh — the computed already recomputed.
     assert doubled.value == 10
 
 
-def test_signal_memo_guard_suppresses_equal_recompute() -> None:
+def test_computed_guard_suppresses_equal_recompute() -> None:
     ctx: dict = {}
-    src = cell(lambda c: 10)
-    sig = Signal(ctx, lambda c: src(c).value // 10)
+    src = source(lambda c: 10)
+    sig = computed(ctx, lambda c: src(c).value // 10).eager()
 
     runs = {"n": 0}
 
-    @slot
+    @Slot
     def view(c: dict) -> int:
         runs["n"] += 1
         return sig.value
@@ -39,23 +39,23 @@ def test_signal_memo_guard_suppresses_equal_recompute() -> None:
     assert view(ctx) == 1
     assert runs["n"] == 1
 
-    # 10 -> 15: signal recomputes to 1 (equal) -> downstream cache preserved.
+    # 10 -> 15: computed recomputes to 1 (equal) -> downstream cache preserved.
     src(ctx).value = 15
     assert view(ctx) == 1
     assert runs["n"] == 1
 
-    # 15 -> 20: signal -> 2 -> downstream invalidated and recomputed.
+    # 15 -> 20: computed -> 2 -> downstream invalidated and recomputed.
     src(ctx).value = 20
     assert view(ctx) == 2
     assert runs["n"] == 2
 
 
-def test_signal_tracked_as_dependency_by_slot() -> None:
+def test_computed_tracked_as_dependency_by_slot() -> None:
     ctx: dict = {}
-    n = cell(lambda c: 2)
-    sig = Signal(ctx, lambda c: n(c).value + 1)
+    n = source(lambda c: 2)
+    sig = computed(ctx, lambda c: n(c).value + 1).eager()
 
-    @slot
+    @Slot
     def derived(c: dict) -> int:
         return sig.value * 100
 
@@ -64,11 +64,11 @@ def test_signal_tracked_as_dependency_by_slot() -> None:
     assert derived(ctx) == 1000
 
 
-def test_chained_signals() -> None:
+def test_chained_eager_computeds() -> None:
     ctx: dict = {}
-    base = cell(lambda c: 1)
-    a = Signal(ctx, lambda c: base(c).value + 1)
-    b = Signal(ctx, lambda c: a.value * 10)
+    base = source(lambda c: 1)
+    a = computed(ctx, lambda c: base(c).value + 1).eager()
+    b = computed(ctx, lambda c: a.value * 10).eager()
 
     assert a.value == 2
     assert b.value == 20
@@ -78,46 +78,44 @@ def test_chained_signals() -> None:
     assert b.value == 60
 
 
-def test_signal_dispose_reverts_to_lazy() -> None:
+def test_computed_dispose_reverts_to_lazy() -> None:
     ctx: dict = {}
-    src = cell(lambda c: 1)
-    sig = Signal(ctx, lambda c: src(c).value * 2)
+    src = source(lambda c: 1)
+    sig = computed(ctx, lambda c: src(c).value * 2).eager()
     assert sig.value == 2
-    assert sig.is_active()
+    assert sig.is_eager()
 
     sig.dispose()
-    assert not sig.is_active()
+    assert not sig.is_eager()
 
     src(ctx).value = 5
     # Eager puller removed; value is recomputed lazily on the next read.
     assert sig.value == 10
 
 
-def test_signal_decorator_is_context_cached() -> None:
+def test_eager_computed_factory_is_context_cached() -> None:
     ctx: dict = {}
-    n = cell(lambda c: 3)
+    n = source(lambda c: 3)
 
-    @signal
-    def tripled(c: dict) -> int:
-        return n(c).value * 3
+    tripled = Slot(lambda c: computed(c, lambda cc: n(cc).value * 3).eager())
 
     s1 = tripled(ctx)
     s2 = tripled(ctx)
-    assert s1 is s2  # one eager Signal per context
+    assert s1 is s2  # one eager computed per context
     assert s1.value == 9
 
     n(ctx).value = 4
     assert tripled(ctx).value == 12
 
 
-def test_signal_depends_on_slot() -> None:
+def test_computed_depends_on_slot() -> None:
     ctx: dict = {}
 
-    @slot
+    @Slot
     def base(c: dict) -> int:
         return 21
 
-    sig = Signal(ctx, lambda c: base(c) * 2)
+    sig = computed(ctx, lambda c: base(c) * 2).eager()
     assert sig.value == 42
 
     base.reset(ctx)
@@ -125,7 +123,7 @@ def test_signal_depends_on_slot() -> None:
 
     runs = {"n": 0}
 
-    @slot
+    @Slot
     def view(c: dict) -> int:
         runs["n"] += 1
         return base(c) + sig.value
@@ -136,10 +134,10 @@ def test_signal_depends_on_slot() -> None:
     assert runs["n"] == 1
 
 
-def test_signal_get_and_call_aliases() -> None:
+def test_computed_get_and_call_aliases() -> None:
     ctx: dict = {}
-    n = cell(lambda c: 7)
-    sig = Signal(ctx, lambda c: n(c).value)
+    n = source(lambda c: 7)
+    sig = computed(ctx, lambda c: n(c).value).eager()
     assert sig.get() == 7
     assert sig() == 7
     assert sig.value == 7

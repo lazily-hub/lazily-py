@@ -50,7 +50,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .cell import Cell
-from .slot import slot
+from .slot import Slot
 
 
 if TYPE_CHECKING:
@@ -168,9 +168,9 @@ class RelayCell[T]:
         self._head: Cell[T | None] = Cell(ctx, None)
         # Ops merged into the current window since the last drain (the Count bound).
         self._pending: Cell[int] = Cell(ctx, 0)
-        self._depth = slot(lambda _c: self._pending.get())
-        self._is_full = slot(lambda c: self._depth(c) >= self._policy.high_water.get())
-        self._is_empty = slot(lambda _c: self._head.get() is None)
+        self._depth = Slot(lambda _c: self._pending.get())
+        self._is_full = Slot(lambda c: self._depth(c) >= self._policy.high_water.get())
+        self._is_empty = Slot(lambda _c: self._head.get() is None)
 
     @property
     def policy(self) -> BackpressurePolicy:

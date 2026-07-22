@@ -20,7 +20,6 @@ from lazily import (
     VecDequeStorage,
     batch,
     effect,
-    slot,
 )
 
 
@@ -120,7 +119,7 @@ def test_closure_lifecycle() -> None:
 
 
 def _reader(ctx: dict, fn) -> Slot:  # type: ignore[type-arg]
-    @slot
+    @Slot
     def r(ctx):
         return fn()
 

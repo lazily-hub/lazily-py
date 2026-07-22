@@ -60,20 +60,21 @@ Mutable value holder that notifies dependent slots when changed.
 | `cell.set(x)` | Alias for value setter |
 | `cell.touch()` | Invalidate dependents |
 
-**No reactive exposes an observer API** — neither `Cell` nor `Signal`.
-Observation is a declared dependency edge — read the cell from a `Slot`,
-`Signal`, or `Effect` — not a registered callback. For a stream of every
-transition, use `Topic`.
+**No reactive exposes an observer API** — neither `Cell` nor `Computed`.
+Observation is a declared dependency edge — read the cell from a `Computed` or
+`Effect` — not a registered callback. For a stream of every transition, use
+`Topic`.
 
-### Signal
+### Eager Computed
 
-Eager derived value — the third member of the `Slot → Cell → Signal` family.
-Where a `Slot` is **lazy** (invalidation marks it dirty and the value recomputes
-on the next read), a `Signal` is **eager**: it computes once at construction and
-recomputes immediately whenever a tracked dependency changes. It is composed from
-existing primitives — a memoized `Slot` plus a puller `Effect` that re-pulls the
-slot when it is invalidated — and applies a memo/PartialEq guard so an eager
-recompute that yields an equal value suppresses the downstream cascade.
+Eager derived value — `computed(ctx, f).eager()`. Where a lazy `Computed`
+marks itself dirty on invalidation and recomputes on the next read, an **eager**
+`Computed` computes once at construction and recomputes immediately whenever a
+tracked dependency changes. It is composed from existing primitives — a memoized
+backing `Slot` plus a puller `Effect` that re-pulls the slot when it is
+invalidated — and applies the PartialEq guard so an eager recompute that yields
+an equal value suppresses the downstream cascade. (`.eager()` is idempotent and
+returns the same handle; `.lazy()` reverses it.)
 
 **Types:**
 
@@ -471,7 +472,7 @@ conformance-tested).
 
 `StateMirror` projects one local reactive context onto the `Snapshot`/`Delta`
 wire plane. The value-mirror default resolves each invalidated allowlisted slot
-at flush so the delta carries concrete `SlotValue`s; an eager `Signal` whose
+at flush so the delta carries concrete `SlotValue`s; an eager `Computed` whose
 value changed publishes a `SlotValue` for its backing slot; an equal recompute
 (memo guard) suppresses both `SlotValue` and downstream invalidation. A
 `PeerPermissions` boundary omits non-readable nodes entirely from both the

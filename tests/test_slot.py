@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lazily import Slot, slot
+from lazily import Slot
 
 
 class TestSlot:
@@ -62,7 +62,7 @@ class TestSlotClass:
 
     def test_simple_slot(self):
         """Test basic slot functionality."""
-        hello = slot(lambda ctx: "Hello")
+        hello = Slot(lambda ctx: "Hello")
 
         ctx = {}
         result_hello = hello(ctx)
@@ -71,7 +71,7 @@ class TestSlotClass:
         assert hello in ctx
         assert ctx[hello] == "Hello"
 
-        @slot
+        @Slot
         def world(ctx: dict) -> str:
             return "World"
 
@@ -84,7 +84,7 @@ class TestSlotClass:
         """Test that slot caches results."""
         call_count = 0
 
-        @slot
+        @Slot
         def counter(ctx: dict):
             nonlocal call_count
             call_count += 1
@@ -105,9 +105,9 @@ class TestSlotClass:
     def test_slot_dependency_chain(self):
         """Test slot objects depending on other slot objects."""
 
-        first = slot(lambda ctx: "Hello")
-        second = slot(lambda ctx: "World")
-        combined = slot(lambda ctx: f"{first(ctx)} {second(ctx)}!")
+        first = Slot(lambda ctx: "Hello")
+        second = Slot(lambda ctx: "World")
+        combined = Slot(lambda ctx: f"{first(ctx)} {second(ctx)}!")
 
         ctx = {}
         result = combined(ctx)
@@ -119,7 +119,7 @@ class TestSlotClass:
 
     def test_multiple_contexts(self):
         """Test that different contexts are independent."""
-        value = slot(lambda ctx: len(ctx))
+        value = Slot(lambda ctx: len(ctx))
 
         ctx1 = {}
         ctx2 = {"existing": "value"}
@@ -132,8 +132,8 @@ class TestSlotClass:
 
     def test_slot_with_complex_types(self):
         """Test slot with complex return types."""
-        dict_slot = slot(lambda ctx: {"key": "value", "number": 42})
-        list_slot = slot(lambda ctx: [1, 2, 3])
+        dict_slot = Slot(lambda ctx: {"key": "value", "number": 42})
+        list_slot = Slot(lambda ctx: [1, 2, 3])
 
         ctx = {}
 
@@ -150,7 +150,7 @@ class TestIntegration:
     def test_complex_dependency_graph(self):
         """Test a complex dependency graph."""
 
-        @slot
+        @Slot
         def config(ctx: dict) -> dict:
             return {"api_url": "https://api.example.com", "timeout": 30}
 
@@ -161,10 +161,10 @@ class TestIntegration:
 
         http_client = HttpClient()
 
-        user_service_slot = slot(lambda ctx: f"UserService({http_client(ctx)})")
-        auth_service_slot = slot(lambda ctx: f"AuthService({http_client(ctx)})")
+        user_service_slot = Slot(lambda ctx: f"UserService({http_client(ctx)})")
+        auth_service_slot = Slot(lambda ctx: f"AuthService({http_client(ctx)})")
 
-        @slot
+        @Slot
         def app(ctx: dict) -> str:
             return f"App(user={user_service_slot(ctx)}, auth={auth_service_slot(ctx)})"
 
@@ -180,7 +180,7 @@ class TestEdgeCases:
 
     def test_empty_context(self):
         """Test behavior with empty context."""
-        simple_slot = slot(lambda ctx: "value")
+        simple_slot = Slot(lambda ctx: "value")
 
         ctx = {}
         result = simple_slot(ctx)
@@ -190,7 +190,7 @@ class TestEdgeCases:
 
     def test_context_mutation(self):
         """Test that slot objects can read from context mutations."""
-        reader_slot = slot(lambda ctx: ctx.get("dynamic_value", "not_found"))
+        reader_slot = Slot(lambda ctx: ctx.get("dynamic_value", "not_found"))
 
         ctx = {}
 
@@ -202,7 +202,7 @@ class TestEdgeCases:
         ctx["dynamic_value"] = "found"
 
         # Create new slot that reads the same key
-        reader_slot2 = slot(lambda ctx: ctx.get("dynamic_value", "not_found"))
+        reader_slot2 = Slot(lambda ctx: ctx.get("dynamic_value", "not_found"))
         result2 = reader_slot2(ctx)
         assert result2 == "found"
 
@@ -212,7 +212,7 @@ class TestEdgeCases:
 
     def test_none_values(self):
         """Test handling of None values."""
-        none_slot = slot(lambda ctx: None)
+        none_slot = Slot(lambda ctx: None)
 
         ctx = {}
         result = none_slot(ctx)
@@ -223,7 +223,7 @@ class TestEdgeCases:
 
     def test_exception_in_callable(self):
         """Test behavior when callable raises an exception."""
-        error_slot = slot(lambda ctx: 1 / 0)  # Division by zero
+        error_slot = Slot(lambda ctx: 1 / 0)  # Division by zero
 
         ctx = {}
 
@@ -238,7 +238,7 @@ class TestEdgeCases:
 
         class BarCtx(dict): ...
 
-        @slot
+        @Slot
         def foo(ctx: FooCtx) -> int:
             return 1
 

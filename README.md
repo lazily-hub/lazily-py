@@ -32,26 +32,29 @@ side table — not a distinct type), so N writes inside one `batch` re-materiali
 the computed **once**, at the flush. **Every cell is guarded** — an equal
 recompute is suppressed by the `PartialEq` guard (matching TC39
 `Signal.Computed`), so unchanged values never cascade downstream work. There is
-**no unguarded mode**: for a genuinely non-`__eq__` value, hold it in the
-lower-level, unguarded `slot` storage primitive instead. The former separate
-`memo` construction is retired — `computed` now *is* the guarded form.
+**no unguarded derived mode**: `computed` *is* the guarded derived constructor,
+and the former separate `memo` construction is retired.
 
-> **Migration note.** The eager `Signal` is retired: `Signal(ctx, f)` is now a
-> back-compat alias for `computed(ctx, f).eager()`, and `signal` / `signal_def`
-> remain as deprecated decorators. The v1 kernel names `SourceCell` /
-> `FormulaCell` / `formula` / `.drive()` / `.undrive()` / `is_driven` remain as
-> aliases of `Source` / `Computed` / `computed` / `.eager()` / `.lazy()` /
-> `is_eager`. Python has no compile-time read/write split (see the design's §4):
-> the split is a **convention** — a `Source` has `set` / `merge`, a `Computed`
-> does not — not a runtime gate. Old names (`Cell`, `slot`, `Signal`,
-> `MergeCell`, …) are kept as working aliases.
+> **Migration note (v2 Cell kernel, `#lzcellkernel`).** The v1 value vocabulary
+> is **removed**: `Signal` / `signal` / `signal_def`, `formula` / `formula_def` /
+> `FormulaCell`, `SourceCell` / `SourceCellSlot`, and the `.drive()` / `.undrive()`
+> / `is_driven` / `is_active` methods are gone. Use the v2 spelling instead — an
+> eager `Computed` is `computed(ctx, f).eager()`; the lifecycle is
+> `.eager()` / `.lazy()` / `.is_eager()`. The construction sugar `cell` /
+> `cell_def` is **deprecated** in favour of `source` / `source_def`, and the
+> derived-value `slot` decorator is **deprecated** in favour of the guarded
+> `computed` (`slot_def` remains as the storage-sense factory). Python has no
+> compile-time read/write split (see the design's §4): the split is a
+> **convention** — a `Source` has `set` / `merge`, a `Computed` does not — not a
+> runtime gate.
 
 There is **no dedicated `Context` class** — a plain `dict` is the context, so the
 Rust reference's `ctx.computed(f)` is spelled `computed(ctx, f)` here. `Slot` is
-retained both as the lower-level unguarded storage primitive (`slot` / `slot_def`)
-and as the **storage position** that holds a node: a `Slot` uses itself as the
-dictionary key that caches its value, so any dict works as the reactive "world"
-(`lazily-spec` §5.0 "`Slot`-as-storage").
+retained as the **storage position** that holds a node: a `Slot` uses itself as
+the dictionary key that caches its value, so any dict works as the reactive
+"world" (`lazily-spec` §5.0 "`Slot`-as-storage"). It is the Python analog of
+`lazily-rs`'s surviving storage-sense `Slot`; construct it directly with
+`Slot(callable=…)` when a raw storage node is genuinely needed.
 
 ## Feature coverage
 
@@ -203,64 +206,62 @@ dirty; it does **not** recompute until called again.
 | Type | Purpose |
 |------|---------|
 | `BaseSlot[C_in, C_ctx, T]` | Base slot without subscriber support |
-| `Slot[C_in, C_ctx, T]` | Slot with dependency tracking and invalidation |
-| `slot` | Decorator: `Slot` with an identity context resolver |
-| `slot_def(resolve_ctx)` | Decorator factory for a custom context resolver |
+| `Slot[C_in, C_ctx, T]` | Storage-sense slot with dependency tracking and invalidation |
+| `slot` | **Deprecated** — use `computed` (guarded) or `Slot(callable=…)` (storage) |
+| `slot_def(resolve_ctx)` | Storage-sense decorator factory for a custom context resolver |
 
-### Cell
+### Source cell
 
-A `Cell` holds a mutable value. Reading `cell.value` inside a Slot auto-subscribes
-that Slot; assigning `cell.value = x` (or `cell.set(x)`) compares old and new via
-`!=` and, only if changed, cascades invalidation to dependents.
+A `Source` cell (native class `Cell`) holds a mutable value. Reading `cell.value`
+inside a `Computed` or `Effect` auto-subscribes that reader; assigning
+`cell.value = x` (or `cell.set(x)`) compares old and new via `!=` and, only if
+changed, cascades invalidation to dependents. Construct with `source` (the v1
+`cell` name is deprecated).
 
 | Type | Purpose |
 |------|---------|
-| `Cell[T]` | Mutable value with subscription support |
-| `CellSlot[C_in, C_ctx, T]` | Slot that returns a `Cell` |
-| `cell` | Decorator: `CellSlot` with an identity resolver |
-| `cell_def(resolve_ctx)` | Decorator factory for a custom context resolver |
+| `Cell[T]` / `Source[T]` | Mutable source value with subscription support |
+| `CellSlot[C_in, C_ctx, T]` | Slot that returns a `Source` cell |
+| `source` | Decorator: `CellSlot` with an identity resolver (canonical) |
+| `source_def(resolve_ctx)` | Decorator factory for a custom context resolver |
+| `cell` / `cell_def` | **Deprecated** v1 aliases of `source` / `source_def` |
 
-### Signal
+### Eager Computed
 
-A `Signal` is the **eager** counterpart to a lazy `Computed` — the back-compat
-name for `computed(ctx, f).eager()`. Where a lazy cell marks itself dirty on
-invalidation and recomputes on the next read, an eager one recomputes *the
-instant a dependency is invalidated*, before the mutating call returns. The value
-is always materialized, so observers never see an intermediate unset value.
+An **eager** `Computed` — `computed(ctx, f).eager()` — is the counterpart to a
+lazy `Computed`. Where a lazy cell marks itself dirty on invalidation and
+recomputes on the next read, an eager one recomputes *the instant a dependency is
+invalidated*, before the mutating call returns. The value is always materialized,
+so observers never see an intermediate unset value.
 
 ```python
-from lazily import CellSlot, signal
+from lazily import CellSlot, computed
 
 n = CellSlot[dict, dict, int]()
-
-
-@signal
-def doubled(ctx: dict) -> int:
-    return n(ctx).value * 2
-
 
 ctx: dict = {}
 n(ctx).value = 1
 
-s = doubled(ctx)   # eager: materialized now
-print(s.value)     # 2
+doubled = computed(ctx, lambda c: n(c).value * 2).eager()  # eager: materialized now
+print(doubled.value)   # 2
 
-n(ctx).value = 5   # doubled recomputes immediately
-print(s.value)     # 10 — already current, no lazy read needed
+n(ctx).value = 5       # doubled recomputes immediately
+print(doubled.value)   # 10 — already current, no lazy read needed
 ```
 
-A Signal is **composed from existing primitives**, not a parallel engine: a
-memoized Slot supplies glitch-free, memo-guarded recomputation, and a small
-puller re-materializes it after every invalidation to supply the eagerness.
-Consequently a Signal inherits the memo guard (an equal recompute suppresses the
-downstream cascade). `signal.dispose()` removes the eager puller — the value
-stays readable but reverts to lazy (recompute-on-read) behavior.
+An eager `Computed` is **composed from existing primitives**, not a parallel
+engine: a memoized backing `Slot` supplies glitch-free, guarded recomputation,
+and a small puller `Effect` re-materializes it after every invalidation to supply
+the eagerness. It inherits the guard (an equal recompute suppresses the
+downstream cascade). `.lazy()` (or `.dispose()`) removes the eager puller — the
+value stays readable but reverts to lazy (recompute-on-read) behavior.
 
-| Type | Purpose |
+| Method | Purpose |
 |------|---------|
-| `Signal[T]` | Eager derived value bound to a single context |
-| `signal` | Decorator: context-cached eager-Signal factory (one Signal per context) |
-| `signal_def(resolve_ctx)` | Decorator factory with a custom context resolver |
+| `computed(ctx, f)` | Lazy, guarded derived value bound to a context |
+| `computed(ctx, f).eager()` | The eager form (idempotent; returns the same handle) |
+| `.lazy()` / `.is_eager()` | Revert to lazy / query eagerness |
+| `computed_def(resolve_ctx)` | Decorator factory for a context-cached lazy `Computed` |
 
 ### StateMachine
 

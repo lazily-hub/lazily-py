@@ -6,13 +6,16 @@ via a compute function), with `Effect` the value-less sink. `Cell` is the value
 node the `Source` handle is bound to (kept as the native class for mypyc +
 `isinstance` stability). Every cell is **guarded** — an equal recompute
 suppresses the downstream cascade (matching TC39 `Signal.Computed`) — with **no
-unguarded mode**; for a non-`__eq__` value hold it in the lower-level, unguarded
-`slot` storage primitive. The eager construction is `computed(ctx, f).eager()`
-(retiring the former `Signal`, now a back-compat alias); `Slot` is retained as
-the context-as-dict storage position. Python has no compile-time read/write split
-(design §4) — the split is convention (a `Source` has `set` / `merge`, a
-`Computed` does not), and old names (`Cell`, `slot`, `Signal`, `MergeCell`,
-`SourceCell`, `FormulaCell`, `formula`, `.drive()`) stay as aliases. Includes
+unguarded derived mode**; `computed` *is* the guarded derived constructor. The
+eager construction is `computed(ctx, f).eager()` (`.eager()` / `.lazy()` /
+`.is_eager()`); `Slot` is retained as the context-as-dict storage position (the
+Python analog of `lazily-rs`'s surviving storage-sense `Slot`). The v1 value
+vocabulary (`Signal` / `signal` / `signal_def`, `formula` / `formula_def` /
+`FormulaCell`, `SourceCell` / `SourceCellSlot`, `.drive()` / `.undrive()` /
+`is_driven` / `is_active`) is **removed**; `source` / `computed` are canonical
+and `cell` / `cell_def` / `slot` are **deprecated** aliases. Python has no
+compile-time read/write split (design §4) — the split is convention (a `Source`
+has `set` / `merge`, a `Computed` does not). Includes
 automatic dependency tracking, the full lazily-spec wire protocol, CRDT
 collection types, the lossless tree CRDT, and the command/RPC message plane.
 

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from lazily import cell_def, slot_def
+from lazily import slot_def, source_def
 
 
 class TestDef:
@@ -16,12 +16,12 @@ class TestDef:
         def slot_events(ctx: dict) -> list[str]:
             return []
 
-        @cell_def(resolve_ctx)
+        @source_def(resolve_ctx)
         def hello(ctx: dict) -> str:
             slot_events(ctx).append("hello")
             return "Hello"
 
-        @cell_def(resolve_ctx)
+        @source_def(resolve_ctx)
         def name(ctx: dict) -> str:
             slot_events(ctx).append("name")
             return "World"
@@ -31,7 +31,7 @@ class TestDef:
             slot_events(ctx).append("greeting")
             return f"{hello(ctx).value} {name(ctx).value}!"
 
-        @cell_def(resolve_ctx)
+        @source_def(resolve_ctx)
         def response(ctx: dict) -> str:
             return "How are you?"
 

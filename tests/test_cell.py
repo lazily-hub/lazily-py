@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from lazily import BaseSlot, Cell, cell, slot, slot_def
+from lazily import BaseSlot, Cell, Slot, slot_def, source
 
 
 class TestCell:
@@ -15,26 +15,26 @@ class TestCell:
         def resolve_ctx(resolver: CustomCtxResolver | dict) -> dict:
             return resolver.ctx if isinstance(resolver, CustomCtxResolver) else resolver
 
-        @slot
+        @Slot
         def slot_events(ctx: dict) -> list[str]:
             return []
 
-        @slot
+        @Slot
         def hello(ctx: dict) -> Cell[str]:
             slot_events(ctx).append("hello")
             return Cell(ctx, "Hello")
 
-        @cell
+        @source
         def name(ctx: dict) -> str:
             slot_events(ctx).append("name")
             return "World"
 
-        @slot
+        @Slot
         def greeting(ctx: dict) -> str:
             slot_events(ctx).append("greeting")
             return f"{hello(ctx).value} {name(ctx).value}!"
 
-        @cell
+        @source
         def response(ctx: dict) -> str:
             return "How are you?"
 
@@ -83,26 +83,26 @@ class TestCell:
         def resolve_ctx(resolver: CustomCtxResolver | dict) -> dict:
             return resolver.ctx if isinstance(resolver, CustomCtxResolver) else resolver
 
-        @slot
+        @Slot
         def slot_events(ctx: dict) -> list[str]:
             return []
 
-        @slot
+        @Slot
         def hello(ctx: dict) -> Cell[str]:
             slot_events(ctx).append("hello")
             return Cell(ctx, "Hello")
 
-        @cell
+        @source
         def name(ctx: dict) -> str:
             slot_events(ctx).append("name")
             return "World"
 
-        @slot
+        @Slot
         def greeting(ctx: dict) -> str:
             slot_events(ctx).append("greeting")
             return f"{hello(ctx).value} {name(ctx).value}!"
 
-        @cell
+        @source
         def response(ctx: dict) -> str:
             return "How are you?"
 
@@ -144,9 +144,9 @@ class TestCell:
         ]
 
     def test_empty_cell(self) -> None:
-        empty_cell: BaseSlot[Any, Any, Cell[str]] = cell()
+        empty_cell: BaseSlot[Any, Any, Cell[str]] = source()
 
-        @slot
+        @Slot
         def cell_dependency(ctx: dict) -> str:
             return f"empty_cell={empty_cell(ctx).value}"
 

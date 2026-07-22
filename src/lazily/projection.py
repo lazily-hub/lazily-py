@@ -9,7 +9,7 @@ languages.
 
 The default is the **value-mirror**: at flush, the sender resolves each
 invalidated allowlisted slot so the delta carries concrete :class:`DeltaOp_SlotValue`
-ops (the receiver holds no compute closures). An eager :class:`lazily.signal.Signal`
+ops (the receiver holds no compute closures). An eager :class:`lazily.signal.Computed`
 whose value changed publishes a ``SlotValue`` for its backing slot; an equal
 recompute (the memo guard) suppresses both ``SlotValue`` and downstream
 invalidation.

@@ -35,7 +35,7 @@ faithfully, differs — see each test:
 
 from __future__ import annotations
 
-from lazily import Signal, cell, slot
+from lazily import Slot, computed, source
 from lazily.effect import effect
 
 
@@ -51,9 +51,9 @@ def test_reading_a_slot_does_not_cascade_and_preserves_its_edges() -> None:
     """
     runs: list[int] = []
     ctx: dict = {}
-    src = cell(lambda c: 1)
+    src = source(lambda c: 1)
 
-    @slot
+    @Slot
     def derived(c: dict) -> int:
         return src(c).value + 1
 
@@ -84,7 +84,7 @@ def test_reentrant_reset_from_an_effect_body_terminates() -> None:
     fired: list[int] = []
     ctx: dict = {}
 
-    @slot
+    @Slot
     def base(c: dict) -> int:
         return 1
 
@@ -106,9 +106,9 @@ def test_deep_slot_cascade_invalidates_without_recursion() -> None:
     stack. The reset cascade is one frame per level only because reset clears
     before notifying; the old notify-before-clear path recursed."""
     ctx: dict = {}
-    src = cell(lambda c: 1)
+    src = source(lambda c: 1)
 
-    @slot
+    @Slot
     def first(c: dict) -> int:
         return src(c).value + 1
 
@@ -116,7 +116,7 @@ def test_deep_slot_cascade_invalidates_without_recursion() -> None:
     chain: list = [first]
     for _ in range(depth):
         prev = chain[-1]
-        chain.append(slot(lambda c, p=prev: p(c) + 1))
+        chain.append(Slot(lambda c, p=prev: p(c) + 1))
 
     tail = chain[-1]
     assert tail(ctx) == depth + 2  # src(1) + 1 (first) + 1 per extra level
@@ -131,18 +131,18 @@ def test_signal_over_slot_cycle_invalidates_without_recursion() -> None:
     subscription cycle. Driving it from a Cell mutation exercised the
     RecursionError path."""
     ctx: dict = {}
-    src = cell(lambda c: 1)
+    src = source(lambda c: 1)
 
-    @slot
+    @Slot
     def mid(c: dict) -> int:
         return src(c).value + 1
 
-    sig = Signal(ctx, lambda c: mid(c) * 10)  # Signal reads Slot
+    sig = computed(ctx, lambda c: mid(c) * 10).eager()  # Signal reads Slot
     assert sig.value == 20
 
     runs = {"n": 0}
 
-    @slot
+    @Slot
     def downstream(c: dict) -> int:  # Slot reads Signal -> cycle closed
         runs["n"] += 1
         return sig.value + 1
@@ -160,15 +160,15 @@ def test_deep_signal_chain_propagates_without_recursion() -> None:
     """A deep chain of eager Signals over a Cell must recompute eagerly across
     the whole chain on a single mutation without RecursionError."""
     ctx: dict = {}
-    src = cell(lambda c: 0)
+    src = source(lambda c: 0)
 
-    sig = Signal(ctx, lambda c: src(c).value + 1)
+    sig = computed(ctx, lambda c: src(c).value + 1).eager()
     assert sig.value == 1
 
     depth = 200
     for _ in range(depth):
         prev = sig
-        sig = Signal(ctx, lambda c, p=prev: p.value + 1)
+        sig = computed(ctx, lambda c, p=prev: p.value + 1).eager()
 
     src(ctx).value = 7
     assert sig.value == 7 + 1 + depth  # eagerly recomputed end-to-end

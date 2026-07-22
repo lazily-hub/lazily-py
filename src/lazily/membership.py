@@ -316,7 +316,7 @@ class MembershipCell:
 
     def peer_set(self) -> set[Hashable]:
         """The reactive alive peer set. Reading this inside a
-        :class:`~lazily.slot.Slot` / :class:`~lazily.signal.Signal` /
+        :class:`~lazily.slot.Slot` / :class:`~lazily.signal.Computed` /
         :class:`~lazily.effect.Effect` subscribes it to the backing cell, so the
         reader is invalidated exactly when the alive set changes."""
         return set(self._peer_set.value)

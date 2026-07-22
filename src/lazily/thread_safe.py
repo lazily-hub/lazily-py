@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ThreadSafeContext"]
 
 import threading
+import warnings
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from .batch import batch as _sync_batch
@@ -76,16 +77,34 @@ class ThreadSafeContext:
     def lock(self) -> threading.RLock:
         return self._lock
 
-    def set_cell[T](self, cell: Cell[T], value: T) -> None:
-        """Queue a cell write under the lock. Outside a batch, apply it
-        immediately (refining the single-threaded kernel). Inside a batch,
-        defer the application to the outermost :meth:`batch` flush."""
+    def set[T](self, cell: Cell[T], value: T) -> None:
+        """Queue a **source cell** write under the lock. Outside a batch, apply it
+        immediately (refining the single-threaded kernel). Inside a batch, defer
+        the application to the outermost :meth:`batch` flush.
+
+        Only source cells are writable — a computed value has no ``set`` (write
+        protection), so this canonical writer accepts only :class:`~lazily.cell.Cell`.
+        """
         with self._lock:
             if self._depth == 0:
-                # Outside a batch: apply immediately (singleton batch ≡ setCell).
+                # Outside a batch: apply immediately (singleton batch ≡ set).
                 cell.set(value)
                 return
             self._pending.append(_PendingWrite(cell, value))
+
+    def get[T](self, cell: Cell[T]) -> T:
+        """Read a **source cell**'s current value under the lock."""
+        with self._lock:
+            return cell.get()
+
+    def set_cell[T](self, cell: Cell[T], value: T) -> None:
+        """Deprecated: use :meth:`set`. Queue a cell write under the lock."""
+        warnings.warn(
+            "set_cell() is deprecated; use set() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.set(cell, value)
 
     def scope(self, ctx: dict) -> TeardownScope:
         """Open a teardown scope over ``ctx``.
@@ -141,7 +160,7 @@ class ThreadSafeContext:
         # Run inside the single-threaded ``batch`` boundary so the *effect* half
         # of the frontier coalesces too. Touching cells directly leaves
         # ``in_batch()`` false, so every scheduled reader — an Effect, and
-        # therefore a Signal's eager puller — reruns inline once per changed
+        # therefore an eager Computed's puller — reruns inline once per changed
         # cell instead of once per batch. That is one compute per write rather
         # than one per flush, which ``reactive-graph.md`` § "Signal eagerness"
         # clause 3 forbids. The lock is already held here, and the sync boundary

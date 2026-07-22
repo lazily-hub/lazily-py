@@ -38,11 +38,12 @@ from __future__ import annotations
 
 __all__ = ["TeardownScope", "dispose_node", "teardown_scope"]
 
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from .cell import Cell
 from .effect import Effect
-from .slot import slot
+from .slot import Slot
 
 
 if TYPE_CHECKING:
@@ -77,13 +78,22 @@ class TeardownScope:
 
     # -- membership ------------------------------------------------------ #
 
-    def cell[T](self, initial_value: T) -> Cell[T]:
+    def source[T](self, initial_value: T) -> Cell[T]:
         """Create a source cell owned by this scope."""
         return self.adopt(Cell(self.ctx, initial_value))
 
-    def computed[T](self, callable: Callable[[dict], T]) -> slot[dict, T]:
-        """Create a lazily-computed slot owned by this scope."""
-        return self.adopt(slot(callable))
+    def cell[T](self, initial_value: T) -> Cell[T]:
+        """Deprecated v1 alias for :meth:`source`."""
+        warnings.warn(
+            "cell() is deprecated; use source() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.adopt(Cell(self.ctx, initial_value))
+
+    def computed[T](self, callable: Callable[[dict], T]) -> Slot[dict, dict, T]:
+        """Create a lazily-computed storage slot owned by this scope."""
+        return self.adopt(Slot(callable))
 
     def effect(self, body: Callable[[dict], Any | None]) -> Effect:
         """Register an effect owned by this scope and run its body once.

@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence  # noqa: TC003  (runtime import for setup)
+
 from setuptools import setup
 from setuptools.command.build_ext import build_ext as _build_ext
+
 
 # The reactive core, compiled as ONE compilation unit (see module docstring).
 _CORE_MODULES: Sequence[str] = (

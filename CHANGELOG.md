@@ -1,5 +1,25 @@
 ## Unreleased
 
+### Changed
+
+- **v2 Cell kernel (`#lzcellkernel`) — removed the v1 value vocabulary.**
+  `Signal` / `signal` / `signal_def`, `formula` / `formula_def` / `FormulaCell`,
+  `SourceCell` / `SourceCellSlot`, and the `Computed.drive()` / `.undrive()` /
+  `is_driven` / `is_active` methods are **deleted** (they shipped only in 0.x).
+  Use the v2 spelling: an eager `Computed` is `computed(ctx, f).eager()`; the
+  lifecycle is `.eager()` / `.lazy()` / `.is_eager()`.
+- **`source` / `computed` are the canonical constructors.** `cell` / `cell_def`
+  are **deprecated** aliases of `source` / `source_def`, and the derived-value
+  `slot` decorator is **deprecated** in favour of the guarded `computed`
+  (`Slot` remains as the storage-sense primitive; `slot_def` remains the
+  storage-sense resolver factory). Every derived cell is guarded — there is no
+  unguarded derived mode, and the former `memo` role folds into `computed`.
+- **Unified `get` / `set` on the async and thread-safe contexts.** `get` reads
+  both source cells and computed handles; `set` writes source cells only
+  (computed handles are not writable — write protection). `get_cell` / `set_cell`
+  are **deprecated** forwarders. `AsyncContext.cell` is deprecated toward
+  `AsyncContext.source`.
+
 ### Fixed
 
 - **`Signal` re-materialized once per write inside a `batch`, not once per

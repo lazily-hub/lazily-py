@@ -171,7 +171,7 @@ class ThreadSafeCellMap[K, V](ThreadSafeReactiveMap[K, V]):
         with self._mutex:
             handle = self._materialized.get(key)
         if handle is not None:
-            self._ts.set_cell(handle, value)  # type: ignore[arg-type]
+            self._ts.set(handle, value)  # type: ignore[arg-type]
             return
         self.get_or_insert_handle(key, lambda _k: value)
 

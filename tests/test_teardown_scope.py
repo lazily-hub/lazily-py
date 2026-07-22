@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from lazily import Cell, Effect, effect, slot
+from lazily import Cell, Effect, Slot, effect
 from lazily.async_context import AsyncContext
 from lazily.slot import DisposedError
 from lazily.teardown import TeardownScope, teardown_scope
@@ -64,8 +64,8 @@ def test_disposal_api_is_live_on_whichever_module_is_loaded(module: str) -> None
 def test_degrees_count_both_directions() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
-    mid = slot(lambda c: src.value + 1)
-    sink = slot(lambda c: mid(c) + 10)
+    mid = Slot(lambda c: src.value + 1)
+    sink = Slot(lambda c: mid(c) + 10)
 
     # Degrees are zero until something actually reads: an edge is discovered by
     # a read, never declared.
@@ -84,7 +84,7 @@ def test_degrees_count_both_directions() -> None:
 def test_repeated_reads_do_not_grow_the_degree() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
-    reader = slot(lambda c: src.value + src.value + src.value)
+    reader = Slot(lambda c: src.value + src.value + src.value)
     assert reader(ctx) == 3
     assert src.dependent_count() == 1
     assert reader.dependency_count() == 1
@@ -98,7 +98,7 @@ def test_repeated_reads_do_not_grow_the_degree() -> None:
 def test_disposal_detaches_both_directions() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
-    mid = slot(lambda c: src.value + 1)
+    mid = Slot(lambda c: src.value + 1)
     assert mid(ctx) == 2
     assert src.dependent_count() == 1
 
@@ -117,8 +117,8 @@ def test_disposal_dirties_a_surviving_reader() -> None:
     """
     ctx: dict = {}
     src = Cell(ctx, 4)
-    derived = slot(lambda c: src.value)
-    reader = slot(lambda c: derived(c) + 1)
+    derived = Slot(lambda c: src.value)
+    reader = Slot(lambda c: derived(c) + 1)
     assert reader(ctx) == 5
 
     derived.dispose(ctx)
@@ -139,7 +139,7 @@ def test_disposal_does_not_run_a_reached_effect() -> None:
     ctx: dict = {}
     runs: list[str] = []
     src = Cell(ctx, 1)
-    derived = slot(lambda c: src.value)
+    derived = Slot(lambda c: src.value)
 
     def body(_c: dict) -> None:
         runs.append("run")
@@ -160,7 +160,7 @@ def test_disposal_does_not_run_a_reached_effect() -> None:
 def test_disposal_is_idempotent_and_terminal() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
-    derived = slot(lambda c: src.value)
+    derived = Slot(lambda c: src.value)
     assert derived(ctx) == 1
 
     derived.dispose(ctx)
@@ -283,7 +283,7 @@ def test_scope_teardown_equals_the_fold_of_individual_disposals() -> None:
         ctx: dict = {}
         cleanups: list[str] = []
         topic = Cell(ctx, 1)
-        outside = slot(lambda c: topic.value + 100)
+        outside = Slot(lambda c: topic.value + 100)
         scope = TeardownScope(ctx)
 
         a = scope.computed(lambda c: topic.value + 1)
@@ -337,7 +337,7 @@ def test_disarm_disposes_nothing() -> None:
 
 def test_adopt_takes_ownership_of_an_existing_node() -> None:
     ctx: dict = {}
-    orphan = slot(lambda c: 7)
+    orphan = Slot(lambda c: 7)
     assert orphan(ctx) == 7
 
     with teardown_scope(ctx) as scope:
@@ -364,10 +364,10 @@ def test_closing_a_scope_twice_is_a_no_op() -> None:
 def test_async_scope_disposes_members_on_exit() -> None:
     async def main() -> None:
         ctx = AsyncContext()
-        topic = ctx.cell(2)
+        topic = ctx.source(2)
 
         async def double(cc: Any) -> int:
-            return cc.get_cell(topic) * 2
+            return cc.get(topic) * 2
 
         async with ctx.scope() as scope:
             doubled = scope.computed_async(double)
@@ -393,10 +393,10 @@ def test_async_disposal_dirties_a_surviving_reader() -> None:
 
     async def main() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(4)
+        src = ctx.source(4)
 
         async def derive(cc: Any) -> int:
-            return cc.get_cell(src)
+            return cc.get(src)
 
         derived = ctx.computed_async(derive)
 
@@ -420,10 +420,10 @@ def test_async_disposal_does_not_schedule_a_reached_effect() -> None:
     async def main() -> None:
         ctx = AsyncContext()
         runs: list[str] = []
-        src = ctx.cell(1)
+        src = ctx.source(1)
 
         async def derive(cc: Any) -> int:
-            return cc.get_cell(src)
+            return cc.get(src)
 
         derived = ctx.computed_async(derive)
 
@@ -482,10 +482,10 @@ def test_async_scope_tears_down_in_reverse_creation_order() -> None:
 def test_async_disarm_disposes_nothing() -> None:
     async def main() -> None:
         ctx = AsyncContext()
-        topic = ctx.cell(1)
+        topic = ctx.source(1)
 
         async def compute(cc: Any) -> int:
-            return cc.get_cell(topic)
+            return cc.get(topic)
 
         scope = ctx.scope()
         escaped = scope.computed_async(compute)

@@ -10,11 +10,12 @@ ordering). Disposal is terminal.
 This is the **sync** Effect — reruns fire synchronously within the invalidating
 call. The async counterpart (:class:`lazily.async_effect.AsyncEffect`) queues
 reruns at the batch boundary and is the right choice inside an ``asyncio``
-reactor; a :class:`Signal` is composed from a memoized Slot plus an eager
-puller-Effect (the eager puller here is local execution state, never serialized).
+reactor; an eager :class:`~lazily.signal.Computed` is composed from a memoized
+Slot plus an eager puller-Effect (the eager puller here is local execution state,
+never serialized).
 
 An Effect participates in the reactive graph's auto-dependency-tracking stack
-exactly like a Slot: every Cell/Slot/Signal read inside its body registers a
+exactly like a Slot: every Cell/Computed/Effect read inside its body registers a
 dependency, and stale dependencies from a previous run are re-discovered on the
 next rerun. Inside a :func:`lazily.batch.batch`, the rerun is coalesced into the
 batch's single invalidation wave.
@@ -91,7 +92,7 @@ class Effect(Slot[Any, dict, None]):
     def __call__(self, ctx: dict) -> None:
         """Run (or rerun) the body, auto-tracking dependencies.
 
-        Pushes self onto the dependency-tracking stack so every Cell/Slot/Signal
+        Pushes self onto the dependency-tracking stack so every Cell/Computed/Effect
         read inside ``body`` registers a dependency; a later invalidation of any
         tracked dependency calls :meth:`reset`, which reruns the body.
         """

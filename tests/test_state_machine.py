@@ -1,4 +1,4 @@
-from lazily import StateMachine, slot
+from lazily import Slot, StateMachine
 from lazily.batch import batch
 
 
@@ -86,7 +86,7 @@ class TestStateMachine:
 
         computed: list[int] = []
 
-        @slot
+        @Slot
         def state_len(ctx: dict) -> int:
             val = len(m.state)
             computed.append(val)

@@ -54,6 +54,7 @@ __all__ = [
 ]
 
 import asyncio
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from .async_effect import AsyncEffect, EffectState
@@ -62,6 +63,7 @@ from .slot import DisposedError
 
 
 if TYPE_CHECKING:
+    import builtins
     from collections.abc import Awaitable, Callable
 
 
@@ -383,7 +385,13 @@ class AsyncComputeContext:
         self._node = node
 
     def get_cell[T](self, cell: AsyncCellHandle[T]) -> T:
-        """Read a cell synchronously, recording it as a dependency."""
+        """Deprecated: use :meth:`get`, which reads both source and computed
+        handles. Reads a cell synchronously, recording it as a dependency."""
+        warnings.warn(
+            "get_cell() is deprecated; use get() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._node._track(cell)
         return cell.get()
 
@@ -392,10 +400,15 @@ class AsyncComputeContext:
         self._node._track(slot)
         return await slot.get_async()
 
-    def get[T](self, slot: AsyncSlotHandle[T]) -> T | None:
-        """Non-blocking cached read of a slot, recording it as a dependency."""
-        self._node._track(slot)
-        return slot.get()
+    def get[T](
+        self, handle: AsyncCellHandle[T] | AsyncSlotHandle[T]
+    ) -> T | None:
+        """Non-blocking cached read of a **source cell or computed slot**,
+        recording it as a dependency. The unified reader: a source
+        (:class:`AsyncCellHandle`) returns its current value; a computed
+        (:class:`AsyncSlotHandle`) returns its cached value or ``None``."""
+        self._node._track(handle)
+        return handle.get()
 
 
 class AsyncContext:
@@ -432,17 +445,53 @@ class AsyncContext:
 
     # -- handles --------------------------------------------------------- #
 
-    def cell[T](self, value: T) -> AsyncCellHandle[T]:
-        """Create a mutable input cell."""
+    def source[T](self, value: T) -> AsyncCellHandle[T]:
+        """Create a mutable source (input) cell — the canonical constructor."""
         return AsyncCellHandle(self, value)
 
+    def cell[T](self, value: T) -> AsyncCellHandle[T]:
+        """Deprecated v1 alias for :meth:`source`."""
+        warnings.warn(
+            "cell() is deprecated; use source() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return AsyncCellHandle(self, value)
+
+    def get[T](
+        self, handle: AsyncCellHandle[T] | AsyncSlotHandle[T]
+    ) -> T | None:
+        """Read a **source cell or computed slot** (synchronous cached read).
+
+        The unified reader over both handle kinds: a source
+        (:class:`AsyncCellHandle`) returns its current value; a computed
+        (:class:`AsyncSlotHandle`) returns its cached value or ``None`` (the warm
+        fast path — never spawns a computation)."""
+        return handle.get()
+
+    def set[T](self, handle: AsyncCellHandle[T], value: T) -> None:
+        """Write a **source cell** and invalidate dependents. Only source handles
+        are writable — a computed slot has no ``set`` (write protection). Inside a
+        :meth:`batch`, the invalidation is queued and fires once at the outermost
+        boundary."""
+        handle.set(value)
+
     def get_cell[T](self, handle: AsyncCellHandle[T]) -> T:
-        """Read a cell's value (synchronous)."""
+        """Deprecated: use :meth:`get`. Read a cell's value (synchronous)."""
+        warnings.warn(
+            "get_cell() is deprecated; use get() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return handle.get()
 
     def set_cell[T](self, handle: AsyncCellHandle[T], value: T) -> None:
-        """Update a cell and invalidate dependents. Inside a :meth:`batch`, the
-        invalidation is queued and fires once at the outermost boundary."""
+        """Deprecated: use :meth:`set`. Update a cell and invalidate dependents."""
+        warnings.warn(
+            "set_cell() is deprecated; use set() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         handle.set(value)
 
     def computed_async[T](
@@ -463,10 +512,6 @@ class AsyncContext:
         slot: AsyncSlotHandle[T] = AsyncSlotHandle(self, compute, eq=eq)
         self._slots.add(slot)
         return slot
-
-    def get[T](self, handle: AsyncSlotHandle[T]) -> T | None:
-        """Synchronous cached read of a slot (the warm fast path)."""
-        return handle.get()
 
     async def get_async[T](self, handle: AsyncSlotHandle[T]) -> T:
         """Await a slot's value."""
@@ -525,7 +570,7 @@ class AsyncContext:
                 dependent._dependencies.discard(handle)
             self._dirty_disposed_dependents(dependents)
 
-    def _dirty_disposed_dependents(self, roots: set[Any]) -> None:
+    def _dirty_disposed_dependents(self, roots: builtins.set[Any]) -> None:
         """Mark the surviving dependent cone stale — and schedule nothing.
 
         The async twin of :func:`lazily.slot._dirty_disposed_dependents`, and it
@@ -676,9 +721,9 @@ class AsyncTeardownScope:
 
     # -- membership ------------------------------------------------------ #
 
-    def cell[T](self, value: T) -> AsyncCellHandle[T]:
+    def source[T](self, value: T) -> AsyncCellHandle[T]:
         """Create a source cell owned by this scope."""
-        return self.adopt(self._ctx.cell(value))
+        return self.adopt(self._ctx.source(value))
 
     def computed_async[T](
         self, compute: Callable[[AsyncComputeContext], Awaitable[T]]

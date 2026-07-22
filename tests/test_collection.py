@@ -8,7 +8,7 @@ reactive signals + atomic-move identity preservation + per-key mint identity).
 
 from __future__ import annotations
 
-from lazily import CellMap, SlotMap, slot
+from lazily import CellMap, Slot, SlotMap
 
 
 # =================================================================================
@@ -133,13 +133,13 @@ def test_len_reader_not_invalidated_by_move() -> None:
     cm.entry("a", 1)
     cm.entry("b", 2)
 
-    @slot
+    @Slot
     def length(_ctx: dict) -> int:
         return len(cm)
 
     runs = [0]
 
-    @slot
+    @Slot
     def watch(_ctx: dict) -> int:
         v = length(_ctx)
         runs[0] += 1

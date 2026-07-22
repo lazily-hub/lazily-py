@@ -1,7 +1,7 @@
 """Finite state machine backed by a reactive :class:`~lazily.cell.Cell`.
 
 This mirrors ``StateMachine<S, E>`` in the Rust reference (``lazily-rs``):
-the state lives in a :class:`~lazily.cell.Cell` so any ``Slot``, ``Signal``,
+the state lives in a :class:`~lazily.cell.Cell` so any ``Computed``, ``Effect``,
 or subscriber that reads :attr:`StateMachine.state` is automatically
 invalidated when the machine transitions.
 
@@ -91,7 +91,7 @@ class StateMachine[S, E]:
 
     @property
     def state(self) -> S:
-        """The current state. Auto-subscribes when read inside a Slot/Signal."""
+        """The current state. Auto-subscribes when read inside a Computed/Effect."""
         return self._cell.get()
 
     @property

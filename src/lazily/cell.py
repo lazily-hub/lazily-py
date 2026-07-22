@@ -2,8 +2,6 @@ __all__ = [
     "Cell",
     "CellSlot",
     "Source",
-    "SourceCell",
-    "SourceCellSlot",
     "SourceSlot",
     "cell",
     "cell_def",
@@ -11,6 +9,7 @@ __all__ = [
     "source_def",
 ]
 
+import warnings
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -44,10 +43,10 @@ class Cell[T]:
     non-``KeepLatest`` policy (``Cell ≡ Source(KeepLatest)``).
 
     **No reactive in this library exposes an observer API** — not Cell, not
-    :class:`~lazily.signal.Signal`. Observation in this graph is a declared
+    :class:`~lazily.signal.Computed`. Observation in this graph is a declared
     dependency edge, not a registered callback: read the cell from a
-    :class:`~lazily.slot.Slot`, :class:`~lazily.signal.Signal`, or
-    :class:`~lazily.effect.Effect` and that reader becomes a dependent, which is
+    :class:`~lazily.signal.Computed` or :class:`~lazily.effect.Effect` and that
+    reader becomes a dependent, which is
     what makes batching and glitch-freedom hold. A callback registry bypasses
     all of that and costs memory on every reactive whether or not anyone
     subscribes.
@@ -189,27 +188,6 @@ class CellSlot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, Cell[T]]):
         )
 
 
-def cell[C_ctx: dict, T](
-    callable: Callable[[C_ctx], T] = _none_as_t,
-) -> CellSlot[C_ctx, C_ctx, T]:
-    """
-    Decorator for creating a slot that returns a Cell.
-
-    Note: this is intentionally a function (not a class) so type checkers
-    correctly treat @cell as transforming the function type from T to Cell[T].
-    """
-    return CellSlot(callable=callable)
-
-
-def cell_def[C_in, C_ctx: dict, T](
-    resolve_ctx: Callable[[C_in], C_ctx],
-) -> Callable[[Callable[[C_ctx], T]], CellSlot[C_in, C_ctx, T]]:
-    def outer(callable: Callable[[C_ctx], T]) -> CellSlot[C_in, C_ctx, T]:
-        return CellSlot[C_in, C_ctx, T](callable=callable, resolve_ctx=resolve_ctx)
-
-    return outer
-
-
 # -- Cell kernel vocabulary (#lzcellkernel) ---------------------------------- #
 # v2: ``Source`` is the concrete handle name for the writable value kind. The
 # native class keeps the name ``Cell`` (so mypyc native-struct reads and the
@@ -220,12 +198,9 @@ def cell_def[C_in, C_ctx: dict, T](
 # (design §4): the split is expressed by which methods a kind *has* — a
 # ``Source`` has ``set`` / ``merge``; a :class:`~lazily.signal.Computed` does not
 # — and is a convention, not a runtime gate (§4 rejected downgrading the
-# guarantee to a panic; Python simply has neither). ``SourceCell`` /
-# ``SourceCellSlot`` remain as v1 back-compat aliases.
+# guarantee to a panic; Python simply has neither).
 Source = Cell
 SourceSlot = CellSlot
-SourceCell = Cell
-SourceCellSlot = CellSlot
 
 
 def source[C_ctx: dict, T](
@@ -233,9 +208,13 @@ def source[C_ctx: dict, T](
 ) -> CellSlot[C_ctx, C_ctx, T]:
     """Create a slot that returns a :data:`Source` cell (default ``KeepLatest``).
 
-    The Cell-kernel spelling of :func:`cell`; for a non-``KeepLatest`` fold use
-    :func:`~lazily.merge.merge_cell`, which builds a
+    The canonical Cell-kernel source-cell constructor; for a non-``KeepLatest``
+    fold use :func:`~lazily.merge.merge_cell`, which builds a
     :class:`~lazily.merge.MergeCell` (a ``Source`` with policy ``M``).
+
+    Note: this is intentionally a function (not a class) so type checkers
+    correctly treat ``@source`` as transforming the function type from ``T`` to
+    ``Cell[T]``.
     """
     return CellSlot(callable=callable)
 
@@ -243,5 +222,36 @@ def source[C_ctx: dict, T](
 def source_def[C_in, C_ctx: dict, T](
     resolve_ctx: Callable[[C_in], C_ctx],
 ) -> Callable[[Callable[[C_ctx], T]], CellSlot[C_in, C_ctx, T]]:
-    """Cell-kernel spelling of :func:`cell_def`."""
-    return cell_def(resolve_ctx)
+    """Decorator factory: a context-cached :data:`Source` cell, custom resolver."""
+
+    def outer(callable: Callable[[C_ctx], T]) -> CellSlot[C_in, C_ctx, T]:
+        return CellSlot[C_in, C_ctx, T](callable=callable, resolve_ctx=resolve_ctx)
+
+    return outer
+
+
+def cell[C_ctx: dict, T](
+    callable: Callable[[C_ctx], T] = _none_as_t,
+) -> CellSlot[C_ctx, C_ctx, T]:
+    """Deprecated v1 alias for :func:`source`.
+
+    ``cell`` was the v1 name for the source-cell constructor; use :func:`source`.
+    """
+    warnings.warn(
+        "cell() is deprecated; use source() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return CellSlot(callable=callable)
+
+
+def cell_def[C_in, C_ctx: dict, T](
+    resolve_ctx: Callable[[C_in], C_ctx],
+) -> Callable[[Callable[[C_ctx], T]], CellSlot[C_in, C_ctx, T]]:
+    """Deprecated v1 alias for :func:`source_def`."""
+    warnings.warn(
+        "cell_def() is deprecated; use source_def() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return source_def(resolve_ctx)

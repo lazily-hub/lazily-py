@@ -11,7 +11,7 @@ Each cell owns one internal :class:`~lazily.cell.Cell` per asserted reader
 (``state`` / ``delay`` / ``permits_in_use`` / ``is_timed_out``). After each op the
 cell recomputes the reader and assigns it to the cell; the cell's ``!=``
 (PartialEq) guard invalidates dependents only when the projected value actually
-changes. Reads inside a :class:`~lazily.slot.Slot` / ``Signal`` / ``Effect``
+changes. Reads inside a :class:`~lazily.signal.Computed` / ``Effect``
 subscribe to the reader cell, so derived computeds recompute exactly when their
 reader changes.
 """

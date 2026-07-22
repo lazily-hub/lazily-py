@@ -80,11 +80,11 @@ def test_error_state_then_retry_transitions_back_to_computing() -> None:
 def test_invalidation_moves_resolved_back_to_computing() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(2)
-        slot = ctx.computed_async(lambda cc: _const(cc.get_cell(src) * 10))
+        src = ctx.source(2)
+        slot = ctx.computed_async(lambda cc: _const(cc.get(src) * 10))
         assert await slot.get_async() == 20
         assert slot.state is SlotState.RESOLVED
-        ctx.set_cell(src, 3)
+        ctx.set(src, 3)
         assert slot.state is SlotState.COMPUTING
         assert slot.get() is None  # never a stale cached value
         assert await slot.get_async() == 30
@@ -95,17 +95,17 @@ def test_invalidation_moves_resolved_back_to_computing() -> None:
 def test_equal_write_is_guarded_and_does_not_invalidate() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(2)
+        src = ctx.source(2)
         runs: list[int] = []
 
         async def compute(cc: AsyncComputeContext) -> int:
-            v = cc.get_cell(src)
+            v = cc.get(src)
             runs.append(v)
             return v
 
         slot = ctx.computed_async(compute)
         assert await slot.get_async() == 2
-        ctx.set_cell(src, 2)  # equal write — PartialEq guard
+        ctx.set(src, 2)  # equal write — PartialEq guard
         assert slot.state is SlotState.RESOLVED
         assert runs == [2]
 
@@ -120,13 +120,13 @@ def test_equal_write_is_guarded_and_does_not_invalidate() -> None:
 def test_stale_completion_is_discarded_not_published() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         gate = asyncio.Event()
         seen: list[int] = []
         published: list[int | None] = []
 
         async def compute(cc: AsyncComputeContext) -> int:
-            v = cc.get_cell(src)
+            v = cc.get(src)
             seen.append(v)
             if v == 1:
                 await gate.wait()
@@ -138,7 +138,7 @@ def test_stale_completion_is_discarded_not_published() -> None:
         assert seen == [1]  # suspended mid-compute
 
         # Invalidate while the first computation is in flight.
-        ctx.set_cell(src, 2)
+        ctx.set(src, 2)
         assert slot.revision == 1
         gate.set()  # the stale computation now completes with 10
         await _settle()
@@ -156,11 +156,11 @@ def test_stale_completion_is_discarded_not_published() -> None:
 def test_stale_error_is_discarded_and_the_slot_re_resolves() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         gate = asyncio.Event()
 
         async def compute(cc: AsyncComputeContext) -> int:
-            v = cc.get_cell(src)
+            v = cc.get(src)
             if v == 1:
                 await gate.wait()
                 raise ValueError("stale failure")
@@ -169,7 +169,7 @@ def test_stale_error_is_discarded_and_the_slot_re_resolves() -> None:
         slot = ctx.computed_async(compute)
         task = asyncio.create_task(slot.get_async())
         await _settle()
-        ctx.set_cell(src, 9)
+        ctx.set(src, 9)
         gate.set()
         # The stale error is discarded — it must not surface to the waiter.
         assert await task == 9
@@ -347,11 +347,11 @@ def test_repeated_invalidation_during_compute_re_resolves_without_error() -> Non
 
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(0)
+        src = ctx.source(0)
         gates: dict[int, asyncio.Event] = {}
 
         async def compute(cc: AsyncComputeContext) -> int:
-            v = cc.get_cell(src)
+            v = cc.get(src)
             gate = gates.setdefault(v, asyncio.Event())
             if v < 3:
                 await gate.wait()
@@ -361,7 +361,7 @@ def test_repeated_invalidation_during_compute_re_resolves_without_error() -> Non
         task = asyncio.create_task(slot.get_async())
         for nxt in (1, 2, 3):
             await _settle()
-            ctx.set_cell(src, nxt)
+            ctx.set(src, nxt)
             for g in gates.values():
                 g.set()
         assert await task == 3
@@ -377,11 +377,11 @@ def test_repeated_invalidation_during_compute_re_resolves_without_error() -> Non
 def test_edges_register_before_the_awaited_read() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         gate = asyncio.Event()
 
         async def compute(cc: AsyncComputeContext) -> int:
-            v = cc.get_cell(src)
+            v = cc.get(src)
             await gate.wait()
             return v
 
@@ -390,7 +390,7 @@ def test_edges_register_before_the_awaited_read() -> None:
         await _settle()
         # Suspended at the await — the edge is already live, so a write now
         # supersedes the in-flight computation rather than being missed.
-        ctx.set_cell(src, 2)
+        ctx.set(src, 2)
         assert slot.revision == 1
         gate.set()
         assert await task == 2
@@ -401,11 +401,11 @@ def test_edges_register_before_the_awaited_read() -> None:
 def test_invalidation_propagates_through_the_transitive_cone() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(2)
-        a = ctx.computed_async(lambda cc: _const(cc.get_cell(src) + 1))
+        src = ctx.source(2)
+        a = ctx.computed_async(lambda cc: _const(cc.get(src) + 1))
         b = ctx.computed_async(lambda cc: cc.get_async(a))
         assert await b.get_async() == 3
-        ctx.set_cell(src, 10)
+        ctx.set(src, 10)
         # src -> a -> b: the whole cone is stale, not just the direct dependent.
         assert a.state is SlotState.COMPUTING
         assert b.state is SlotState.COMPUTING
@@ -417,23 +417,23 @@ def test_invalidation_propagates_through_the_transitive_cone() -> None:
 def test_stale_dependencies_are_detached_on_rerun() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        which = ctx.cell(True)
-        left = ctx.cell(1)
-        right = ctx.cell(100)
+        which = ctx.source(True)
+        left = ctx.source(1)
+        right = ctx.source(100)
         runs: list[int] = []
 
         async def compute(cc: AsyncComputeContext) -> int:
-            flag = cc.get_cell(which)
-            v = cc.get_cell(left if flag else right)
+            flag = cc.get(which)
+            v = cc.get(left if flag else right)
             runs.append(v)
             return v
 
         slot = ctx.computed_async(compute)
         assert await slot.get_async() == 1
-        ctx.set_cell(which, False)
+        ctx.set(which, False)
         assert await slot.get_async() == 100
         # `left` is no longer a dependency — writing it must not invalidate.
-        ctx.set_cell(left, 999)
+        ctx.set(left, 999)
         assert slot.state is SlotState.RESOLVED
         assert runs == [1, 100]
 
@@ -443,13 +443,13 @@ def test_stale_dependencies_are_detached_on_rerun() -> None:
 def test_memo_guard_republishes_the_previous_value_object() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         slot = ctx.memo_async(
-            lambda cc: _const([cc.get_cell(src) % 2]),
+            lambda cc: _const([cc.get(src) % 2]),
             lambda a, b: a == b,
         )
         first = await slot.get_async()
-        ctx.set_cell(src, 3)  # 3 % 2 == 1 — equal under the memo guard
+        ctx.set(src, 3)  # 3 % 2 == 1 — equal under the memo guard
         again = await slot.get_async()
         assert again == [1]
         assert again is first  # identity preserved: nothing new published
@@ -465,18 +465,18 @@ def test_memo_guard_republishes_the_previous_value_object() -> None:
 def test_effect_reruns_are_scheduled_not_inline() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         runs: list[int] = []
 
         async def body(cc: AsyncComputeContext) -> None:
-            runs.append(cc.get_cell(src))
+            runs.append(cc.get(src))
 
         effect = ctx.effect_async(body)
         assert runs == []  # the initial run is scheduled, not inline
         await effect.settle()
         assert runs == [1]
 
-        ctx.set_cell(src, 2)
+        ctx.set(src, 2)
         assert runs == [1]  # still not inline within set_cell
         await effect.settle()
         assert runs == [1, 2]
@@ -494,11 +494,11 @@ def test_effect_cleanup_is_triggered_by_rerun_or_dispose() -> None:
 
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         order: list[str] = []
 
         async def body(cc: AsyncComputeContext) -> object:
-            v = cc.get_cell(src)
+            v = cc.get(src)
             order.append(f"body{v}")
 
             async def cleanup() -> None:
@@ -513,7 +513,7 @@ def test_effect_cleanup_is_triggered_by_rerun_or_dispose() -> None:
         # the effect is still live and will rerun.
         assert order == ["body1"]
         # The rerun is the trigger, and the cleanup precedes the next body.
-        ctx.set_cell(src, 2)
+        ctx.set(src, 2)
         await effect.settle()
         assert order == ["body1", "cleanup1", "body2"]
         # Disposal is the other trigger, and runs the last retained cleanup.
@@ -544,12 +544,12 @@ def test_effect_accepts_a_synchronous_cleanup() -> None:
 def test_effect_reruns_are_serialized_never_overlapping() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(0)
+        src = ctx.source(0)
         depth = [0]
         max_depth = [0]
 
         async def body(cc: AsyncComputeContext) -> None:
-            cc.get_cell(src)
+            cc.get(src)
             depth[0] += 1
             max_depth[0] = max(max_depth[0], depth[0])
             await asyncio.sleep(0)
@@ -557,7 +557,7 @@ def test_effect_reruns_are_serialized_never_overlapping() -> None:
 
         effect = ctx.effect_async(body)
         for i in range(1, 5):
-            ctx.set_cell(src, i)
+            ctx.set(src, i)
         await effect.settle()
         assert max_depth[0] == 1  # bodies never overlap
 
@@ -567,16 +567,16 @@ def test_effect_reruns_are_serialized_never_overlapping() -> None:
 def test_disposed_effect_does_not_rerun() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         runs: list[int] = []
 
         async def body(cc: AsyncComputeContext) -> None:
-            runs.append(cc.get_cell(src))
+            runs.append(cc.get(src))
 
         effect = ctx.effect_async(body)
         await effect.settle()
         await ctx.dispose_async_effect(effect)
-        ctx.set_cell(src, 2)
+        ctx.set(src, 2)
         await _settle()
         assert runs == [1]
 
@@ -586,18 +586,18 @@ def test_disposed_effect_does_not_rerun() -> None:
 def test_effect_body_error_does_not_wedge_the_effect() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         runs: list[int] = []
 
         async def body(cc: AsyncComputeContext) -> None:
-            v = cc.get_cell(src)
+            v = cc.get(src)
             runs.append(v)
             if v == 1:
                 raise ValueError("boom")
 
         effect = ctx.effect_async(body)
         await effect.settle()
-        ctx.set_cell(src, 2)
+        ctx.set(src, 2)
         await effect.settle()
         assert runs == [1, 2]
 
@@ -612,20 +612,20 @@ def test_effect_body_error_does_not_wedge_the_effect() -> None:
 def test_batch_coalesces_into_one_effect_rerun() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        a = ctx.cell(1)
-        b = ctx.cell(1)
+        a = ctx.source(1)
+        b = ctx.source(1)
         runs: list[tuple[int, int]] = []
 
         async def body(cc: AsyncComputeContext) -> None:
-            runs.append((cc.get_cell(a), cc.get_cell(b)))
+            runs.append((cc.get(a), cc.get(b)))
 
         effect = ctx.effect_async(body)
         await effect.settle()
         assert runs == [(1, 1)]
 
         def writes() -> None:
-            ctx.set_cell(a, 2)
-            ctx.set_cell(b, 3)
+            ctx.set(a, 2)
+            ctx.set(b, 3)
             assert runs == [(1, 1)]  # nothing runs inside the batch callback
 
         ctx.batch(writes)
@@ -639,22 +639,22 @@ def test_batch_coalesces_into_one_effect_rerun() -> None:
 def test_nested_batches_flush_only_at_the_outermost_boundary() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
+        src = ctx.source(1)
         runs: list[int] = []
 
         async def body(cc: AsyncComputeContext) -> None:
-            runs.append(cc.get_cell(src))
+            runs.append(cc.get(src))
 
         effect = ctx.effect_async(body)
         await effect.settle()
 
         def inner() -> None:
-            ctx.set_cell(src, 2)
+            ctx.set(src, 2)
 
         def outer() -> None:
             ctx.batch(inner)
             assert runs == [1]  # the inner exit did not flush
-            ctx.set_cell(src, 3)
+            ctx.set(src, 3)
 
         ctx.batch(outer)
         await effect.settle()
@@ -671,12 +671,12 @@ def test_batch_returns_the_callback_value() -> None:
 def test_batched_slot_invalidation_defers_to_the_outermost_exit() -> None:
     async def scenario() -> None:
         ctx = AsyncContext()
-        src = ctx.cell(1)
-        slot = ctx.computed_async(lambda cc: _const(cc.get_cell(src)))
+        src = ctx.source(1)
+        slot = ctx.computed_async(lambda cc: _const(cc.get(src)))
         assert await slot.get_async() == 1
 
         def writes() -> None:
-            ctx.set_cell(src, 5)
+            ctx.set(src, 5)
             # Invalidation is queued, not applied, inside the batch.
             assert slot.state is SlotState.RESOLVED
 
@@ -726,7 +726,7 @@ def test_handles_are_exported_from_the_package_root() -> None:
 
 def test_cell_and_slot_handle_types_are_usable_in_annotations() -> None:
     ctx = AsyncContext()
-    c: AsyncCellHandle[int] = ctx.cell(1)
+    c: AsyncCellHandle[int] = ctx.source(1)
     s: AsyncSlotHandle[int] = ctx.computed_async(lambda cc: _const(2))
     assert c.get() == 1
     assert c.peek == 1

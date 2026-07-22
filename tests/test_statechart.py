@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from lazily import ChartDef, StateChart, slot
+from lazily import ChartDef, Slot, StateChart
 
 
 _SPEC_FIXTURES = (
@@ -181,7 +181,7 @@ def test_reactive_invalidation_on_real_transition() -> None:
     )
     computed: list[int] = []
 
-    @slot
+    @Slot
     def leaf_count(ctx: dict) -> int:
         n = len(chart.active_leaves())
         computed.append(n)

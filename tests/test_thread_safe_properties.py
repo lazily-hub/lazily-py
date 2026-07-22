@@ -93,9 +93,9 @@ def test_batch_coalesces_into_one_invalidation() -> None:
 
     # A downstream slot that depends on BOTH sources — without batching, two
     # set_cell calls would invalidate it twice; with batching, once.
-    from lazily import slot
+    from lazily import Slot
 
-    @slot
+    @Slot
     def downstream(_ctx: dict) -> int:
         runs[0] += 1
         return src_a.value + src_b.value
@@ -104,7 +104,7 @@ def test_batch_coalesces_into_one_invalidation() -> None:
     assert runs[0] == 1
 
     ts = ThreadSafeContext()
-    ts.batch(lambda: (ts.set_cell(src_a, 10), ts.set_cell(src_b, 20)))
+    ts.batch(lambda: (ts.set(src_a, 10), ts.set(src_b, 20)))
     assert downstream(ctx) == 30
     # The batch coalesced two writes into one invalidation wave: the downstream
     # slot recomputed exactly once (it had been invalidated once, then read once).
@@ -115,7 +115,7 @@ def test_batch_singleton_refines_set_cell() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
     ts = ThreadSafeContext()
-    ts.batch(lambda: ts.set_cell(src, 2))
+    ts.batch(lambda: ts.set(src, 2))
     assert src.value == 2
 
 
@@ -123,7 +123,7 @@ def test_outside_batch_applies_immediately() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
     ts = ThreadSafeContext()
-    ts.set_cell(src, 5)  # outside a batch -> immediate
+    ts.set(src, 5)  # outside a batch -> immediate
     assert src.value == 5
 
 
@@ -132,9 +132,9 @@ def test_equal_write_is_silent() -> None:
     src = Cell(ctx, 1)
     runs = [0]
 
-    from lazily import slot
+    from lazily import Slot
 
-    @slot
+    @Slot
     def reader(_ctx: dict) -> int:
         runs[0] += 1
         return src.value
@@ -142,6 +142,6 @@ def test_equal_write_is_silent() -> None:
     assert reader(ctx) == 1
     n = runs[0]
     ts = ThreadSafeContext()
-    ts.batch(lambda: ts.set_cell(src, 1))  # equal value -> silent (PartialEq guard)
+    ts.batch(lambda: ts.set(src, 1))  # equal value -> silent (PartialEq guard)
     assert reader(ctx) == 1
     assert runs[0] == n  # not invalidated

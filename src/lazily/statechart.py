@@ -4,7 +4,7 @@ formal model (``lazily-formal``).
 
 A chart is **compute, not protocol**: it is never serialized as a distinct
 wire kind. lazily-py is a reactive binding, so the active configuration lives
-in a :class:`~lazily.cell.Cell`; any ``Slot`` / ``Signal`` / subscriber that
+in a :class:`~lazily.cell.Cell`; any ``Computed`` / ``Effect`` / subscriber that
 reads :meth:`StateChart.configuration`, :meth:`StateChart.active_leaves`, or
 :meth:`StateChart.matches` is invalidated on a real transition. A no-op
 self-transition is suppressed by the Cell's ``!=`` (PartialEq) guard (see the
@@ -442,7 +442,7 @@ class StateChart:
 
     The active configuration lives in ``Cell[frozenset[str]]``; reading
     :meth:`configuration` / :meth:`active_leaves` / :meth:`matches` inside a
-    ``Slot`` or ``Signal`` auto-subscribes, so the reader is invalidated on a
+    ``Computed`` or ``Effect`` auto-subscribes, so the reader is invalidated on a
     real transition. A no-op self-transition is accepted (``True``) but the
     Cell's ``!=`` guard suppresses propagation.
 

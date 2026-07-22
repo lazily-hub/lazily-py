@@ -84,14 +84,12 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .batch import batch
 from .cell import Cell
-from .slot import slot
+from .slot import Slot
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
-
-    from .slot import Slot
 
 
 class QueuePushError:
@@ -320,7 +318,7 @@ class QueueCell[T]:
 
     All reactive reads (``head`` / ``len`` / ``is_empty`` / ``is_full`` /
     ``closed``) subscribe to the corresponding reader-kind cell when read inside
-    a :class:`~lazily.slot.Slot` / :class:`~lazily.signal.Signal` /
+    a :class:`~lazily.slot.Slot` / :class:`~lazily.signal.Computed` /
     :class:`~lazily.effect.Effect`, so derived computeds recompute exactly when
     their reader kind changes (reader-kind independence).
     """
@@ -366,12 +364,12 @@ class QueueCell[T]:
         # (pop cache + notify), so a reader with no Effect subscriber pays no
         # eager work — store-without-cascade is inherent in the Slot model.
         capacity_ = self._capacity
-        self._head: Slot[dict, dict, T | None] = slot(
+        self._head: Slot[dict, dict, T | None] = Slot(
             lambda _ctx: peek_fn() if peek_fn is not None else None
         )
-        self._len: Slot[dict, dict, int] = slot(lambda _ctx: storage_.len())
-        self._is_empty: Slot[dict, dict, bool] = slot(lambda _ctx: storage_.len() == 0)
-        self._is_full: Slot[dict, dict, bool] = slot(
+        self._len: Slot[dict, dict, int] = Slot(lambda _ctx: storage_.len())
+        self._is_empty: Slot[dict, dict, bool] = Slot(lambda _ctx: storage_.len() == 0)
+        self._is_full: Slot[dict, dict, bool] = Slot(
             lambda _ctx: capacity_ is not None and storage_.len() >= capacity_
         )
         self._closed: Cell[bool] = Cell(ctx, storage_.is_closed())
@@ -583,7 +581,7 @@ class TopicCell[T]:
         self._base_offset = 0 if snapshot is None else snapshot.base_offset
         self._elements: deque[T] = deque(() if snapshot is None else snapshot.elements)
         self._subscriptions: dict[str, _TopicSubscription] = {}
-        self._readers: dict[str, slot[dict, list[T]]] = {}
+        self._readers: dict[str, Slot[dict, dict, list[T]]] = {}
         if self._base_offset < 0:
             raise ValueError("topic base offset must be non-negative")
         if snapshot is not None:
@@ -617,10 +615,10 @@ class TopicCell[T]:
     def tail_offset(self) -> int:
         return self._base_offset + len(self._elements)
 
-    def _ensure_reader(self, subscriber_id: str) -> slot[dict, list[T]]:
+    def _ensure_reader(self, subscriber_id: str) -> Slot[dict, dict, list[T]]:
         reader = self._readers.get(subscriber_id)
         if reader is None:
-            reader = slot(lambda _ctx, sid=subscriber_id: self.read_untracked(sid))
+            reader = Slot(lambda _ctx, sid=subscriber_id: self.read_untracked(sid))
             self._readers[subscriber_id] = reader
         return reader
 
@@ -733,7 +731,7 @@ class TopicCell[T]:
             subscriber_id, sub.cursor, sub.durability, sub.connected
         )
 
-    def reader_handle(self, subscriber_id: str) -> slot[dict, list[T]]:
+    def reader_handle(self, subscriber_id: str) -> Slot[dict, dict, list[T]]:
         return self._ensure_reader(subscriber_id)
 
     def snapshot(self) -> TopicSnapshot[T]:

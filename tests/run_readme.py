@@ -1,21 +1,21 @@
 from dataclasses import dataclass
 
-from lazily import CellSlot, cell, slot, slot_def
+from lazily import CellSlot, Slot, slot_def, source
 
 
-# Cells hold a value that can be updated.
+# Source cells hold a value that can be updated.
 name = CellSlot[dict, dict, str]()
 
 
-# Slots are functions that depend on cells and other slots.
-@slot
+# A storage-sense Slot is a function that depends on cells and other slots.
+@Slot
 def greeting(ctx: dict) -> str:
     print("Calculating greeting...")
     return f"Hello, {name(ctx).value}!"
 
 
-# A cell can also have a default value.
-@cell
+# A source cell can also have a default value.
+@source
 def response(ctx: dict) -> str:
     return "How are you?"
 

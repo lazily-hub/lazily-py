@@ -14,26 +14,19 @@ marks it dirty and the value is recomputed on the next read, and an equal
 recompute suppresses the downstream cascade (the ``PartialEq`` equality guard,
 matching TC39 ``Signal.Computed``). Calling :meth:`~Computed.eager` makes it
 **eager** — it materializes now and recomputes immediately whenever a tracked
-dependency changes. There is **no unguarded mode**: every cell is guarded. For a
-genuinely non-``__eq__``-comparable value hold it in the lower-level, unguarded
-:class:`~lazily.slot.Slot` storage primitive (``slot``) instead — the deliberate
-storage-sense escape (mirrors ``lazily-rs``'s ``slot``); the former separate
-``memo`` constructor is retired because ``computed`` now *is* the guarded form.
+dependency changes. **Every cell is guarded; there is no unguarded derived
+mode** — ``computed`` *is* the guarded derived constructor (the former ``memo``
+constructor is retired because ``computed`` now folds that role in).
 
-The eager construction is ``computed(ctx, f).eager()``. It **retires the former
-``Signal``**: eagerness is graph state (an ``_eager`` bit plus an ``_eager_by``
-side table holding the puller), not a distinct node kind. The puller is an
-ordinary :class:`~lazily.effect.Effect` over the backing memo, so it is
-*scheduled*: N writes inside one ``batch`` re-materialize the computed **once**,
-at the flush, not once per write (``reactive-graph.md`` clause 3). Because the
-only way to make a computed eager is to attach a scheduled ``Effect``, the
-``#lzsignaleager`` per-write puller — an ``onInvalidate`` hook that recomputes
-during the invalidation wave — is structurally unrepresentable here.
-
-``Signal`` / ``signal`` / ``signal_def`` are retained as thin back-compat
-aliases: ``Signal(ctx, f)`` is ``computed(ctx, f).eager()``. ``FormulaCell`` /
-``formula`` / ``formula_def`` are retained as v1 back-compat aliases of
-``Computed`` / ``computed`` / ``computed_def``.
+The eager construction is ``computed(ctx, f).eager()``: eagerness is graph state
+(an ``_eager`` bit plus an ``_eager_by`` side table holding the puller), not a
+distinct node kind. The puller is an ordinary :class:`~lazily.effect.Effect`
+over the backing memo, so it is *scheduled*: N writes inside one ``batch``
+re-materialize the computed **once**, at the flush, not once per write
+(``reactive-graph.md`` clause 3). Because the only way to make a computed eager
+is to attach a scheduled ``Effect``, the ``#lzsignaleager`` per-write puller — an
+``onInvalidate`` hook that recomputes during the invalidation wave — is
+structurally unrepresentable here.
 
 This module keeps its ``signal.py`` filename (it is on the mypyc compile list in
 the Makefile) though its subject is now the ``Computed`` cell.
@@ -48,20 +41,14 @@ from __future__ import annotations
 
 __all__ = [
     "Computed",
-    "FormulaCell",
-    "Signal",
     "computed",
     "computed_def",
-    "formula",
-    "formula_def",
-    "signal",
-    "signal_def",
 ]
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from .effect import Effect
-from .slot import Slot, _drain_resets, _reset_work, mypyc_attr, slot, slot_stack
+from .slot import Slot, _drain_resets, _reset_work, mypyc_attr, slot_stack
 
 
 if TYPE_CHECKING:
@@ -180,24 +167,6 @@ class Computed[T]:
         """Whether this computed is currently eager (has an active puller)."""
         return self._eager
 
-    # -- v1 back-compat: ``drive`` / ``undrive`` / ``is_driven`` ------------
-    def drive(self) -> Computed[T]:
-        """Deprecated v1 alias for :meth:`eager`."""
-        return self.eager()
-
-    def undrive(self) -> None:
-        """Deprecated v1 alias for :meth:`lazy`."""
-        self.lazy()
-
-    def is_driven(self) -> bool:
-        """Deprecated v1 alias for :meth:`is_eager`."""
-        return self._eager
-
-    # Back-compat: the former ``Signal.is_active``.
-    def is_active(self) -> bool:
-        """Deprecated alias for :meth:`is_eager`."""
-        return self._eager
-
     def _pull(self, ctx: dict) -> None:
         """Puller-Effect body: re-materialize the backing memo into ``_value``."""
         new_value = self._slot(ctx)
@@ -261,37 +230,15 @@ class Computed[T]:
         self.lazy()
 
 
-# v1 back-compat: ``FormulaCell`` was the v1 name for the derived cell.
-FormulaCell = Computed
-
-
-@mypyc_attr(allow_interpreted_subclasses=True)
-class Signal[T](Computed[T]):
-    """Back-compat: an eager :class:`Computed`.
-
-    ``Signal(ctx, f)`` is exactly ``computed(ctx, f).eager()`` — a computed that
-    is eager at construction, the behaviour the former standalone ``Signal`` had.
-    Prefer ``computed(ctx, f).eager()`` in new code.
-    """
-
-    __slots__ = ()
-
-    def __init__(self, ctx: dict, callable: Callable[[dict], T]) -> None:
-        super().__init__(ctx, callable)
-        self.eager()
-
-
 def computed[T](ctx: dict, callable: Callable[[dict], T]) -> Computed[T]:
     """Create a lazy, guarded :class:`Computed` bound to ``ctx``.
 
     The canonical derived-value constructor of the Cell kernel and **guarded by
     default** — an equal recompute suppresses the downstream cascade (matching
-    TC39 ``Signal.Computed``). It replaces the v1 ``formula`` and the former
-    ``memo`` (there is no unguarded mode; for a non-``__eq__`` value use the
-    lower-level :func:`~lazily.slot.slot`). Call :meth:`~Computed.eager` for the
-    eager form::
+    TC39 ``Signal.Computed``). Every cell is guarded; there is no unguarded
+    derived mode. Call :meth:`~Computed.eager` for the eager form::
 
-        n = cell(lambda c: 1)
+        n = source(lambda c: 1)
         doubled = computed(ctx, lambda c: n(c).value * 2).eager()
         doubled.value  # 4, kept fresh eagerly
 
@@ -300,30 +247,6 @@ def computed[T](ctx: dict, callable: Callable[[dict], T]) -> Computed[T]:
     Rust reference's ``ctx.computed(f)`` becomes ``computed(ctx, f)`` here.
     """
     return Computed(ctx, callable)
-
-
-# v1 back-compat: ``formula`` was the v1 name for the guarded derived constructor.
-formula = computed
-
-
-def signal[T](callable: Callable[[dict], T]) -> Slot[dict, dict, Signal[T]]:
-    """Back-compat decorator: a context-cached eager :class:`Computed` factory.
-
-    Retained for the former ``Signal`` surface. The returned factory is
-    context-cached (one eager computed per context), so ``my_signal(ctx)``
-    returns the same eager computed on repeated calls::
-
-        @signal
-        def doubled(ctx: dict) -> int:
-            return n(ctx).value * 2
-
-
-        s = doubled(ctx)  # eager: computed now
-        s.value  # always current
-
-    Prefer ``computed(ctx, f).eager()`` in new code.
-    """
-    return slot(lambda ctx: Signal(ctx, callable))
 
 
 def computed_def[C_in, T](
@@ -339,24 +262,6 @@ def computed_def[C_in, T](
     def outer(callable: Callable[[dict], T]) -> Slot[C_in, dict, Computed[T]]:
         return Slot(
             callable=lambda ctx: Computed(ctx, callable),
-            resolve_ctx=resolve_ctx,
-        )
-
-    return outer
-
-
-# v1 back-compat.
-formula_def = computed_def
-
-
-def signal_def[C_in, T](
-    resolve_ctx: Callable[[C_in], dict],
-) -> Callable[[Callable[[dict], T]], Slot[C_in, dict, Signal[T]]]:
-    """Back-compat decorator factory: like :func:`signal`, with a custom resolver."""
-
-    def outer(callable: Callable[[dict], T]) -> Slot[C_in, dict, Signal[T]]:
-        return Slot(
-            callable=lambda ctx: Signal(ctx, callable),
             resolve_ctx=resolve_ctx,
         )
 

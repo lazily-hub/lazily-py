@@ -9,11 +9,11 @@ from __future__ import annotations
 from lazily import (
     CellSlot,
     Effect,
+    Slot,
     batch,
     batch_context,
     effect,
     in_batch,
-    slot,
 )
 
 
@@ -125,7 +125,7 @@ def test_effect_tracks_slot_dependencies() -> None:
     src = CellSlot[dict, dict, int]()
     src(ctx).value = 2
 
-    @slot
+    @Slot
     def doubled(c: dict) -> int:
         return src(c).value * 2
 
@@ -262,7 +262,7 @@ def test_batch_multiple_cells_one_dependent_fires_once() -> None:
     a(ctx).value = 1
     b(ctx).value = 1
 
-    @slot
+    @Slot
     def sum_ab(c: dict) -> int:
         return a(c).value + b(c).value
 

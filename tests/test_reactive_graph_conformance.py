@@ -75,10 +75,10 @@ from lazily import (
     Cell,
     Computed,
     Effect,
+    Slot,
     TeardownScope,
     batch,
     computed,
-    slot,
 )
 from lazily.async_context import AsyncCellHandle, AsyncContext, AsyncEffectHandle
 from lazily.slot import DisposedError
@@ -328,7 +328,7 @@ class SyncModel:
 
     async def cell(self, value: Any, scope: str | None) -> Any:
         if scope is not None:
-            return self.scopes[scope].cell(value)
+            return self.scopes[scope].source(value)
         return Cell(self.ctx, value)
 
     async def computed(
@@ -337,7 +337,7 @@ class SyncModel:
         compute = self._compute(node_id, reads, offset)
         if scope is not None:
             return self.scopes[scope].computed(compute)
-        return slot(compute)
+        return Slot(compute)
 
     async def signal(self, node_id: str, reads: list[Any], offset: Any) -> Any:
         # v2 Cell kernel (#lzcellkernel): the fixture `signal` op maps to a
@@ -427,14 +427,14 @@ class ThreadSafeModel(SyncModel):
         self.ts = ThreadSafeContext()
 
     async def set_cell(self, node: Any, value: Any) -> None:
-        self.ts.set_cell(node, value)
+        self.ts.set(node, value)
 
     async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
         # The thread-safe batch, not the single-threaded one: its flush is a
         # separate code path (it applies deferred writes under the lock before
         # touching), so clause 3 is asserted against the boundary this context
         # actually ships rather than assumed equivalent to `batch()`.
-        self.ts.batch(lambda: [self.ts.set_cell(cell, value) for cell, value in writes])
+        self.ts.batch(lambda: [self.ts.set(cell, value) for cell, value in writes])
 
     async def begin_scope(self, name: str) -> None:
         # Opened through the thread-safe surface, so its scope passthrough is
@@ -470,7 +470,7 @@ class AsyncModel:
 
     async def _value_of(self, cc: Any, node: Any) -> Any:
         if isinstance(node, AsyncCellHandle):
-            return cc.get_cell(node)
+            return cc.get(node)
         return await cc.get_async(node)
 
     def _compute(self, node_id: str, reads: list[Any], offset: Any) -> Any:
@@ -502,8 +502,8 @@ class AsyncModel:
 
     async def cell(self, value: Any, scope: str | None) -> Any:
         if scope is not None:
-            return self.scopes[scope].cell(value)
-        return self.ctx.cell(value)
+            return self.scopes[scope].source(value)
+        return self.ctx.source(value)
 
     async def computed(
         self, node_id: str, reads: list[Any], offset: Any, scope: str | None
@@ -515,7 +515,7 @@ class AsyncModel:
 
     async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
         self.ctx.batch(
-            lambda: [self.ctx.set_cell(cell, value) for cell, value in writes]
+            lambda: [self.ctx.set(cell, value) for cell, value in writes]
         )
 
     async def effect(self, name: str, reads: list[Any], scope: str | None) -> Any:
@@ -533,7 +533,7 @@ class AsyncModel:
             return _ERR
 
     async def set_cell(self, node: Any, value: Any) -> None:
-        self.ctx.set_cell(node, value)
+        self.ctx.set(node, value)
 
     async def dispose(self, node: Any) -> None:
         if isinstance(node, AsyncEffectHandle):

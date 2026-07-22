@@ -116,7 +116,7 @@ def test_cell_map_set_seeds_and_updates() -> None:
 def test_observe_is_reactive_when_factory_reads_a_cell() -> None:
     # A derived slot entry whose factory reads a Cell re-derives when the cell
     # changes — reactivity is orthogonal to materialization.
-    from lazily import Cell, slot
+    from lazily import Cell, Slot
 
     ctx: dict = {}
     src = Cell(ctx, 10)
@@ -124,8 +124,8 @@ def test_observe_is_reactive_when_factory_reads_a_cell() -> None:
     fam.materialize_all([1], lambda k: src.value + k)
     seen = []
 
-    reader = slot(lambda c: fam.get(1))
-    watcher = slot(lambda c: seen.append(reader(c)))
+    reader = Slot(lambda c: fam.get(1))
+    watcher = Slot(lambda c: seen.append(reader(c)))
     watcher(ctx)
     assert seen == [11]
     src.set(100)

@@ -17,10 +17,10 @@ import threading
 from lazily import (
     Cell,
     EntryKind,
+    Slot,
     ThreadSafeCellMap,
     ThreadSafeContext,
     ThreadSafeSlotMap,
-    slot,
 )
 
 
@@ -70,8 +70,8 @@ def test_observe_is_reactive_when_factory_reads_a_cell() -> None:
     fam: ThreadSafeSlotMap[int, int] = ThreadSafeSlotMap(ctx)
     fam.materialize_all([1], lambda k: src.value + k)
     seen: list[int] = []
-    reader = slot(lambda c: fam.observe(1))
-    watcher = slot(lambda c: seen.append(reader(c)))
+    reader = Slot(lambda c: fam.observe(1))
+    watcher = Slot(lambda c: seen.append(reader(c)))
     watcher(ctx)
     assert seen == [11]
     src.set(100)

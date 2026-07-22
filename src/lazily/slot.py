@@ -8,6 +8,7 @@ __all__ = [
     "slot_stack",
 ]
 
+import warnings
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
@@ -70,7 +71,7 @@ def _callable_of(slot_obj: Any) -> Callable[[Any], Any]:
 #     that one node's cache + captures its downstream + re-establishes nothing),
 #     and pushes the captured downstream back onto the stack.
 #
-# Eager ``Signal`` recompute and ``Effect`` reruns fire from inside
+# Eager ``Computed`` recompute and ``Effect`` reruns fire from inside
 # ``_invalidate`` and push their own downstream onto the SAME stack, so a deep
 # eager-signal chain no longer nests one CPython frame per level either.
 #
@@ -420,19 +421,39 @@ slot_stack: list[Slot[Any, Any, Any]] = []
 
 
 class slot[C_dict: dict, T](Slot[C_dict, C_dict, T]):
-    """
-    A Slot that can be initialized with the callable as an argument.
+    """Deprecated v1 alias — a :class:`Slot` initialized with the callable.
+
+    ``slot`` was the v1 constructor for a derived reactive value. In v2 every
+    derived cell is **guarded**: use :func:`~lazily.signal.computed` for a
+    guarded derived value. :class:`Slot` itself remains as the internal,
+    storage-sense primitive (the Python analog of ``lazily-rs``'s surviving
+    storage-sense ``Slot``); construct it directly as ``Slot(callable=...)``
+    when a raw storage node is genuinely needed.
     """
 
     __slots__ = ()
 
     def __init__(self, callable: Callable[[C_dict], T]) -> None:
+        warnings.warn(
+            "slot() is deprecated; use computed() for a guarded derived value "
+            "(or Slot(callable=...) for a raw storage node)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(callable=callable)
 
 
 def slot_def[C_in, C_ctx: dict, T](
     resolve_ctx: Callable[[C_in], C_ctx],
 ) -> Callable[[Callable[[C_ctx], T]], Slot[C_in, C_ctx, T]]:
+    """Decorator factory for a context-cached, storage-sense :class:`Slot` with a
+    custom context resolver.
+
+    The resolver variant of the storage-sense :class:`Slot` primitive (the Python
+    analog of ``lazily-rs``'s surviving storage-sense ``Slot``). For a *guarded*
+    derived value use :func:`~lazily.signal.computed_def` instead.
+    """
+
     def outer(callable: Callable[[C_ctx], T]) -> Slot[C_in, C_ctx, T]:
         return Slot[C_in, C_ctx, T](callable=callable, resolve_ctx=resolve_ctx)
 

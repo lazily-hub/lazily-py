@@ -64,12 +64,12 @@ class Benchmark:
 
 
 def _bench_slot_read(n: int) -> BenchmarkResult:
-    from lazily import CellSlot, slot
+    from lazily import CellSlot, Slot
 
     ctx: dict = {}
     name = CellSlot[dict, dict, str]()
 
-    @slot
+    @Slot
     def derived(c: dict) -> str:
         return f"v-{name(c).value}"
 
@@ -79,12 +79,12 @@ def _bench_slot_read(n: int) -> BenchmarkResult:
 
 
 def _bench_slot_invalidate(n: int) -> BenchmarkResult:
-    from lazily import CellSlot, slot
+    from lazily import CellSlot, Slot
 
     ctx: dict = {}
     counter = CellSlot[dict, dict, int]()
 
-    @slot
+    @Slot
     def doubled(c: dict) -> int:
         return counter(c).value * 2
 

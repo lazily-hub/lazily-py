@@ -47,7 +47,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
 from .cell import Cell
-from .slot import slot
+from .slot import Slot
 
 
 if TYPE_CHECKING:
@@ -59,8 +59,9 @@ __all__ = ["CellMap", "EntryKind", "MapHandle", "ReactiveMap", "SlotMap"]
 K = TypeVar("K")
 V = TypeVar("V")
 
-#: A map entry's reactive handle: an input :class:`Cell` or a derived :class:`slot`.
-type MapHandle = Cell | slot
+#: A map entry's reactive handle: an input :class:`Cell` or a derived
+#: storage-sense :class:`~lazily.slot.Slot`.
+type MapHandle = Cell | Slot
 
 
 class EntryKind(Enum):
@@ -118,7 +119,7 @@ class _SlotHandleKind(_HandleKind):
 
     def materialize(self, ctx: dict, compute: Callable[[], V]) -> MapHandle:
         # A derived node: the same node an eager pre-mint would allocate.
-        return slot(lambda _ctx: compute())
+        return Slot(lambda _ctx: compute())
 
     def observe(self, ctx: dict, handle: MapHandle) -> V:
         return handle(ctx)  # type: ignore[operator]
@@ -134,7 +135,7 @@ class ReactiveMap[K, V]:
     per-entry nodes (``#reactivemap``).
 
     Membership is reactive: reading :meth:`len` / ``len(map)`` or
-    :meth:`contains_key` / ``key in map`` inside a Slot/Signal subscribes to the
+    :meth:`contains_key` / ``key in map`` inside a Computed/Effect subscribes to the
     membership signal; reading :meth:`keys` subscribes to the order signal;
     reading one entry's value subscribes to that entry's node alone. Editing one
     entry's value invalidates only that entry's readers — never a sibling or a

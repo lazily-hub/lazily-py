@@ -8,9 +8,9 @@ kernel** (``#lzcellkernel``): a ``Source`` cell (value from outside; ``set`` /
 ``merge``) and a ``Computed`` cell (value from upstream, via a compute function),
 with ``Effect`` the value-less sink outside the hierarchy. ``Cell`` is the value
 node the ``Source`` handle is bound to. Every cell is **guarded** (an equal
-recompute suppresses the cascade); there is no unguarded mode — for a
-non-``__eq__`` value use the lower-level ``slot`` storage primitive. The eager
-construction is ``computed(ctx, f).eager()`` (the former ``Signal``).
+recompute suppresses the cascade); there is no unguarded derived mode —
+``computed`` *is* the guarded derived constructor. The eager construction is
+``computed(ctx, f).eager()``.
 
 The :mod:`lazily.ipc` submodule implements the language-agnostic ``lazily-spec``
 wire protocol (Snapshot / Delta) so a Python graph's state can be mirrored to
@@ -122,7 +122,6 @@ __all__ = [
     "EphemeralValue",
     "ExpiryPolicy",
     "Fold",
-    "FormulaCell",
     "FramedTransport",
     "Health",
     "HealthCell",
@@ -236,7 +235,6 @@ __all__ = [
     "ShmBlobArena",
     "ShmBlobArenaError",
     "ShmBlobRef",
-    "Signal",
     "SignalingFrame",
     "SignalingFrameKind",
     "SlidingCell",
@@ -249,8 +247,6 @@ __all__ = [
     "SnapshotProvider",
     "SortKey",
     "Source",
-    "SourceCell",
-    "SourceCellSlot",
     "SourceSlot",
     "SpillMode",
     "SpillPage",
@@ -334,8 +330,6 @@ __all__ = [
     "encode_message",
     "ffi",
     "ffi_bytes_of",
-    "formula",
-    "formula_def",
     "in_batch",
     "ipc",
     "key_between",
@@ -356,8 +350,6 @@ __all__ = [
     "run_benchmarks",
     "seqcrdt",
     "service",
-    "signal",
-    "signal_def",
     "signaling",
     "similarity",
     "slot",
@@ -430,8 +422,6 @@ from .cell import (
     Cell,
     CellSlot,
     Source,
-    SourceCell,
-    SourceCellSlot,
     SourceSlot,
     cell,
     cell_def,
@@ -672,14 +662,8 @@ from .service import (
 )
 from .signal import (
     Computed,
-    FormulaCell,
-    Signal,
     computed,
     computed_def,
-    formula,
-    formula_def,
-    signal,
-    signal_def,
 )
 from .signaling import (
     PermissionMode,
