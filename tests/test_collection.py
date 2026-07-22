@@ -176,7 +176,7 @@ def test_slot_map_get_or_insert_with_mints_once() -> None:
     sm = SlotMap[str, int](ctx)
     calls = [0]
 
-    def factory(k: str) -> int:
+    def factory(_c: object, k: str) -> int:
         calls[0] += 1
         return len(k)
 

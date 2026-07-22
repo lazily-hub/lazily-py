@@ -42,6 +42,8 @@ __all__ = [
     "PresenceCell",
 ]
 
+from typing import Any
+
 from .cell import Cell
 
 
@@ -131,7 +133,7 @@ class EphemeralCell[T]:
         self._core.tick(now)
         self._refresh()
 
-    def value(self, ctx: object | None = None) -> T | None:
+    def value(self, ctx: Any = None) -> T | None:
         """Reactive read of the live value (``None`` once expired).
 
         Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
@@ -139,7 +141,7 @@ class EphemeralCell[T]:
         top-level read (``#lzcellkernel`` bare-read removal)."""
         if ctx is None:
             return self._value.value
-        return ctx.read(self._value)  # type: ignore[attr-defined]
+        return ctx.read(self._value)
 
     def value_cell(self) -> Cell[T | None]:
         """The internal value cell, for advanced wiring."""
@@ -225,13 +227,13 @@ class PresenceCell[K, V]:
         self._core.tick(now)
         self._refresh(now)
 
-    def present(self, ctx: object | None = None) -> dict[K, V]:
+    def present(self, ctx: Any = None) -> dict[K, V]:
         """Reactive read of the live ``peer -> value`` presence map. Pass the
         caller's compute view (``ctx``) to value-thread the edge; omit for an
         untracked top-level read (``#lzcellkernel``)."""
         if ctx is None:
             return self._present.value
-        return ctx.read(self._present)  # type: ignore[attr-defined]
+        return ctx.read(self._present)
 
     def present_cell(self) -> Cell[dict[K, V]]:
         """The internal presence cell, for advanced wiring."""
@@ -271,13 +273,13 @@ class AwarenessCell[K, V]:
         """The live awareness value for ``peer`` at ``now`` (non-reactive)."""
         return self._core.get(peer, now)
 
-    def present(self, ctx: object | None = None) -> dict[K, V]:
+    def present(self, ctx: Any = None) -> dict[K, V]:
         """Reactive read of the live ``peer -> value`` awareness map. Pass the
         caller's compute view (``ctx``) to value-thread the edge; omit for an
         untracked top-level read (``#lzcellkernel``)."""
         if ctx is None:
             return self._present.value
-        return ctx.read(self._present)  # type: ignore[attr-defined]
+        return ctx.read(self._present)
 
     def present_cell(self) -> Cell[dict[K, V]]:
         """The internal awareness cell, for advanced wiring."""

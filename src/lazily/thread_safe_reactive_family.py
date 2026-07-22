@@ -24,7 +24,7 @@ handle.
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from .collection import _CELL_HANDLE, _SLOT_HANDLE, EntryKind, MapHandle, _HandleKind
 from .thread_safe import ThreadSafeContext
@@ -81,7 +81,7 @@ class ThreadSafeReactiveMap[K, V]:
 
     # -- internals ------------------------------------------------------ #
 
-    def _mint_with(self, key: K, compute: Callable[[], V]) -> MapHandle:
+    def _mint_with(self, key: K, compute: Callable[[Any], V]) -> MapHandle:
         # Fast path under the present-set lock: return the warm entry if present.
         with self._mutex:
             warm = self._materialized.get(key)
@@ -101,29 +101,35 @@ class ThreadSafeReactiveMap[K, V]:
 
     # -- reads / writes ------------------------------------------------- #
 
-    def get_or_insert_handle(self, key: K, factory: Callable[[K], V]) -> MapHandle:
+    def get_or_insert_handle(self, key: K, factory: Callable[[Any, K], V]) -> MapHandle:
         """Materialize (the lazy pull) and return the entry handle for ``key``,
-        minting it via ``factory(key)`` on first access and caching it. Returns
-        the same handle on repeat (first-writer-wins)."""
-        return self._mint_with(key, lambda: factory(key))
+        minting it via ``factory(view, key)`` on first access and caching it.
+        Returns the same handle on repeat (first-writer-wins). ``factory``
+        receives the member's compute view first (``#lzcellkernel``)."""
+        return self._mint_with(key, lambda view: factory(view, key))
 
-    def get_or_insert_with(self, key: K, factory: Callable[[K], V]) -> V:
-        """Get the value at ``key``, minting the entry via ``factory(key)`` first
-        if absent. For a :class:`ThreadSafeSlotMap` this is the lazy
+    def get_or_insert_with(
+        self, key: K, factory: Callable[[Any, K], V], ctx: Any = None
+    ) -> V:
+        """Get the value at ``key``, minting the entry via ``factory(view, key)``
+        first if absent. For a :class:`ThreadSafeSlotMap` this is the lazy
         materialization pull — confluent across concurrent materialization
-        orders."""
-        handle = self._mint_with(key, lambda: factory(key))
-        return self._HANDLE.observe(self._ctx, handle)
+        orders. Pass the caller's compute ``ctx`` to value-thread the read of the
+        entry; omit for an untracked top-level read (``#lzcellkernel``)."""
+        handle = self._mint_with(key, lambda view: factory(view, key))
+        return self._HANDLE.observe(self._ctx if ctx is None else ctx, handle)
 
-    def observe(self, key: K) -> V | None:
+    def observe(self, key: K, ctx: Any = None) -> V | None:
         """Observe ``key``'s value if the entry is present, else ``None``.
         Non-minting. The transparency law: identical whether pre-minted or minted
-        on access."""
+        on access. Pass the caller's compute ``ctx`` to value-thread the
+        dependency edge inside a reactive body; omit for an untracked top-level
+        read (``#lzcellkernel``)."""
         with self._mutex:
             handle = self._materialized.get(key)
         if handle is None:
             return None
-        return self._HANDLE.observe(self._ctx, handle)
+        return self._HANDLE.observe(self._ctx if ctx is None else ctx, handle)
 
     def handle(self, key: K) -> MapHandle | None:
         """Return the existing entry handle for ``key``, or ``None``. Non-minting."""
@@ -173,7 +179,7 @@ class ThreadSafeCellMap[K, V](ThreadSafeReactiveMap[K, V]):
         if handle is not None:
             self._ts.set(handle, value)  # type: ignore[arg-type]
             return
-        self.get_or_insert_handle(key, lambda _k: value)
+        self.get_or_insert_handle(key, lambda _view, _k: value)
 
 
 class ThreadSafeSlotMap[K, V](ThreadSafeReactiveMap[K, V]):
@@ -186,8 +192,12 @@ class ThreadSafeSlotMap[K, V](ThreadSafeReactiveMap[K, V]):
 
     _HANDLE = _SLOT_HANDLE
 
-    def materialize_all(self, keys: Iterable[K], factory: Callable[[K], V]) -> None:
+    def materialize_all(
+        self, keys: Iterable[K], factory: Callable[[Any, K], V]
+    ) -> None:
         """**Eager materialization**: pre-mint a derived slot for every key in
-        ``keys``. Observationally identical to minting each lazily on first read."""
+        ``keys``. Observationally identical to minting each lazily on first read.
+        ``factory(view, key)`` receives the member's compute view so a reactive
+        read value-threads (``#lzcellkernel``)."""
         for key in keys:
             self.get_or_insert_handle(key, factory)

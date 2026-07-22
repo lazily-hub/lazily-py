@@ -51,18 +51,15 @@ stable ``underlying`` dict), so an existing ``def f(ctx): ...ctx-as-dict...`` bo
 keeps working unchanged while a ``ctx.read(node)`` (and the ``name(ctx).value``
 :class:`~lazily.slot.BoundHandle` path) attributes edges by value.
 
-``#lzcellkernel`` residual — the ambient ``slot_stack`` bridge in
-:mod:`lazily.slot` is **retained**, not deleted. Full removal is blocked by
-pervasive bare-read call sites (``obj.value`` / ``obj.get()`` / ``obj.method()``
-reads *inside* reactive bodies, in both the test suite and the feature modules)
-that a value-threaded ``ctx``-carried surface cannot reach without rewriting each
-call site. Every recompute driver therefore still pushes its node onto
-``slot_stack`` for the duration of its body, and a bare read attributes to
-``slot_stack[-1]``; an explicit ``Compute.read`` suspends the bridge
-(:func:`_read_untracked`) so a value-threaded read never double-attributes. The
-value-threaded machinery here is the migration target: once each bare-read site
-is moved onto ``ctx.read`` / ``name(ctx).value``, the bridge can be dropped. The
-thread-safe / async engines keep their own scoping and are untouched.
+``#lzcellkernel`` — value-threading is the **sole** tracking surface; the ambient
+``slot_stack`` bridge has been **deleted**. A tracked read reaches a node only
+through a compute view (``ctx.read`` / the ``name(ctx).value``
+:class:`~lazily.slot.BoundHandle` path); a bare ``obj.value`` / ``obj.get()`` with
+no view in scope is simply untracked. Every reactive-body read that must track —
+in the feature modules and the test suite — threads the caller's view (feature
+readers take an optional ``ctx``; keyed-collection factories take the compute view
+first, ``Callable[[C, K], V]``). The thread-safe / async engines keep their own
+scoping and are untouched.
 """
 
 from __future__ import annotations
@@ -85,7 +82,7 @@ from .batch import batch as _batch
 from .cell import Cell, _none_as_t, source
 from .effect import Effect
 from .signal import Computed, computed, computed_ripple_when
-from .slot import Slot, _detach_from_dependencies, _register_edge, slot_stack
+from .slot import Slot, _detach_from_dependencies, _register_edge
 from .teardown import dispose_node
 
 
@@ -175,23 +172,19 @@ def _read_untracked(node: Any, ctx: Any) -> Any:
     """Read ``node``'s value forming **no** dependency edge.
 
     A value-threaded ``Compute.read`` has already registered the edge explicitly;
-    the actual value read must not *also* attribute through the ambient bridge, so
-    ``slot_stack`` is suspended for the duration. ``node(ctx)`` then recomputes a
-    slot against the underlying dict with no ambient reader, so its own reads
-    attribute to it (via the view its recompute mints), never to the caller.
+    the value read itself must not register another. Tracking is value-threaded
+    only (``#lzcellkernel``): reading a ``Cell`` / ``Computed`` through its plain
+    accessor forms no edge, and a ``Slot`` invoked against the underlying dict has
+    no reader in scope, so its own reads attribute to the view its recompute mints
+    — never to the caller.
     """
-    saved = list(slot_stack)
-    slot_stack.clear()
-    try:
-        if isinstance(node, (Cell, Computed)):
-            return node.get()
-        if isinstance(node, Slot):
-            return node(ctx)
-        if callable(node):
-            return node(ctx)
-        return node
-    finally:
-        slot_stack[:] = saved
+    if isinstance(node, (Cell, Computed)):
+        return node.get()
+    if isinstance(node, Slot):
+        return node(ctx)
+    if callable(node):
+        return node(ctx)
+    return node
 
 
 @runtime_checkable

@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .cell import Cell
 
@@ -106,7 +106,7 @@ class MergeCell[T]:
     def policy(self) -> MergePolicy[T]:
         return self._policy
 
-    def get(self, ctx: object | None = None) -> T:
+    def get(self, ctx: Any = None) -> T:
         """Read the current converged value.
 
         Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
@@ -115,7 +115,7 @@ class MergeCell[T]:
         removal)."""
         if ctx is None:
             return self._cell.get()
-        return ctx.read(self._cell)  # type: ignore[attr-defined]
+        return ctx.read(self._cell)
 
     def set(self, value: T) -> None:
         """Replace the value outright (the keep-latest write), bypassing the policy."""

@@ -26,7 +26,7 @@ from lazily import (
 
 def test_eager_slot_map_materializes_all_up_front() -> None:
     fam: ThreadSafeSlotMap[int, int] = ThreadSafeSlotMap({})
-    fam.materialize_all([0, 1, 2, 5, 9], lambda k: k * 3)
+    fam.materialize_all([0, 1, 2, 5, 9], lambda _c, k: k * 3)
     assert fam.present_count() == 5
     assert all(fam.is_present(k) for k in (0, 1, 2, 5, 9))
     assert fam.entry_kind is EntryKind.SLOT
@@ -35,17 +35,17 @@ def test_eager_slot_map_materializes_all_up_front() -> None:
 def test_lazy_slot_map_defers_until_read() -> None:
     fam: ThreadSafeSlotMap[int, int] = ThreadSafeSlotMap({})
     assert fam.present_count() == 0
-    assert fam.get_or_insert_with(5, lambda k: k * 3) == 15
+    assert fam.get_or_insert_with(5, lambda _c, k: k * 3) == 15
     assert fam.is_present(5)
     assert fam.present_keys() == [5]
 
 
 def test_eager_and_lazy_observe_identically() -> None:
     eager: ThreadSafeSlotMap[int, int] = ThreadSafeSlotMap({})
-    eager.materialize_all([0, 1, 2, 5, 9], lambda k: k * 3)
+    eager.materialize_all([0, 1, 2, 5, 9], lambda _c, k: k * 3)
     lazy: ThreadSafeSlotMap[int, int] = ThreadSafeSlotMap({})
     for k in (0, 1, 2, 5, 9):
-        assert eager.observe(k) == lazy.get_or_insert_with(k, lambda k: k * 3)
+        assert eager.observe(k) == lazy.get_or_insert_with(k, lambda _c, k: k * 3)
 
 
 def test_cell_map_materializes_at_build() -> None:
@@ -68,9 +68,9 @@ def test_observe_is_reactive_when_factory_reads_a_cell() -> None:
     ctx: dict = {}
     src = Cell(ctx, 10)
     fam: ThreadSafeSlotMap[int, int] = ThreadSafeSlotMap(ctx)
-    fam.materialize_all([1], lambda k: src.value + k)
+    fam.materialize_all([1], lambda c, k: c.read(src) + k)
     seen: list[int] = []
-    reader = Slot(lambda c: fam.observe(1))
+    reader = Slot(lambda c: fam.observe(1, c))
     watcher = Slot(lambda c: seen.append(reader(c)))
     watcher(ctx)
     assert seen == [11]
@@ -81,16 +81,16 @@ def test_observe_is_reactive_when_factory_reads_a_cell() -> None:
 
 def test_stable_handle_across_repeated_get() -> None:
     fam: ThreadSafeSlotMap[int, int] = ThreadSafeSlotMap({})
-    h1 = fam.get_or_insert_handle(3, lambda k: k * 2)
-    h2 = fam.get_or_insert_handle(3, lambda k: k * 2)
+    h1 = fam.get_or_insert_handle(3, lambda _c, k: k * 2)
+    h2 = fam.get_or_insert_handle(3, lambda _c, k: k * 2)
     assert h1 is h2  # first-writer-wins keeps one stable handle
 
 
 def test_present_set_grows_monotonically() -> None:
     fam: ThreadSafeSlotMap[int, int] = ThreadSafeSlotMap({})
-    fam.get_or_insert_with(5, lambda k: k)
-    fam.get_or_insert_with(5, lambda k: k)  # repeat: no growth
-    fam.get_or_insert_with(9, lambda k: k)
+    fam.get_or_insert_with(5, lambda _c, k: k)
+    fam.get_or_insert_with(5, lambda _c, k: k)  # repeat: no growth
+    fam.get_or_insert_with(9, lambda _c, k: k)
     assert fam.present_count() == 2
     assert fam.present_keys() == [5, 9]
 
@@ -108,7 +108,7 @@ def test_materialization_confluence_under_concurrent_reads() -> None:
     def worker(order: list[int]) -> None:
         barrier.wait()
         for k in order:
-            h = fam.get_or_insert_handle(k, lambda k: k * 7)
+            h = fam.get_or_insert_handle(k, lambda _c, k: k * 7)
             with lock:
                 handles[k].append(h)
 
@@ -128,4 +128,4 @@ def test_materialization_confluence_under_concurrent_reads() -> None:
         first = handles[k][0]
         assert all(h is first for h in handles[k]), f"key {k} handle not stable"
     for k in keys:
-        assert fam.get_or_insert_with(k, lambda k: k * 7) == k * 7
+        assert fam.get_or_insert_with(k, lambda _c, k: k * 7) == k * 7

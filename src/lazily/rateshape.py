@@ -36,7 +36,7 @@ __all__ = [
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from .cell import Cell
 
@@ -107,7 +107,7 @@ class DebounceCell[T]:
         _set_output(self._cell, emitted)
         return emitted
 
-    def output(self, ctx: object | None = None) -> T | None:
+    def output(self, ctx: Any = None) -> T | None:
         """Reactive read of the last emitted value.
 
         Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
@@ -115,7 +115,7 @@ class DebounceCell[T]:
         untracked top-level read (``#lzcellkernel`` bare-read removal)."""
         if ctx is None:
             return self._cell.value
-        return ctx.read(self._cell)  # type: ignore[attr-defined]
+        return ctx.read(self._cell)
 
     def output_cell(self) -> Cell[T | None]:
         """The underlying output cell (advanced wiring)."""
@@ -198,7 +198,7 @@ class ThrottleCell[T]:
         _set_output(self._cell, emitted)
         return emitted
 
-    def output(self, ctx: object | None = None) -> T | None:
+    def output(self, ctx: Any = None) -> T | None:
         """Reactive read of the last emitted value.
 
         Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
@@ -206,7 +206,7 @@ class ThrottleCell[T]:
         untracked top-level read (``#lzcellkernel`` bare-read removal)."""
         if ctx is None:
             return self._cell.value
-        return ctx.read(self._cell)  # type: ignore[attr-defined]
+        return ctx.read(self._cell)
 
     def output_cell(self) -> Cell[T | None]:
         """The underlying output cell (advanced wiring)."""
@@ -310,7 +310,7 @@ class SampleCell[T]:
         _set_output(self._cell, emitted)
         return emitted
 
-    def output(self, ctx: object | None = None) -> T | None:
+    def output(self, ctx: Any = None) -> T | None:
         """Reactive read of the last emitted value.
 
         Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
@@ -318,7 +318,7 @@ class SampleCell[T]:
         untracked top-level read (``#lzcellkernel`` bare-read removal)."""
         if ctx is None:
             return self._cell.value
-        return ctx.read(self._cell)  # type: ignore[attr-defined]
+        return ctx.read(self._cell)
 
     def output_cell(self) -> Cell[T | None]:
         """The underlying output cell (advanced wiring)."""
@@ -400,7 +400,7 @@ class ProbabilisticSampleCell[T]:
             return value
         return None
 
-    def output(self, ctx: object | None = None) -> T | None:
+    def output(self, ctx: Any = None) -> T | None:
         """Reactive read of the last emitted value.
 
         Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
@@ -408,7 +408,7 @@ class ProbabilisticSampleCell[T]:
         untracked top-level read (``#lzcellkernel`` bare-read removal)."""
         if ctx is None:
             return self._cell.value
-        return ctx.read(self._cell)  # type: ignore[attr-defined]
+        return ctx.read(self._cell)
 
     def output_cell(self) -> Cell[T | None]:
         """The underlying output cell (advanced wiring)."""

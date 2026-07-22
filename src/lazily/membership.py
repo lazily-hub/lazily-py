@@ -36,7 +36,7 @@ import math
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .cell import Cell
 
@@ -314,7 +314,7 @@ class MembershipCell:
         self._refresh()
         return events
 
-    def peer_set(self, ctx: object | None = None) -> set[Hashable]:
+    def peer_set(self, ctx: Any = None) -> set[Hashable]:
         """The reactive alive peer set. Reading this inside a
         :class:`~lazily.slot.Slot` / :class:`~lazily.signal.Computed` /
         :class:`~lazily.effect.Effect` subscribes it to the backing cell, so the
@@ -325,7 +325,7 @@ class MembershipCell:
         (``#lzcellkernel`` bare-read removal)."""
         if ctx is None:
             return set(self._peer_set.value)
-        return set(ctx.read(self._peer_set))  # type: ignore[attr-defined]
+        return set(ctx.read(self._peer_set))
 
     def peer_set_cell(self) -> Cell[frozenset[Hashable]]:
         """The backing peer-set cell, for direct subscription."""

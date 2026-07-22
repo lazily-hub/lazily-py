@@ -46,7 +46,7 @@ __all__ = [
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 from .cell import Cell
 
@@ -136,13 +136,13 @@ class TimerCell:
             self._fired.value = True
         return edge
 
-    def has_fired(self, ctx: object | None = None) -> bool:
+    def has_fired(self, ctx: Any = None) -> bool:
         """Whether the timer has fired (reactive read). Pass the caller's compute
         view (``ctx``) to value-thread the edge; omit for an untracked top-level
         read (``#lzcellkernel``)."""
         if ctx is None:
             return self._fired.value
-        return ctx.read(self._fired)  # type: ignore[attr-defined]
+        return ctx.read(self._fired)
 
     def value(self) -> tuple[()] | None:
         """``None`` before the fire, ``()`` (the unit ``Some(())``) after
@@ -217,13 +217,13 @@ class IntervalCell:
             self._count.value = self._core.count()
         return edge
 
-    def count(self, ctx: object | None = None) -> int:
+    def count(self, ctx: Any = None) -> int:
         """Total fires so far (reactive read). Pass the caller's compute view
         (``ctx``) to value-thread the edge; omit for an untracked read
         (``#lzcellkernel``)."""
         if ctx is None:
             return self._count.value
-        return ctx.read(self._count)  # type: ignore[attr-defined]
+        return ctx.read(self._count)
 
     def count_cell(self) -> Cell[int]:
         return self._count
@@ -314,13 +314,13 @@ class CronCell:
             self._count.value = self._core.count()
         return edge
 
-    def count(self, ctx: object | None = None) -> int:
+    def count(self, ctx: Any = None) -> int:
         """Reactive read of the fire count. Pass the caller's compute view
         (``ctx``) to value-thread the edge; omit for an untracked read
         (``#lzcellkernel``)."""
         if ctx is None:
             return self._count.value
-        return ctx.read(self._count)  # type: ignore[attr-defined]
+        return ctx.read(self._count)
 
     def count_cell(self) -> Cell[int]:
         return self._count
@@ -394,11 +394,11 @@ class DeadlineCell[T]:
             self._expired.value = True
         return edge
 
-    def state(self, ctx: object | None = None) -> Deadlined[T]:
+    def state(self, ctx: Any = None) -> Deadlined[T]:
         """The current state, preserving the value (reactive read). Pass the
         caller's compute view (``ctx``) to value-thread the edge; omit for an
         untracked top-level read (``#lzcellkernel``)."""
-        expired = self._expired.value if ctx is None else ctx.read(self._expired)  # type: ignore[attr-defined]
+        expired = self._expired.value if ctx is None else ctx.read(self._expired)
         if expired:
             return Deadlined(DeadlineState.EXPIRED, self._value)
         return Deadlined(DeadlineState.LIVE, self._value)

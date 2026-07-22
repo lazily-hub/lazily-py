@@ -91,14 +91,14 @@ class HealthCell:
         self._core.set(name, up, critical)
         self._refresh()
 
-    def health(self, ctx: object | None = None) -> Health:
+    def health(self, ctx: Any = None) -> Health:
         """Reactive read of the composed health status. Invalidated only when the
         worst-component aggregate changes. Pass the caller's compute view
         (``ctx``) to value-thread the edge; omit for an untracked read
         (``#lzcellkernel``)."""
         if ctx is None:
             return self._health.value
-        return ctx.read(self._health)  # type: ignore[attr-defined]
+        return ctx.read(self._health)
 
     def health_cell(self) -> Cell[Health]:
         """Handle to the underlying ``health`` cell (advanced wiring)."""
@@ -143,13 +143,13 @@ class ReadinessCell:
         self._core.set(name, ready)
         self._refresh()
 
-    def ready(self, ctx: object | None = None) -> bool:
+    def ready(self, ctx: Any = None) -> bool:
         """Reactive read of the readiness gate. Invalidated only when it flips.
         Pass the caller's compute view (``ctx``) to value-thread the edge; omit
         for an untracked read (``#lzcellkernel``)."""
         if ctx is None:
             return self._ready.value
-        return ctx.read(self._ready)  # type: ignore[attr-defined]
+        return ctx.read(self._ready)
 
     def ready_cell(self) -> Cell[bool]:
         """Handle to the underlying ``ready`` cell (advanced wiring)."""
@@ -233,13 +233,13 @@ class DiscoveryCell:
         and never invalidates the ``discovery`` reader."""
         return self._core.resolve(service)
 
-    def discovery(self, ctx: object | None = None) -> dict[str, str]:
+    def discovery(self, ctx: Any = None) -> dict[str, str]:
         """Reactive read of the live ``service → endpoint`` map. Invalidated only
         on a change. Pass the caller's compute view (``ctx``) to value-thread the
         edge; omit for an untracked read (``#lzcellkernel``)."""
         if ctx is None:
             return self._discovery.value
-        return ctx.read(self._discovery)  # type: ignore[attr-defined]
+        return ctx.read(self._discovery)
 
     def discovery_cell(self) -> Cell[dict[str, str]]:
         """Handle to the underlying ``discovery`` cell (advanced wiring)."""
@@ -334,13 +334,13 @@ class ServiceRegistry:
         self._core.replay()
         self._refresh()
 
-    def projection(self, ctx: object | None = None) -> dict[str, str]:
+    def projection(self, ctx: Any = None) -> dict[str, str]:
         """Reactive read of the live registry projection. Invalidated only on a
         change. Pass the caller's compute view (``ctx``) to value-thread the
         edge; omit for an untracked read (``#lzcellkernel``)."""
         if ctx is None:
             return self._projection.value
-        return ctx.read(self._projection)  # type: ignore[attr-defined]
+        return ctx.read(self._projection)
 
     def projection_cell(self) -> Cell[dict[str, str]]:
         """Handle to the underlying ``projection`` cell (advanced wiring)."""

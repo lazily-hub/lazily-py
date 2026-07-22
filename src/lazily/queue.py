@@ -465,7 +465,7 @@ class QueueCell[T]:
 
     # -- reactive reader-kind reads ------------------------------------- #
 
-    def head(self, ctx: object | None = None) -> T | None:
+    def head(self, ctx: Any = None) -> T | None:
         """Reactive read of the current head value. ``None`` when the queue is
         empty. A reader is invalidated when the head value *changes* — every
         pop, and a push only when transitioning from empty. Trivially ``None``
@@ -476,30 +476,30 @@ class QueueCell[T]:
         untracked top-level read (``#lzcellkernel`` bare-read removal)."""
         return self._head(self.ctx if ctx is None else ctx)
 
-    def len(self, ctx: object | None = None) -> int:
+    def len(self, ctx: Any = None) -> int:
         """Reactive read of the number of buffered elements. Invalidated
         whenever the count changes (every successful push/pop). See :meth:`head`
         on ``ctx``."""
         return self._len(self.ctx if ctx is None else ctx)
 
-    def is_empty(self, ctx: object | None = None) -> bool:
+    def is_empty(self, ctx: Any = None) -> bool:
         """Reactive emptiness check. Invalidated only on the empty ↔ non-empty
         transition. See :meth:`head` on ``ctx``."""
         return self._is_empty(self.ctx if ctx is None else ctx)
 
-    def is_full(self, ctx: object | None = None) -> bool:
+    def is_full(self, ctx: Any = None) -> bool:
         """Reactive fullness check (only meaningful when the backend is bounded).
         Invalidated on the full ↔ not-full transition — this is the backpressure
         signal. For an unbounded backend this is always ``False`` and never
         invalidates. See :meth:`head` on ``ctx``."""
         return self._is_full(self.ctx if ctx is None else ctx)
 
-    def is_closed(self, ctx: object | None = None) -> bool:
+    def is_closed(self, ctx: Any = None) -> bool:
         """Reactive read of the closed flag. Invalidated only on the open →
         closed transition. See :meth:`head` on ``ctx``."""
         if ctx is None:
             return self._closed.value
-        return ctx.read(self._closed)  # type: ignore[attr-defined]
+        return ctx.read(self._closed)
 
     # -- reader-kind cell handles (advanced wiring) --------------------- #
 

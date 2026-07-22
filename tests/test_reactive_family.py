@@ -38,6 +38,13 @@ def load_fixture(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+def _ctx_factory(fn):
+    """Adapt a legacy 1-arg ``factory(k)`` to the ctx-param ``factory(view, k)``
+    contract (``#lzcellkernel``); the compute view is unused by a factory that
+    reads no reactive node."""
+    return lambda _c, k: fn(k)
+
+
 # ---------------------------------------------------------------------------
 # Unit tests (mirror cell_family.rs)
 # ---------------------------------------------------------------------------
@@ -45,7 +52,7 @@ def load_fixture(name: str) -> dict:
 
 def test_eager_slot_map_materializes_all_up_front() -> None:
     fam: SlotMap[int, int] = SlotMap({})
-    fam.materialize_all([0, 1, 2, 5, 9], lambda k: k * 3)
+    fam.materialize_all([0, 1, 2, 5, 9], lambda _c, k: k * 3)
     assert fam.present_count() == 5
     assert all(fam.is_present(k) for k in (0, 1, 2, 5, 9))
     assert fam.entry_kind is EntryKind.SLOT
@@ -56,24 +63,24 @@ def test_lazy_slot_map_defers_until_read() -> None:
     assert fam.present_count() == 0
     assert not fam.is_present(5)
     # First read mints just that key ("materialize on pull").
-    assert fam.get_or_insert_with(5, lambda k: k * 3) == 15
+    assert fam.get_or_insert_with(5, lambda _c, k: k * 3) == 15
     assert fam.is_present(5)
     assert fam.present_keys() == [5]
 
 
 def test_eager_and_lazy_observe_identically() -> None:
     eager: SlotMap[int, int] = SlotMap({})
-    eager.materialize_all([0, 1, 2, 5, 9], lambda k: k * 3)
+    eager.materialize_all([0, 1, 2, 5, 9], lambda _c, k: k * 3)
     lazy: SlotMap[int, int] = SlotMap({})
     for k in (0, 1, 2, 5, 9):
-        assert eager.get(k) == lazy.get_or_insert_with(k, lambda k: k * 3)
+        assert eager.get(k) == lazy.get_or_insert_with(k, lambda _c, k: k * 3)
 
 
 def test_present_set_is_monotone_across_reads() -> None:
     fam: SlotMap[int, int] = SlotMap({})
     sizes = []
     for k in (2, 4, 2, 5):
-        fam.get_or_insert_with(k, lambda k: k * 2)
+        fam.get_or_insert_with(k, lambda _c, k: k * 2)
         sizes.append(fam.present_count())
     # Re-reading 2 does not re-materialize; sizes are non-decreasing.
     assert sizes == [1, 2, 2, 3]
@@ -84,14 +91,14 @@ def test_get_or_insert_with_mints_once_then_returns_existing() -> None:
     fam: SlotMap[str, int] = SlotMap({})
     calls = [0]
 
-    def factory(_k: str) -> int:
+    def factory(_c: object, _k: str) -> int:
         calls[0] += 1
         return 7
 
     assert fam.get_or_insert_with("a", factory) == 7
     assert fam.present_count() == 1
     # Second access returns the existing value; factory is NOT called again.
-    assert fam.get_or_insert_with("a", lambda _k: 999) == 7
+    assert fam.get_or_insert_with("a", lambda _c, _k: 999) == 7
     assert calls[0] == 1
 
 
@@ -121,10 +128,10 @@ def test_observe_is_reactive_when_factory_reads_a_cell() -> None:
     ctx: dict = {}
     src = Cell(ctx, 10)
     fam: SlotMap[int, int] = SlotMap(ctx)
-    fam.materialize_all([1], lambda k: src.value + k)
+    fam.materialize_all([1], lambda c, k: c.read(src) + k)
     seen = []
 
-    reader = Slot(lambda c: fam.get(1))
+    reader = Slot(lambda c: fam.get(1, c))
     watcher = Slot(lambda c: seen.append(reader(c)))
     watcher(ctx)
     assert seen == [11]
@@ -151,7 +158,7 @@ def _check_val_fixture(name: str) -> dict:
 
     vals = _val_lookup(fixture["spec"]["val"])
     keys = list(vals.keys())
-    lookup = vals.__getitem__
+    lookup = _ctx_factory(vals.__getitem__)
 
     # eager: pre-mint the whole keyset; lazy: empty, mint-on-access.
     eager: SlotMap[str, int] = SlotMap({})
@@ -179,7 +186,7 @@ def test_conformance_observational_transparency() -> None:
     vals = _val_lookup(fixture["spec"]["val"])
     lazy: SlotMap[str, int] = SlotMap({})
     for k in fixture["reads"]:
-        lazy.get_or_insert_with(k, vals.__getitem__)
+        lazy.get_or_insert_with(k, _ctx_factory(vals.__getitem__))
     assert set(lazy.present_keys()) == set(expected["lazy_present_after_reads"])
 
 
@@ -192,7 +199,7 @@ def test_conformance_deferral_not_deallocation() -> None:
 
     got_sizes = []
     for k in fixture["reads"]:
-        lazy.get_or_insert_with(k, vals.__getitem__)
+        lazy.get_or_insert_with(k, _ctx_factory(vals.__getitem__))
         got_sizes.append(lazy.present_count())
     assert got_sizes == expected["present_after_each_read"]
 
@@ -210,6 +217,9 @@ def test_conformance_entry_kind_orthogonal_to_mode() -> None:
     cell_keys = [k for k, e in entries.items() if e["kind"] == "cell"]
     slot_keys = [k for k, e in entries.items() if e["kind"] == "slot"]
     vals = {k: int(e["val"]) for k, e in entries.items()}
+    # ``lookup`` is used both directly as a value producer (``lookup(k)`` to seed
+    # a CellMap entry) and as a family factory; keep it 1-arg and wrap it with
+    # :func:`_ctx_factory` only at the family call sites (the ctx-param contract).
     lookup = vals.__getitem__
 
     # A single ReactiveMap fixes one handle kind, so a mixed-kind fixture is
@@ -219,7 +229,7 @@ def test_conformance_entry_kind_orthogonal_to_mode() -> None:
     for k in cell_keys:
         eager_cells.entry(k, lookup(k))
     eager_slots: SlotMap[str, int] = SlotMap({})
-    eager_slots.materialize_all(slot_keys, lookup)
+    eager_slots.materialize_all(slot_keys, _ctx_factory(lookup))
     assert eager_cells.entry_kind is EntryKind.CELL
     assert eager_slots.entry_kind is EntryKind.SLOT
     eager_present = set(eager_cells.present_keys()) | set(eager_slots.present_keys())
@@ -235,9 +245,9 @@ def test_conformance_entry_kind_orthogonal_to_mode() -> None:
 
     for k in fixture["reads"]:
         if k in slot_keys:
-            lazy_slots.get_or_insert_with(k, lookup)
+            lazy_slots.get_or_insert_with(k, _ctx_factory(lookup))
         else:
-            lazy_cells.get_or_insert_with(k, lookup)
+            lazy_cells.get_or_insert_with(k, _ctx_factory(lookup))
     lazy_after = set(lazy_cells.present_keys()) | set(lazy_slots.present_keys())
     assert lazy_after == set(expected["lazy_present_after_reads"])
 
@@ -248,7 +258,7 @@ def test_conformance_entry_kind_orthogonal_to_mode() -> None:
             assert lazy_cells.get(k) == want
         else:
             assert eager_slots.get(k) == want
-            assert lazy_slots.get_or_insert_with(k, lookup) == want
+            assert lazy_slots.get_or_insert_with(k, _ctx_factory(lookup)) == want
 
 
 @pytest.mark.parametrize(

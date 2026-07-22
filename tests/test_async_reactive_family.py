@@ -17,7 +17,7 @@ from lazily import AsyncCellMap, AsyncSlotMap, Cell, EntryKind
 
 def test_eager_slot_map_materializes_all_up_front() -> None:
     fam: AsyncSlotMap[int, int] = AsyncSlotMap({})
-    fam.materialize_all([0, 1, 2, 5, 9], lambda k: k * 3)
+    fam.materialize_all([0, 1, 2, 5, 9], lambda _c, k: k * 3)
     assert fam.present_count() == 5
     assert all(fam.is_present(k) for k in (0, 1, 2, 5, 9))
     assert fam.entry_kind is EntryKind.SLOT
@@ -28,7 +28,7 @@ def test_lazy_slot_map_defers_until_read() -> None:
     assert fam.present_count() == 0
     assert not fam.is_present(5)
     # Minting a slot materializes the entry but it is still pending.
-    fam.get_or_insert_handle(5, lambda k: k * 3)
+    fam.get_or_insert_handle(5, lambda _c, k: k * 3)
     assert fam.observe(5) is None
     assert fam.is_present(5)
     assert fam.present_keys() == [5]
@@ -37,11 +37,11 @@ def test_lazy_slot_map_defers_until_read() -> None:
 def test_observe_pending_is_none_then_resolves() -> None:
     async def scenario() -> None:
         fam: AsyncSlotMap[int, int] = AsyncSlotMap({})
-        fam.materialize_all([1, 2, 3], lambda k: k * 10)
+        fam.materialize_all([1, 2, 3], lambda _c, k: k * 10)
         # Pending before drive: non-blocking observe is None (never a stale value).
         assert fam.observe(2) is None
         # Drive to resolution: canonical value.
-        assert await fam.resolve(2, lambda k: k * 10) == 20
+        assert await fam.resolve(2, lambda _c, k: k * 10) == 20
         # Eventual transparency: observe now equals the canonical value.
         assert fam.observe(2) == 20
 
@@ -53,7 +53,7 @@ def test_async_resolved_matches_sync() -> None:
         keys = [0, 1, 2, 5, 9]
         fam: AsyncSlotMap[int, int] = AsyncSlotMap({})
         for k in keys:
-            assert await fam.resolve(k, lambda k: k * 3) == k * 3
+            assert await fam.resolve(k, lambda _c, k: k * 3) == k * 3
 
     asyncio.run(scenario())
 
@@ -66,7 +66,7 @@ def test_cell_map_is_always_resolved() -> None:
         assert fam.entry_kind is EntryKind.CELL
         # Input cells resolve at build — observe is immediate, not None.
         assert fam.observe("a") == 7
-        assert await fam.resolve("b", lambda _k: 7) == 7
+        assert await fam.resolve("b", lambda _c, _k: 7) == 7
 
     asyncio.run(scenario())
 
@@ -84,7 +84,7 @@ def test_present_set_is_monotone_across_reads() -> None:
     fam: AsyncSlotMap[int, int] = AsyncSlotMap({})
     sizes = []
     for k in (2, 4, 2, 5):
-        fam.get_or_insert_handle(k, lambda k: k * 2)
+        fam.get_or_insert_handle(k, lambda _c, k: k * 2)
         sizes.append(fam.present_count())
     assert sizes == [1, 2, 2, 3]
     assert fam.present_keys() == [2, 4, 5]
@@ -92,6 +92,6 @@ def test_present_set_is_monotone_across_reads() -> None:
 
 def test_stable_handle_across_repeated_get() -> None:
     fam: AsyncSlotMap[int, int] = AsyncSlotMap({})
-    assert fam.get_or_insert_handle(3, lambda k: k) is fam.get_or_insert_handle(
-        3, lambda k: k
+    assert fam.get_or_insert_handle(3, lambda _c, k: k) is fam.get_or_insert_handle(
+        3, lambda _c, k: k
     )

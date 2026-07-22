@@ -100,14 +100,14 @@ class StateMachine[S, E]:
         """
         return self._cell.get()
 
-    def state_at(self, ctx: object) -> S:
+    def state_at(self, ctx: Any) -> S:
         """The current state, **value-threaded** through the caller's compute view.
 
         Reading this inside a Computed/Effect body registers the dependency edge
         against that reader, so it re-runs on transition — the tracked companion
         to the untracked :attr:`state` property.
         """
-        return ctx.read(self._cell)  # type: ignore[attr-defined]
+        return ctx.read(self._cell)
 
     @property
     def cell(self) -> Cell[S]:

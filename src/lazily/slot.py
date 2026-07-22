@@ -8,7 +8,6 @@ __all__ = [
     "slot_def",
 ]
 
-import os
 import warnings
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
@@ -170,34 +169,15 @@ def _wrap_read(result: Any, reader: Any) -> Any:
     ``Computed`` into this base module. A non-reactive result (a plain value a
     slot computed) is returned unchanged, as is any read with no reader in scope.
 
-    NOTE (``#lzcellkernel`` residual): value-threaded wrapping is currently
-    **disabled** in favour of the ambient ``slot_stack`` bridge below — the full
-    ambient-removal is blocked by pervasive bare-read call sites (``obj.value`` /
-    ``obj.get()`` / ``obj.method()`` reads inside reactive bodies, in tests and
-    feature modules) that a value-threaded ``name(ctx)`` handle cannot reach. The
-    machinery is retained (and used by :meth:`Compute.read`) so the removal can be
-    finished per-call-site later; see the module note in ``compute.py``.
+    Value-threaded tracking is the **sole** surface (``#lzcellkernel``): when a
+    reader is in scope (``name(ctx)`` through a compute view), a trackable value
+    node is wrapped in a :class:`~lazily.compute.BoundHandle` so the subsequent
+    ``.value`` / ``.get()`` read subscribes the reader; with no reader the result
+    is returned unwrapped (an untracked read). There is no ambient "current node".
     """
     if reader is not None and getattr(result, "_subscribe", None) is not None:
         return _bound_handle(result, reader)
     return result
-
-
-# The ambient current-node bridge (``#lzcellkernel`` residual). Retained as the
-# tracking carrier for **bare** reads (``cell.value`` / ``cell.get()`` inside a
-# reactive body with no threaded ``ctx``), which the value-threaded surfaces
-# cannot reach. Each recompute driver pushes the recomputing node here for the
-# duration of its body; a bare ``.value`` read attributes to ``slot_stack[-1]``.
-# Explicit ``Compute.read`` reads suspend it (see ``compute._read_untracked``),
-# so a value-threaded read never double-attributes through the ambient path.
-slot_stack: list[Any] = []
-
-# Migration gate (``#lzcellkernel`` ambient removal): when ``LAZILY_NO_AMBIENT=1``
-# the ambient bare-read fallback below is skipped, so the test suite reveals which
-# reactive-body reads still depend on it. Default off — zero behavior change. Once
-# every bare-read call site is value-threaded (``ctx.read`` / ``name(ctx).value``),
-# both this gate and ``slot_stack`` can be deleted.
-_AMBIENT_DISABLED: bool = os.environ.get("LAZILY_NO_AMBIENT") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -503,9 +483,8 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
             raise DisposedError(f"read of disposed slot {self!r}")
         base, reader = _ctx_unwrap(ctx)
         # A reader in scope depends on this slot's value; the reader is the value
-        # threaded through the compute view, or (bare read) the ambient top.
-        if reader is None and slot_stack and not _AMBIENT_DISABLED:
-            reader = slot_stack[-1]
+        # threaded through the compute view (value-threaded tracking is the sole
+        # surface, ``#lzcellkernel``). A bare call with no view is untracked.
         if reader is not None:
             _register_edge(self, reader)
 
@@ -517,15 +496,13 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
 
         # Forward edges describe the *current* run, so they are dropped before the
         # body and rebuilt by its reads. Mint a per-recompute compute view
-        # carrying THIS slot (for value-threaded ``ctx.read`` / dict-proxy access)
-        # AND push it onto the ambient bridge (for bare reads inside the body).
+        # carrying THIS slot; reads through it (``ctx.read`` / ``name(ctx).value``)
+        # value-thread to this slot.
         self._deps = None
         view = _compute_cls()(resolved, self)
-        slot_stack.append(self)
         try:
             resolved[self] = _callable_of(self)(view)
         finally:
-            slot_stack.pop()
             view._close()
 
         return _wrap_read(resolved[self], reader)

@@ -44,7 +44,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from .cell import Cell
 from .slot import Slot
@@ -92,36 +92,54 @@ class _HandleKind(ABC):
     KIND: EntryKind
 
     @abstractmethod
-    def materialize(self, ctx: dict, compute: Callable[[], V]) -> MapHandle:
-        """Allocate the node for one entry in ``ctx``, with ``compute``
-        producing its canonical value. An input cell sets the value directly; a
-        derived slot wraps ``compute`` as its recomputation."""
+    def materialize(self, ctx: dict, compute: Callable[[Any], V]) -> MapHandle:
+        """Allocate the node for one entry in ``ctx``, with ``compute(view)``
+        producing its canonical value from a per-recompute compute ``view`` (the
+        value-threaded tracking surface, ``#lzcellkernel``). An input cell seeds
+        its value once (untracked); a derived slot wraps ``compute`` as its
+        recomputation so the factory's reads value-thread through the slot's
+        own view."""
 
     @abstractmethod
-    def observe(self, ctx: dict, handle: MapHandle) -> V:
-        """Read the entry's value through ``ctx`` (subscribes the running
-        Slot/Effect, as any cell/slot read does)."""
+    def observe(self, ctx: Any, handle: MapHandle) -> V:
+        """Read the entry's value through ``ctx`` — the caller's compute view
+        (subscribes the running Slot/Effect by value-threading) or a bare dict /
+        ``None`` for an untracked top-level read."""
+
+
+def _reads(ctx: Any) -> Any:
+    """The value-threaded read surface for ``ctx``: the compute view itself when
+    it exposes ``read``, else an untracked :class:`~lazily.compute.Context` over
+    the dict (``#lzcellkernel`` bare-read removal)."""
+    if getattr(ctx, "read", None) is not None:
+        return ctx
+    from .compute import Context
+
+    return Context(ctx)
 
 
 class _CellHandleKind(_HandleKind):
     KIND = EntryKind.CELL
 
-    def materialize(self, ctx: dict, compute: Callable[[], V]) -> MapHandle:
-        # An input has no derivation: materialize by setting its value directly.
-        return Cell(ctx, compute())
+    def materialize(self, ctx: dict, compute: Callable[[Any], V]) -> MapHandle:
+        # An input has no derivation: seed its value once, untracked (an input
+        # cell does not subscribe to whatever its seed factory read).
+        return Cell(ctx, compute(_reads(ctx)))
 
-    def observe(self, ctx: dict, handle: MapHandle) -> V:
-        return handle.value  # type: ignore[union-attr]
+    def observe(self, ctx: Any, handle: MapHandle) -> V:
+        return _reads(ctx).read(handle)
 
 
 class _SlotHandleKind(_HandleKind):
     KIND = EntryKind.SLOT
 
-    def materialize(self, ctx: dict, compute: Callable[[], V]) -> MapHandle:
-        # A derived node: the same node an eager pre-mint would allocate.
-        return Slot(lambda _ctx: compute())
+    def materialize(self, ctx: dict, compute: Callable[[Any], V]) -> MapHandle:
+        # A derived node: the same node an eager pre-mint would allocate. Its body
+        # receives the slot's own compute view, threaded into ``compute`` so the
+        # factory's dependency reads attribute to this member.
+        return Slot(lambda _ctx: compute(_ctx))
 
-    def observe(self, ctx: dict, handle: MapHandle) -> V:
+    def observe(self, ctx: Any, handle: MapHandle) -> V:
         return handle(ctx)  # type: ignore[operator]
 
 
@@ -211,10 +229,10 @@ class ReactiveMap[K, V]:
         self._membership_signal.set(self._version)
         self._bump_order()
 
-    def _mint_with(self, key: K, compute: Callable[[], V]) -> MapHandle:
+    def _mint_with(self, key: K, compute: Callable[[Any], V]) -> MapHandle:
         """Mint the entry node for ``key`` on first access, caching the handle
         and bumping reactive membership. Re-minting an existing key returns the
-        cached handle."""
+        cached handle. ``compute(view)`` takes the member's compute view."""
         handle = self._entries.get(key)
         if handle is not None:
             return handle  # warm: already allocated.
@@ -226,17 +244,25 @@ class ReactiveMap[K, V]:
 
     # -- reads / mint-on-access ----------------------------------------- #
 
-    def get_or_insert_with(self, key: K, factory: Callable[[K], V]) -> V:
-        """Get the value at ``key``, minting the entry via ``factory(key)`` first
-        if absent — the mint-on-access recipe. For a :class:`SlotMap` this is the
-        **lazy materialization** pull; for a :class:`CellMap` it seeds an input
-        cell. Bumps reactive membership only on insert; an existing key returns
-        its current value without re-running the factory."""
+    def get_or_insert_with(
+        self, key: K, factory: Callable[[Any, K], V], ctx: Any = None
+    ) -> V:
+        """Get the value at ``key``, minting the entry via ``factory(view, key)``
+        first if absent — the mint-on-access recipe. For a :class:`SlotMap` this
+        is the **lazy materialization** pull; for a :class:`CellMap` it seeds an
+        input cell. Bumps reactive membership only on insert; an existing key
+        returns its current value without re-running the factory.
+
+        ``factory`` receives the member's compute ``view`` first, so a factory
+        that reads a reactive node value-threads (``lambda c, k: c.read(src)``).
+        Pass the caller's compute ``ctx`` to value-thread the *read* of the entry
+        too; omit it for an untracked top-level read (``#lzcellkernel``)."""
+        read_ctx = self.ctx if ctx is None else ctx
         handle = self._entries.get(key)
         if handle is not None:
-            return self._HANDLE.observe(self.ctx, handle)
-        handle = self._mint_with(key, lambda: factory(key))
-        return self._HANDLE.observe(self.ctx, handle)
+            return self._HANDLE.observe(read_ctx, handle)
+        handle = self._mint_with(key, lambda view: factory(view, key))
+        return self._HANDLE.observe(read_ctx, handle)
 
     def handle(self, key: K) -> MapHandle | None:
         """Return the existing entry handle for ``key``, or ``None``.
@@ -246,14 +272,19 @@ class ReactiveMap[K, V]:
     #: Alias for :meth:`handle` (the entry's value node).
     value_cell = handle
 
-    def get(self, key: K) -> V | None:
+    def get(self, key: K, ctx: Any = None) -> V | None:
         """Read the value at ``key`` if present, else ``None``. Reactive on that
         entry only (a reader is invalidated when this entry changes, not when a
-        sibling changes)."""
+        sibling changes).
+
+        Pass the caller's compute ``ctx`` to value-thread the dependency edge
+        inside a reactive body; omit it for an untracked top-level read
+        (``#lzcellkernel`` bare-read removal)."""
+        read_ctx = self.ctx if ctx is None else ctx
         handle = self._entries.get(key)
         if handle is None:
             return None
-        return self._HANDLE.observe(self.ctx, handle)
+        return self._HANDLE.observe(read_ctx, handle)
 
     def remove(self, key: K) -> bool:
         """Remove ``key``'s entry. Bumps reactive membership. Returns whether the
@@ -267,7 +298,7 @@ class ReactiveMap[K, V]:
 
     # -- membership / order reads --------------------------------------- #
 
-    def keys(self, ctx: object | None = None) -> list[K]:
+    def keys(self, ctx: Any = None) -> list[K]:
         """Reactive snapshot of the keys in their current order. Subscribes the
         caller to **order** changes (add/remove **and** move/reorder), not to
         per-entry value changes.
@@ -278,7 +309,7 @@ class ReactiveMap[K, V]:
         if ctx is None:
             _ = self._order_signal.value
         else:
-            ctx.read(self._order_signal)  # type: ignore[attr-defined]
+            ctx.read(self._order_signal)
         return list(self._order)
 
     def present_keys(self) -> list[K]:
@@ -309,16 +340,16 @@ class ReactiveMap[K, V]:
         _ = self._membership_signal.value
         return len(self._order)
 
-    def len(self, ctx: object | None = None) -> int:
+    def len(self, ctx: Any = None) -> int:
         """Reactive entry count. Subscribes the caller to membership changes.
         Pass the caller's compute view (``ctx``) to value-thread the edge; omit
         for an untracked snapshot (``#lzcellkernel``)."""
         if ctx is None:
             return len(self)
-        ctx.read(self._membership_signal)  # type: ignore[attr-defined]
+        ctx.read(self._membership_signal)
         return len(self._order)
 
-    def is_empty(self, ctx: object | None = None) -> bool:
+    def is_empty(self, ctx: Any = None) -> bool:
         """Reactive emptiness check. Subscribes the caller to membership changes.
         See :meth:`len` on ``ctx``."""
         return self.len(ctx) == 0
@@ -327,14 +358,14 @@ class ReactiveMap[K, V]:
         _ = self._membership_signal.value
         return key in self._entries
 
-    def contains_key(self, key: K, ctx: object | None = None) -> bool:
+    def contains_key(self, key: K, ctx: Any = None) -> bool:
         """Reactive membership test for ``key``. Subscribes the caller to
         membership changes (add/remove of any key), not to value changes. Pass
         the caller's compute view (``ctx``) to value-thread the edge; omit for an
         untracked snapshot (``#lzcellkernel``)."""
         if ctx is None:
             return key in self
-        ctx.read(self._membership_signal)  # type: ignore[attr-defined]
+        ctx.read(self._membership_signal)
         return key in self._entries
 
     def len_untracked(self) -> int:
@@ -402,7 +433,9 @@ class CellMap[K, V](ReactiveMap[K, V]):
         handle = self._entries.get(key)
         if handle is not None:
             return handle  # type: ignore[return-value]
-        return self._mint_with(key, default)  # type: ignore[return-value]
+        # ``default`` is the 0-arg value-mint factory (an input seed needs no
+        # compute view); adapt it to the view-taking ``compute`` contract.
+        return self._mint_with(key, lambda _view: default())  # type: ignore[return-value]
 
     def entry(self, key: K, default: V) -> Cell[V]:
         """Return the value cell for ``key``, minting it with ``default`` on first
@@ -433,10 +466,13 @@ class SlotMap[K, V](ReactiveMap[K, V]):
 
     _HANDLE = _SLOT_HANDLE
 
-    def materialize_all(self, keys: Iterable[K], factory: Callable[[K], V]) -> None:
+    def materialize_all(
+        self, keys: Iterable[K], factory: Callable[[Any, K], V]
+    ) -> None:
         """**Eager materialization**: pre-mint a derived slot for every key in
         ``keys`` via ``factory``, up front. Observationally identical to minting
         each key lazily on first read — it only changes *when* the nodes are
-        allocated."""
+        allocated. ``factory(view, key)`` receives the member's compute view, so
+        a factory reading a reactive node value-threads (``#lzcellkernel``)."""
         for key in keys:
             self.get_or_insert_with(key, factory)

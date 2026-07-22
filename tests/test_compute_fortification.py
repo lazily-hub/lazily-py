@@ -28,7 +28,7 @@ from lazily import (
     source,
     tracked_effect,
 )
-from lazily.slot import Slot, slot_stack
+from lazily.slot import Slot
 
 
 def _tracked_computed(ctx, body):
@@ -114,27 +114,23 @@ def test_effect_tracks_through_its_compute_view():
     assert a.dependent_count() == 0, "disposing the effect detaches its edge"
 
 
-def test_value_threaded_attribution_beats_ambient_stack():
-    """The strongest "not ambient" proof: with an unrelated node sitting on the
-    legacy ``slot_stack``, a ``Compute.read`` still attributes the edge to the
-    view's own node — because the node is a *value* the view carries, never
-    ``slot_stack[-1]``.
+def test_value_threaded_attribution_is_the_sole_surface():
+    """The "not ambient" proof (``#lzcellkernel``): a ``Compute.read`` attributes
+    the edge to the view's own node — because the node is a *value* the view
+    carries — and value-threading is the sole tracking surface, so an unrelated
+    node can never capture the edge. There is no ambient "current node" carrier.
     """
     ctx: dict = {}
     a = source(lambda _c: 1)(ctx)
-    decoy = source(lambda _c: 0)(ctx)  # a stand-in "ambient current node"
+    decoy = source(lambda _c: 0)(ctx)  # an unrelated node, never subscribed
 
     real_node = tracked_effect(lambda _c: None)
     view = Compute(ctx, real_node)
 
-    slot_stack.append(decoy)  # ambient carrier points at the WRONG node
-    try:
-        assert view.read(a) == 1
-    finally:
-        slot_stack.pop()
+    assert view.read(a) == 1
 
     assert real_node in (a._parents or set()), "edge attributes to the view's node"
-    assert decoy not in (a._parents or set()), "edge must NOT attribute to the stack"
+    assert decoy not in (a._parents or set()), "no unrelated node can capture the edge"
     assert a.dependent_count() == 1
 
 
@@ -179,8 +175,8 @@ def test_untracked_escape_is_a_context():
 # one that regressed: it holds no settled value and never ``touch``es on its own,
 # so its live upstream edges are on its backing memo. ``Compute.read`` must
 # subscribe the reader to that memo, or an upstream change silently never reaches
-# the reader (the ambient ``.value`` path never had this gap because it pushes
-# the reader onto ``slot_stack`` *through* the memo read).
+# the reader — the one gap value-threading has to close explicitly now that it is
+# the sole tracking surface (there is no ambient carrier to fall back on).
 @pytest.mark.parametrize(
     ("kind", "build"),
     [

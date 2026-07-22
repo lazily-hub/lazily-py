@@ -23,11 +23,11 @@ sync/thread-safe/async maps API-parallel, the per-key factory is the same **sync
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from .async_slot import AsyncSlot
 from .cell import Cell
-from .collection import EntryKind
+from .collection import EntryKind, _reads
 
 
 if TYPE_CHECKING:
@@ -75,18 +75,23 @@ class AsyncReactiveMap[K, V]:
 
     # -- internals ------------------------------------------------------ #
 
-    def _mint(self, key: K, factory: Callable[[K], V]) -> AsyncMapHandle:
+    def _mint(self, key: K, factory: Callable[[Any, K], V]) -> AsyncMapHandle:
         existing = self._materialized.get(key)
         if existing is not None:
             return existing  # warm: already allocated (stable handle).
+        # ``factory(view, key)`` takes a compute view first (``#lzcellkernel``).
+        # The async member tracks through the async engine, not the sync compute
+        # surface, so a sync-node read from the factory is untracked (cross-engine):
+        # pass an untracked view over the owning dict.
+        view = _reads(self._ctx)
         if self._KIND is EntryKind.CELL:
             # An input cell sets its value directly (always resolved).
-            handle: AsyncMapHandle = Cell(self._ctx, factory(key))
+            handle: AsyncMapHandle = Cell(self._ctx, factory(view, key))
         else:
             # A derived slot wraps the sync factory in a ready async recomputation
             # — the same node an eager pre-mint would allocate.
             async def _compute(k: K = key) -> V:
-                return factory(k)
+                return factory(view, k)
 
             handle = AsyncSlot(_compute)
         self._materialized[key] = handle
@@ -95,7 +100,9 @@ class AsyncReactiveMap[K, V]:
 
     # -- reads / writes ------------------------------------------------- #
 
-    def get_or_insert_handle(self, key: K, factory: Callable[[K], V]) -> AsyncMapHandle:
+    def get_or_insert_handle(
+        self, key: K, factory: Callable[[Any, K], V]
+    ) -> AsyncMapHandle:
         """Materialize (the lazy pull) and return the entry handle for ``key``.
         For a slot map this is the :class:`~lazily.AsyncSlot` to drive with
         :meth:`resolve` (or its own ``get_async``)."""
@@ -113,7 +120,7 @@ class AsyncReactiveMap[K, V]:
             return handle.value  # type: ignore[union-attr]
         return handle.get()
 
-    async def resolve(self, key: K, factory: Callable[[K], V]) -> V:
+    async def resolve(self, key: K, factory: Callable[[Any, K], V]) -> V:
         """Drive ``key`` to resolution and return its canonical value, minting the
         entry via ``factory(key)`` if absent. For a cell this is immediate; for a
         slot it awaits the async recomputation."""
@@ -160,7 +167,7 @@ class AsyncCellMap[K, V](AsyncReactiveMap[K, V]):
         if handle is not None:
             handle.set(value)  # type: ignore[union-attr]
             return
-        self._mint(key, lambda _k: value)
+        self._mint(key, lambda _view, _k: value)
 
 
 class AsyncSlotMap[K, V](AsyncReactiveMap[K, V]):
@@ -173,8 +180,11 @@ class AsyncSlotMap[K, V](AsyncReactiveMap[K, V]):
 
     _KIND = EntryKind.SLOT
 
-    def materialize_all(self, keys: Iterable[K], factory: Callable[[K], V]) -> None:
+    def materialize_all(
+        self, keys: Iterable[K], factory: Callable[[Any, K], V]
+    ) -> None:
         """**Eager materialization**: pre-mint a derived slot for every key in
-        ``keys``. Observationally identical to minting each lazily on first read."""
+        ``keys``. Observationally identical to minting each lazily on first read.
+        ``factory(view, key)`` takes a compute view first (``#lzcellkernel``)."""
         for key in keys:
             self._mint(key, factory)

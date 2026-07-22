@@ -35,7 +35,6 @@ from .slot import (
     _detach_from_dependencies,
     _dirty_disposed_dependents,
     mypyc_attr,
-    slot_stack,
 )
 
 
@@ -105,16 +104,14 @@ class Effect(Slot[Any, dict, None]):
         self._run_cleanup()
         self._running = True
         # Rebind forward edges (drop the previous run's deps and our reverse link
-        # in each), then mint a per-recompute compute view carrying THIS effect
-        # (for value-threaded ``ctx.read`` / dict-proxy access) AND push it onto
-        # the ambient bridge (for bare reads inside the body).
+        # in each), then mint a per-recompute compute view carrying THIS effect;
+        # reads through it (``ctx.read`` / ``name(ctx).value``) value-thread to
+        # this effect — the sole tracking surface (``#lzcellkernel``).
         _detach_from_dependencies(self)
         view = _compute_cls()(ctx, self)
-        slot_stack.append(self)
         try:
             self._cleanup = self._body(view)
         finally:
-            slot_stack.pop()
             view._close()
             self._running = False
 

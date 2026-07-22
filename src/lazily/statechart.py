@@ -20,7 +20,7 @@ events.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .cell import Cell
 
@@ -467,25 +467,25 @@ class StateChart:
         :meth:`send` (exit -> transition -> entry). Empty after a rejected event."""
         return list(self._last_actions)
 
-    def _read_config(self, ctx: object | None) -> frozenset[str]:
+    def _read_config(self, ctx: Any) -> frozenset[str]:
         """Read the active-configuration cell, value-threading through ``ctx``
         (the caller's :class:`~lazily.compute.Compute` view) when given, else an
         untracked bare read (``#lzcellkernel`` bare-read removal)."""
         if ctx is None:
             return self._config.value
-        return ctx.read(self._config)  # type: ignore[attr-defined]
+        return ctx.read(self._config)
 
-    def configuration(self, ctx: object | None = None) -> list[str]:
+    def configuration(self, ctx: Any = None) -> list[str]:
         """Full active configuration (leaves plus all active ancestors), sorted.
         Pass the caller's compute view (``ctx``) to value-thread the edge."""
         return sorted(self._read_config(ctx))
 
-    def active_leaves(self, ctx: object | None = None) -> list[str]:
+    def active_leaves(self, ctx: Any = None) -> list[str]:
         """Active atomic leaves, sorted (one per parallel region). Pass the
         caller's compute view (``ctx``) to value-thread the edge."""
         return sorted(s for s in self._read_config(ctx) if self._def.is_leaf(s))
 
-    def matches(self, id: str, ctx: object | None = None) -> bool:
+    def matches(self, id: str, ctx: Any = None) -> bool:
         """Hierarchical "state-in" predicate: ``True`` iff ``id`` is active. Pass
         the caller's compute view (``ctx``) to value-thread the edge."""
         return id in self._read_config(ctx)

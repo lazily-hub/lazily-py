@@ -50,14 +50,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from .effect import Effect
 from .slot import (
-    _AMBIENT_DISABLED,
     Slot,
     _ctx_base,
     _drain_resets,
     _register_edge,
     _reset_work,
     mypyc_attr,
-    slot_stack,
 )
 
 
@@ -244,16 +242,14 @@ class Computed[T]:
         """The current value.
 
         Eager: returns the materialized value. Lazy: recomputes through the
-        backing memo on read. A value-threaded read subscribes via
-        :meth:`_subscribe` (see ``BoundHandle`` / ``Compute.read``); a **bare**
-        read still tracks through the ambient bridge (``slot_stack[-1]``,
-        ``#lzcellkernel`` residual).
+        backing memo on read. Tracking is value-threaded, the sole surface
+        (``#lzcellkernel``): a tracked read subscribes the recomputing node via
+        :meth:`_subscribe` through the compute view (``Compute.read`` /
+        ``BoundHandle``) before this getter runs; a bare read is untracked.
         """
-        if slot_stack and not _AMBIENT_DISABLED:
-            self._subscribe(slot_stack[-1])
         if not self._eager:
-            # Lazy: recompute on read via the backing memo. The memo pushes itself
-            # onto the ambient bridge, so its own reads attribute to it.
+            # Lazy: recompute on read via the backing memo, which mints its own
+            # compute view so its reads attribute to it.
             return self._slot(self.ctx)
         return self._value
 

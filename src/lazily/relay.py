@@ -47,7 +47,7 @@ __all__ = [
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from .cell import Cell
 from .slot import Slot
@@ -192,7 +192,7 @@ class RelayCell[T]:
 
     # Demand-driven readers ---------------------------------------------------
 
-    def depth(self, ctx: object | None = None) -> int:
+    def depth(self, ctx: Any = None) -> int:
         """Current window depth (``Count``).
 
         Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) when
@@ -201,11 +201,11 @@ class RelayCell[T]:
         """
         return self._depth(self._ctx if ctx is None else ctx)
 
-    def is_full(self, ctx: object | None = None) -> bool:
+    def is_full(self, ctx: Any = None) -> bool:
         """Window is at/over ``high_water``. See :meth:`depth` on ``ctx``."""
         return self._is_full(self._ctx if ctx is None else ctx)
 
-    def is_empty(self, ctx: object | None = None) -> bool:
+    def is_empty(self, ctx: Any = None) -> bool:
         """Window is empty (nothing to drain). See :meth:`depth` on ``ctx``."""
         return self._is_empty(self._ctx if ctx is None else ctx)
 
@@ -487,7 +487,7 @@ class Outbox[T]:
         """The transport drains the coalesced window for egress."""
         return self._relay.drain()
 
-    def is_full(self, ctx: object | None = None) -> bool:
+    def is_full(self, ctx: Any = None) -> bool:
         """The producer-facing backpressure signal (window at/over the watermark).
 
         Pass the caller's :class:`~lazily.compute.Compute` view to track the read

@@ -14,7 +14,6 @@ from typing import Any, TypeVar
 
 from .batch import notify_change as _notify_change
 from .slot import (
-    _AMBIENT_DISABLED,
     BaseSlot,
     DisposedError,
     Slot,
@@ -24,7 +23,6 @@ from .slot import (
     _register_edge,
     _reset_work,
     mypyc_attr,
-    slot_stack,
 )
 
 
@@ -90,14 +88,11 @@ class Cell[T]:
     def value(self) -> T:
         if self._disposed:
             raise DisposedError("read of disposed cell")
-        # A value-threaded read subscribes via :meth:`_subscribe` before this
-        # getter (see ``BoundHandle`` / ``Compute.read``). A **bare** read
-        # (``cell.value`` with no threaded ctx) still tracks through the ambient
-        # bridge: the recomputing node is ``slot_stack[-1]`` (``#lzcellkernel``
-        # residual — the ambient bridge is retained until every bare-read call
-        # site is migrated).
-        if slot_stack and not _AMBIENT_DISABLED:
-            _register_edge(self, slot_stack[-1])
+        # Tracking is value-threaded, the sole surface (``#lzcellkernel``): a
+        # tracked read subscribes the recomputing node via :meth:`_subscribe`
+        # through the compute view (``Compute.read`` / ``BoundHandle``) *before*
+        # this getter runs. A bare ``cell.value`` with no threaded ctx is simply
+        # untracked — there is no ambient "current node".
         return self._value
 
     @value.setter

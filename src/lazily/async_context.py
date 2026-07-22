@@ -400,9 +400,7 @@ class AsyncComputeContext:
         self._node._track(slot)
         return await slot.get_async()
 
-    def get[T](
-        self, handle: AsyncCellHandle[T] | AsyncSlotHandle[T]
-    ) -> T | None:
+    def get[T](self, handle: AsyncCellHandle[T] | AsyncSlotHandle[T]) -> T | None:
         """Non-blocking cached read of a **source cell or computed slot**,
         recording it as a dependency. The unified reader: a source
         (:class:`AsyncCellHandle`) returns its current value; a computed
@@ -458,9 +456,7 @@ class AsyncContext:
         )
         return AsyncCellHandle(self, value)
 
-    def get[T](
-        self, handle: AsyncCellHandle[T] | AsyncSlotHandle[T]
-    ) -> T | None:
+    def get[T](self, handle: AsyncCellHandle[T] | AsyncSlotHandle[T]) -> T | None:
         """Read a **source cell or computed slot** (synchronous cached read).
 
         The unified reader over both handle kinds: a source
