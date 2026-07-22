@@ -183,7 +183,7 @@ def test_reactive_invalidation_on_real_transition() -> None:
 
     @Slot
     def leaf_count(ctx: dict) -> int:
-        n = len(chart.active_leaves())
+        n = len(chart.active_leaves(ctx))
         computed.append(n)
         return n
 

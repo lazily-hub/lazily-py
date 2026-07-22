@@ -8,6 +8,7 @@ __all__ = [
     "slot_def",
 ]
 
+import os
 import warnings
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
@@ -190,6 +191,13 @@ def _wrap_read(result: Any, reader: Any) -> Any:
 # Explicit ``Compute.read`` reads suspend it (see ``compute._read_untracked``),
 # so a value-threaded read never double-attributes through the ambient path.
 slot_stack: list[Any] = []
+
+# Migration gate (``#lzcellkernel`` ambient removal): when ``LAZILY_NO_AMBIENT=1``
+# the ambient bare-read fallback below is skipped, so the test suite reveals which
+# reactive-body reads still depend on it. Default off — zero behavior change. Once
+# every bare-read call site is value-threaded (``ctx.read`` / ``name(ctx).value``),
+# both this gate and ``slot_stack`` can be deleted.
+_AMBIENT_DISABLED: bool = os.environ.get("LAZILY_NO_AMBIENT") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +504,7 @@ class Slot[C_in, C_ctx: dict, T](BaseSlot[C_in, C_ctx, T]):
         base, reader = _ctx_unwrap(ctx)
         # A reader in scope depends on this slot's value; the reader is the value
         # threaded through the compute view, or (bare read) the ambient top.
-        if reader is None and slot_stack:
+        if reader is None and slot_stack and not _AMBIENT_DISABLED:
             reader = slot_stack[-1]
         if reader is not None:
             _register_edge(self, reader)

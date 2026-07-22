@@ -289,13 +289,19 @@ class SyncModel:
 
     # -- helpers --------------------------------------------------------- #
 
-    def _value_of(self, node: Any) -> Any:
-        """Read a node from inside a computation, registering the edge."""
-        if isinstance(node, Cell):
-            return node.value
-        if isinstance(node, Computed):
-            # Covers both an eager computed (`computed().eager()`) and the
-            # back-compat `Signal` subclass — both read via `.value`.
+    def _value_of(self, node: Any, ctx: Any = None) -> Any:
+        """Read a node from inside a computation, registering the edge.
+
+        ``ctx`` is the body's per-recompute compute view; when present, the read
+        is value-threaded through it (``ctx.read(node)``) so the edge attributes
+        to the recomputing node with no ambient stack (``#lzcellkernel``). A
+        raw-dict ctx (an async engine with its own scoping) falls back to a bare
+        read.
+        """
+        read = getattr(ctx, "read", None)
+        if read is not None:
+            return read(node)
+        if isinstance(node, (Cell, Computed)):
             return node.value
         return node(self.ctx)
 
@@ -306,7 +312,7 @@ class SyncModel:
             self.computes[node_id] += 1
             total = offset
             for dep in reads:
-                total += self._value_of(dep)
+                total += self._value_of(dep, _ctx)
             return total
 
         return compute
@@ -315,7 +321,7 @@ class SyncModel:
         def body(_ctx: dict) -> Any:
             self.runs.append(name)
             for dep in reads:
-                self._value_of(dep)
+                self._value_of(dep, _ctx)
 
             def cleanup() -> None:
                 self.cleanups.append(name)
@@ -514,9 +520,7 @@ class AsyncModel:
         return self.ctx.computed_async(compute)
 
     async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
-        self.ctx.batch(
-            lambda: [self.ctx.set(cell, value) for cell, value in writes]
-        )
+        self.ctx.batch(lambda: [self.ctx.set(cell, value) for cell, value in writes])
 
     async def effect(self, name: str, reads: list[Any], scope: str | None) -> Any:
         body = self._body(name, reads)

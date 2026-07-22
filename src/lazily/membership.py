@@ -314,12 +314,18 @@ class MembershipCell:
         self._refresh()
         return events
 
-    def peer_set(self) -> set[Hashable]:
+    def peer_set(self, ctx: object | None = None) -> set[Hashable]:
         """The reactive alive peer set. Reading this inside a
         :class:`~lazily.slot.Slot` / :class:`~lazily.signal.Computed` /
         :class:`~lazily.effect.Effect` subscribes it to the backing cell, so the
-        reader is invalidated exactly when the alive set changes."""
-        return set(self._peer_set.value)
+        reader is invalidated exactly when the alive set changes.
+
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
+        value-thread the edge; omit it for an untracked top-level read
+        (``#lzcellkernel`` bare-read removal)."""
+        if ctx is None:
+            return set(self._peer_set.value)
+        return set(ctx.read(self._peer_set))  # type: ignore[attr-defined]
 
     def peer_set_cell(self) -> Cell[frozenset[Hashable]]:
         """The backing peer-set cell, for direct subscription."""

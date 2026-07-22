@@ -267,11 +267,18 @@ class ReactiveMap[K, V]:
 
     # -- membership / order reads --------------------------------------- #
 
-    def keys(self) -> list[K]:
+    def keys(self, ctx: object | None = None) -> list[K]:
         """Reactive snapshot of the keys in their current order. Subscribes the
         caller to **order** changes (add/remove **and** move/reorder), not to
-        per-entry value changes."""
-        _ = self._order_signal.value
+        per-entry value changes.
+
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
+        value-thread the edge inside a reactive body; omit for an untracked
+        snapshot (``#lzcellkernel`` bare-read removal)."""
+        if ctx is None:
+            _ = self._order_signal.value
+        else:
+            ctx.read(self._order_signal)  # type: ignore[attr-defined]
         return list(self._order)
 
     def present_keys(self) -> list[K]:
@@ -302,22 +309,33 @@ class ReactiveMap[K, V]:
         _ = self._membership_signal.value
         return len(self._order)
 
-    def len(self) -> int:
-        """Reactive entry count. Subscribes the caller to membership changes."""
-        return len(self)
+    def len(self, ctx: object | None = None) -> int:
+        """Reactive entry count. Subscribes the caller to membership changes.
+        Pass the caller's compute view (``ctx``) to value-thread the edge; omit
+        for an untracked snapshot (``#lzcellkernel``)."""
+        if ctx is None:
+            return len(self)
+        ctx.read(self._membership_signal)  # type: ignore[attr-defined]
+        return len(self._order)
 
-    def is_empty(self) -> bool:
-        """Reactive emptiness check. Subscribes the caller to membership changes."""
-        return len(self) == 0
+    def is_empty(self, ctx: object | None = None) -> bool:
+        """Reactive emptiness check. Subscribes the caller to membership changes.
+        See :meth:`len` on ``ctx``."""
+        return self.len(ctx) == 0
 
     def __contains__(self, key: object) -> bool:
         _ = self._membership_signal.value
         return key in self._entries
 
-    def contains_key(self, key: K) -> bool:
+    def contains_key(self, key: K, ctx: object | None = None) -> bool:
         """Reactive membership test for ``key``. Subscribes the caller to
-        membership changes (add/remove of any key), not to value changes."""
-        return key in self
+        membership changes (add/remove of any key), not to value changes. Pass
+        the caller's compute view (``ctx``) to value-thread the edge; omit for an
+        untracked snapshot (``#lzcellkernel``)."""
+        if ctx is None:
+            return key in self
+        ctx.read(self._membership_signal)  # type: ignore[attr-defined]
+        return key in self._entries
 
     def len_untracked(self) -> int:
         """Non-reactive count. Does not subscribe the caller to anything."""

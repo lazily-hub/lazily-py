@@ -145,7 +145,7 @@ def test_signal_over_slot_cycle_invalidates_without_recursion() -> None:
     @Slot
     def downstream(c: dict) -> int:  # Slot reads Signal -> cycle closed
         runs["n"] += 1
-        return sig.value + 1
+        return c.read(sig) + 1
 
     assert downstream(ctx) == 21
     assert runs["n"] == 1
@@ -168,7 +168,7 @@ def test_deep_signal_chain_propagates_without_recursion() -> None:
     depth = 200
     for _ in range(depth):
         prev = sig
-        sig = computed(ctx, lambda c, p=prev: p.value + 1).eager()
+        sig = computed(ctx, lambda c, p=prev: c.read(p) + 1).eager()
 
     src(ctx).value = 7
     assert sig.value == 7 + 1 + depth  # eagerly recomputed end-to-end

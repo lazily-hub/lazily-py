@@ -168,9 +168,11 @@ class RelayCell[T]:
         self._head: Cell[T | None] = Cell(ctx, None)
         # Ops merged into the current window since the last drain (the Count bound).
         self._pending: Cell[int] = Cell(ctx, 0)
-        self._depth = Slot(lambda _c: self._pending.get())
-        self._is_full = Slot(lambda c: self._depth(c) >= self._policy.high_water.get())
-        self._is_empty = Slot(lambda _c: self._head.get() is None)
+        self._depth = Slot(lambda c: c.read(self._pending))
+        self._is_full = Slot(
+            lambda c: self._depth(c) >= c.read(self._policy.high_water)
+        )
+        self._is_empty = Slot(lambda c: c.read(self._head) is None)
 
     @property
     def policy(self) -> BackpressurePolicy:
@@ -190,17 +192,22 @@ class RelayCell[T]:
 
     # Demand-driven readers ---------------------------------------------------
 
-    def depth(self) -> int:
-        """Current window depth (``Count``)."""
-        return self._depth(self._ctx)
+    def depth(self, ctx: object | None = None) -> int:
+        """Current window depth (``Count``).
 
-    def is_full(self) -> bool:
-        """Window is at/over ``high_water``."""
-        return self._is_full(self._ctx)
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) when
+        reading inside a reactive body to value-thread the dependency edge; omit
+        it for an untracked top-level read (``#lzcellkernel`` bare-read removal).
+        """
+        return self._depth(self._ctx if ctx is None else ctx)
 
-    def is_empty(self) -> bool:
-        """Window is empty (nothing to drain)."""
-        return self._is_empty(self._ctx)
+    def is_full(self, ctx: object | None = None) -> bool:
+        """Window is at/over ``high_water``. See :meth:`depth` on ``ctx``."""
+        return self._is_full(self._ctx if ctx is None else ctx)
+
+    def is_empty(self, ctx: object | None = None) -> bool:
+        """Window is empty (nothing to drain). See :meth:`depth` on ``ctx``."""
+        return self._is_empty(self._ctx if ctx is None else ctx)
 
     def depth_slot(self):
         """The ``depth`` reader slot (for wiring into effects/computations)."""
@@ -480,9 +487,12 @@ class Outbox[T]:
         """The transport drains the coalesced window for egress."""
         return self._relay.drain()
 
-    def is_full(self) -> bool:
-        """The producer-facing backpressure signal (window at/over the watermark)."""
-        return self._relay.is_full()
+    def is_full(self, ctx: object | None = None) -> bool:
+        """The producer-facing backpressure signal (window at/over the watermark).
+
+        Pass the caller's :class:`~lazily.compute.Compute` view to track the read
+        inside a reactive body; omit for an untracked top-level read."""
+        return self._relay.is_full(ctx)
 
     def is_full_slot(self):
         return self._relay.is_full_slot()

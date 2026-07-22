@@ -34,7 +34,7 @@ def test_computed_guard_suppresses_equal_recompute() -> None:
     @Slot
     def view(c: dict) -> int:
         runs["n"] += 1
-        return sig.value
+        return c.read(sig)
 
     assert view(ctx) == 1
     assert runs["n"] == 1
@@ -57,7 +57,7 @@ def test_computed_tracked_as_dependency_by_slot() -> None:
 
     @Slot
     def derived(c: dict) -> int:
-        return sig.value * 100
+        return c.read(sig) * 100
 
     assert derived(ctx) == 300
     n(ctx).value = 9  # sig: 3 -> 10
@@ -68,7 +68,7 @@ def test_chained_eager_computeds() -> None:
     ctx: dict = {}
     base = source(lambda c: 1)
     a = computed(ctx, lambda c: base(c).value + 1).eager()
-    b = computed(ctx, lambda c: a.value * 10).eager()
+    b = computed(ctx, lambda c: c.read(a) * 10).eager()
 
     assert a.value == 2
     assert b.value == 20
@@ -126,7 +126,7 @@ def test_computed_depends_on_slot() -> None:
     @Slot
     def view(c: dict) -> int:
         runs["n"] += 1
-        return base(c) + sig.value
+        return base(c) + c.read(sig)
 
     assert view(ctx) == 63
     assert runs["n"] == 1

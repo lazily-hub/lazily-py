@@ -88,7 +88,7 @@ class TestStateMachine:
 
         @Slot
         def state_len(ctx: dict) -> int:
-            val = len(m.state)
+            val = len(m.state_at(ctx))
             computed.append(val)
             return val
 

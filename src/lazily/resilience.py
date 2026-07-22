@@ -154,9 +154,15 @@ class CircuitBreakerCell:
         self._core.record(success, now)
         self._refresh()
 
-    def state(self) -> BreakerState:
-        """Reactive read of the breaker state."""
-        return self._state.value
+    def state(self, ctx: object | None = None) -> BreakerState:
+        """Reactive read of the breaker state.
+
+        Pass the caller's :class:`~lazily.compute.Compute` view to value-thread
+        the dependency edge inside a reactive body; omit it for an untracked
+        top-level read (``#lzcellkernel`` bare-read removal)."""
+        if ctx is None:
+            return self._state.value
+        return ctx.read(self._state)  # type: ignore[attr-defined]
 
     def state_cell(self) -> Cell[BreakerState]:
         """Handle to the ``state`` reader cell (advanced wiring)."""
@@ -227,9 +233,11 @@ class RetryPolicyCell:
 
         batch(apply)
 
-    def delay(self) -> int:
-        """Reactive read of the current delay."""
-        return self._delay.value
+    def delay(self, ctx: object | None = None) -> int:
+        """Reactive read of the current delay. See :meth:`state` on ``ctx``."""
+        if ctx is None:
+            return self._delay.value
+        return ctx.read(self._delay)  # type: ignore[attr-defined]
 
     def delay_cell(self) -> Cell[int]:
         """Handle to the ``delay`` reader cell (advanced wiring)."""
@@ -290,9 +298,11 @@ class BulkheadCell:
         self._core.release()
         self._refresh()
 
-    def permits_in_use(self) -> int:
-        """Reactive read of the permits in use."""
-        return self._in_use.value
+    def permits_in_use(self, ctx: object | None = None) -> int:
+        """Reactive read of the permits in use. See :meth:`state` on ``ctx``."""
+        if ctx is None:
+            return self._in_use.value
+        return ctx.read(self._in_use)  # type: ignore[attr-defined]
 
     def permits_in_use_cell(self) -> Cell[int]:
         """Handle to the ``permits_in_use`` reader cell (advanced wiring)."""
@@ -357,9 +367,11 @@ class TimeoutCell:
         self._refresh()
         return result
 
-    def is_timed_out(self) -> bool:
-        """Reactive read of the timed-out flag."""
-        return self._timed_out.value
+    def is_timed_out(self, ctx: object | None = None) -> bool:
+        """Reactive read of the timed-out flag. See :meth:`state` on ``ctx``."""
+        if ctx is None:
+            return self._timed_out.value
+        return ctx.read(self._timed_out)  # type: ignore[attr-defined]
 
     def is_timed_out_cell(self) -> Cell[bool]:
         """Handle to the ``is_timed_out`` reader cell (advanced wiring)."""

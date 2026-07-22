@@ -185,13 +185,16 @@ def test_untracked_escape_is_a_context():
     ("kind", "build"),
     [
         ("source_cell", lambda ctx, a: a),
-        ("lazy_computed", lambda ctx, a: computed(ctx, lambda c: a.get() * 10)),
-        ("eager_computed", lambda ctx, a: computed(ctx, lambda c: a.get() * 10).eager()),
-        ("raw_slot", lambda ctx, a: Slot(callable=lambda c: a.get() * 10)),
+        ("lazy_computed", lambda ctx, a: computed(ctx, lambda c: c.read(a) * 10)),
+        (
+            "eager_computed",
+            lambda ctx, a: computed(ctx, lambda c: c.read(a) * 10).eager(),
+        ),
+        ("raw_slot", lambda ctx, a: Slot(callable=lambda c: c.read(a) * 10)),
         (
             "chained_lazy",
             lambda ctx, a: computed(
-                ctx, lambda c: computed(ctx, lambda d: a.get() + 1).get() * 10
+                ctx, lambda c: c.read(computed(ctx, lambda d: d.read(a) + 1)) * 10
             ),
         ),
     ],

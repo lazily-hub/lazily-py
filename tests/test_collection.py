@@ -135,7 +135,7 @@ def test_len_reader_not_invalidated_by_move() -> None:
 
     @Slot
     def length(_ctx: dict) -> int:
-        return len(cm)
+        return cm.len(_ctx)
 
     runs = [0]
 

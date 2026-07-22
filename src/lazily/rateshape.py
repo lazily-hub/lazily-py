@@ -107,9 +107,15 @@ class DebounceCell[T]:
         _set_output(self._cell, emitted)
         return emitted
 
-    def output(self) -> T | None:
-        """Reactive read of the last emitted value."""
-        return self._cell.value
+    def output(self, ctx: object | None = None) -> T | None:
+        """Reactive read of the last emitted value.
+
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
+        value-thread the dependency edge inside a reactive body; omit it for an
+        untracked top-level read (``#lzcellkernel`` bare-read removal)."""
+        if ctx is None:
+            return self._cell.value
+        return ctx.read(self._cell)  # type: ignore[attr-defined]
 
     def output_cell(self) -> Cell[T | None]:
         """The underlying output cell (advanced wiring)."""
@@ -192,9 +198,15 @@ class ThrottleCell[T]:
         _set_output(self._cell, emitted)
         return emitted
 
-    def output(self) -> T | None:
-        """Reactive read of the last emitted value."""
-        return self._cell.value
+    def output(self, ctx: object | None = None) -> T | None:
+        """Reactive read of the last emitted value.
+
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
+        value-thread the dependency edge inside a reactive body; omit it for an
+        untracked top-level read (``#lzcellkernel`` bare-read removal)."""
+        if ctx is None:
+            return self._cell.value
+        return ctx.read(self._cell)  # type: ignore[attr-defined]
 
     def output_cell(self) -> Cell[T | None]:
         """The underlying output cell (advanced wiring)."""
@@ -298,9 +310,15 @@ class SampleCell[T]:
         _set_output(self._cell, emitted)
         return emitted
 
-    def output(self) -> T | None:
-        """Reactive read of the last emitted value."""
-        return self._cell.value
+    def output(self, ctx: object | None = None) -> T | None:
+        """Reactive read of the last emitted value.
+
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
+        value-thread the dependency edge inside a reactive body; omit it for an
+        untracked top-level read (``#lzcellkernel`` bare-read removal)."""
+        if ctx is None:
+            return self._cell.value
+        return ctx.read(self._cell)  # type: ignore[attr-defined]
 
     def output_cell(self) -> Cell[T | None]:
         """The underlying output cell (advanced wiring)."""
@@ -382,9 +400,15 @@ class ProbabilisticSampleCell[T]:
             return value
         return None
 
-    def output(self) -> T | None:
-        """Reactive read of the last emitted value."""
-        return self._cell.value
+    def output(self, ctx: object | None = None) -> T | None:
+        """Reactive read of the last emitted value.
+
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
+        value-thread the dependency edge inside a reactive body; omit it for an
+        untracked top-level read (``#lzcellkernel`` bare-read removal)."""
+        if ctx is None:
+            return self._cell.value
+        return ctx.read(self._cell)  # type: ignore[attr-defined]
 
     def output_cell(self) -> Cell[T | None]:
         """The underlying output cell (advanced wiring)."""

@@ -61,7 +61,7 @@ class _Readers:
 
     @staticmethod
     def _slot(ctx: dict, fn: Any) -> Slot:  # type: ignore[type-arg]
-        s: Slot = Slot(callable=lambda _ctx: fn())
+        s: Slot = Slot(callable=lambda _ctx: fn(_ctx))
         s(ctx)  # materialize the cache
         return s
 

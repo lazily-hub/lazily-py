@@ -64,7 +64,7 @@ def test_disposal_api_is_live_on_whichever_module_is_loaded(module: str) -> None
 def test_degrees_count_both_directions() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
-    mid = Slot(lambda c: src.value + 1)
+    mid = Slot(lambda c: c.read(src) + 1)
     sink = Slot(lambda c: mid(c) + 10)
 
     # Degrees are zero until something actually reads: an edge is discovered by
@@ -84,7 +84,7 @@ def test_degrees_count_both_directions() -> None:
 def test_repeated_reads_do_not_grow_the_degree() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
-    reader = Slot(lambda c: src.value + src.value + src.value)
+    reader = Slot(lambda c: c.read(src) + c.read(src) + c.read(src))
     assert reader(ctx) == 3
     assert src.dependent_count() == 1
     assert reader.dependency_count() == 1
@@ -98,7 +98,7 @@ def test_repeated_reads_do_not_grow_the_degree() -> None:
 def test_disposal_detaches_both_directions() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
-    mid = Slot(lambda c: src.value + 1)
+    mid = Slot(lambda c: c.read(src) + 1)
     assert mid(ctx) == 2
     assert src.dependent_count() == 1
 
@@ -117,7 +117,7 @@ def test_disposal_dirties_a_surviving_reader() -> None:
     """
     ctx: dict = {}
     src = Cell(ctx, 4)
-    derived = Slot(lambda c: src.value)
+    derived = Slot(lambda c: c.read(src))
     reader = Slot(lambda c: derived(c) + 1)
     assert reader(ctx) == 5
 
@@ -139,7 +139,7 @@ def test_disposal_does_not_run_a_reached_effect() -> None:
     ctx: dict = {}
     runs: list[str] = []
     src = Cell(ctx, 1)
-    derived = Slot(lambda c: src.value)
+    derived = Slot(lambda c: c.read(src))
 
     def body(_c: dict) -> None:
         runs.append("run")
@@ -160,7 +160,7 @@ def test_disposal_does_not_run_a_reached_effect() -> None:
 def test_disposal_is_idempotent_and_terminal() -> None:
     ctx: dict = {}
     src = Cell(ctx, 1)
-    derived = Slot(lambda c: src.value)
+    derived = Slot(lambda c: c.read(src))
     assert derived(ctx) == 1
 
     derived.dispose(ctx)
@@ -189,7 +189,7 @@ def test_churn_returns_the_dependent_set_to_baseline() -> None:
 
     def subscribe() -> Effect:
         def body(_c: dict) -> None:
-            _ = topic.value
+            _ = _c.read(topic)
 
         handle = Effect(body)
         handle(ctx)
@@ -221,7 +221,7 @@ def test_with_block_disposes_members_on_exit() -> None:
     topic = Cell(ctx, 2)
 
     with teardown_scope(ctx) as scope:
-        doubled = scope.computed(lambda c: topic.value * 2)
+        doubled = scope.computed(lambda c: c.read(topic) * 2)
         assert doubled(ctx) == 4
         assert len(scope) == 1
         assert topic.dependent_count() == 1
@@ -238,7 +238,7 @@ def test_scope_bounds_teardown_not_visibility() -> None:
     parent_owned = Cell(ctx, 3)
 
     with teardown_scope(ctx) as scope:
-        inner = scope.computed(lambda c: parent_owned.value + 1)
+        inner = scope.computed(lambda c: c.read(parent_owned) + 1)
         assert inner(ctx) == 4
 
     assert not parent_owned.disposed
@@ -257,7 +257,7 @@ def test_scope_tears_down_in_reverse_creation_order() -> None:
     topic = Cell(ctx, 1)
 
     scope = TeardownScope(ctx)
-    first = scope.computed(lambda c: topic.value)
+    first = scope.computed(lambda c: c.read(topic))
 
     def earlier(_c: dict) -> Any:
         first(_c)
@@ -283,10 +283,10 @@ def test_scope_teardown_equals_the_fold_of_individual_disposals() -> None:
         ctx: dict = {}
         cleanups: list[str] = []
         topic = Cell(ctx, 1)
-        outside = Slot(lambda c: topic.value + 100)
+        outside = Slot(lambda c: c.read(topic) + 100)
         scope = TeardownScope(ctx)
 
-        a = scope.computed(lambda c: topic.value + 1)
+        a = scope.computed(lambda c: c.read(topic) + 1)
         b = scope.computed(lambda c: a(c) + 2)
 
         def watch(_c: dict) -> Any:
@@ -321,7 +321,7 @@ def test_disarm_disposes_nothing() -> None:
     ctx: dict = {}
     topic = Cell(ctx, 1)
     scope = TeardownScope(ctx)
-    escaped = scope.computed(lambda c: topic.value)
+    escaped = scope.computed(lambda c: c.read(topic))
     assert escaped(ctx) == 1
     assert len(scope) == 1
 

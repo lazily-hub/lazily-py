@@ -106,9 +106,16 @@ class MergeCell[T]:
     def policy(self) -> MergePolicy[T]:
         return self._policy
 
-    def get(self) -> T:
-        """Read the current converged value (tracks a dependency in a computation)."""
-        return self._cell.get()
+    def get(self, ctx: object | None = None) -> T:
+        """Read the current converged value.
+
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
+        value-thread the dependency edge when reading inside a reactive body;
+        omit it for an untracked top-level read (``#lzcellkernel`` bare-read
+        removal)."""
+        if ctx is None:
+            return self._cell.get()
+        return ctx.read(self._cell)  # type: ignore[attr-defined]
 
     def set(self, value: T) -> None:
         """Replace the value outright (the keep-latest write), bypassing the policy."""

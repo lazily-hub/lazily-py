@@ -43,7 +43,7 @@ def _spec_present() -> bool:
 def _observer(ctx: dict, reader: Callable[[], Any]) -> Slot:  # type: ignore[type-arg]
     """A primed observer Slot over ``reader``; ``is_in(ctx)`` reports whether the
     cached value survived the last op (cached ⇒ not invalidated)."""
-    s: Slot = Slot(callable=lambda _ctx: reader())
+    s: Slot = Slot(callable=lambda _ctx: reader(_ctx))
     s(ctx)  # materialize the cache
     return s
 

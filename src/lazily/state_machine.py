@@ -91,8 +91,23 @@ class StateMachine[S, E]:
 
     @property
     def state(self) -> S:
-        """The current state. Auto-subscribes when read inside a Computed/Effect."""
+        """The current state — an **untracked** snapshot read.
+
+        A property cannot receive the caller's compute view, so this read forms
+        no dependency edge (``#lzcellkernel`` bare-read removal). To subscribe a
+        Computed/Effect to the state, read it *through* the compute view with
+        :meth:`state_at` (or ``ctx.read(machine.cell)``).
+        """
         return self._cell.get()
+
+    def state_at(self, ctx: object) -> S:
+        """The current state, **value-threaded** through the caller's compute view.
+
+        Reading this inside a Computed/Effect body registers the dependency edge
+        against that reader, so it re-runs on transition — the tracked companion
+        to the untracked :attr:`state` property.
+        """
+        return ctx.read(self._cell)  # type: ignore[attr-defined]
 
     @property
     def cell(self) -> Cell[S]:
@@ -123,8 +138,8 @@ class StateMachine[S, E]:
         cell = self._cell
         prev: list[Any] = [_UNSET]
 
-        def _body(_ctx: dict) -> None:
-            current = cell.get()  # declares the dependency edge
+        def _body(_ctx: Any) -> None:
+            current = _ctx.read(cell)  # value-threaded: declares the dependency edge
             old = prev[0]
             prev[0] = current
             if old is not _UNSET and old != current:

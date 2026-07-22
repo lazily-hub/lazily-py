@@ -14,6 +14,7 @@ from typing import Any, TypeVar
 
 from .batch import notify_change as _notify_change
 from .slot import (
+    _AMBIENT_DISABLED,
     BaseSlot,
     DisposedError,
     Slot,
@@ -95,7 +96,7 @@ class Cell[T]:
         # bridge: the recomputing node is ``slot_stack[-1]`` (``#lzcellkernel``
         # residual — the ambient bridge is retained until every bare-read call
         # site is migrated).
-        if slot_stack:
+        if slot_stack and not _AMBIENT_DISABLED:
             _register_edge(self, slot_stack[-1])
         return self._value
 

@@ -54,7 +54,7 @@ def _run_fixture(fixture: dict) -> None:
 
     # Wrap the alive-set reader in an observer Slot; ``is_in(ctx)`` reports
     # whether the cached value survived the last op (cached ⇒ not invalidated).
-    observed: Slot = Slot(callable=lambda _ctx: m.peer_set())
+    observed: Slot = Slot(callable=lambda _ctx: m.peer_set(_ctx))
     observed(ctx)  # materialize the cache
 
     for i, step in enumerate(fixture["steps"]):

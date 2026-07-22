@@ -98,7 +98,7 @@ def test_batch_coalesces_into_one_invalidation() -> None:
     @Slot
     def downstream(_ctx: dict) -> int:
         runs[0] += 1
-        return src_a.value + src_b.value
+        return _ctx.read(src_a) + _ctx.read(src_b)
 
     assert downstream(ctx) == 2
     assert runs[0] == 1

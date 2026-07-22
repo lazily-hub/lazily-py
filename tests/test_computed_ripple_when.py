@@ -36,7 +36,7 @@ def test_custom_significance_propagates_on_proxy_change() -> None:
     @Slot
     def observer(c: dict) -> int:
         runs["n"] += 1
-        return derived.value[0]
+        return c.read(derived)[0]
 
     assert observer(ctx) == 0
     base = runs["n"]
@@ -70,7 +70,7 @@ def test_propagate_every_n_via_value_carried_counter() -> None:
     @Slot
     def observer(c: dict) -> int:
         seen["n"] += 1
-        return sampled.value
+        return c.read(sampled)
 
     assert observer(ctx) == 0
     base = seen["n"]
@@ -104,12 +104,12 @@ def test_computed_is_computed_ripple_when_not_equal() -> None:
     @Slot
     def obs_a(c: dict) -> int:
         counts["a"] += 1
-        return via_computed.value
+        return c.read(via_computed)
 
     @Slot
     def obs_b(c: dict) -> int:
         counts["b"] += 1
-        return via_when.value
+        return c.read(via_when)
 
     assert obs_a(ctx) == 0
     assert obs_b(ctx) == 0
@@ -151,7 +151,7 @@ def test_pass_through_always_propagates() -> None:
     @Slot
     def observer(c: dict) -> int:
         runs["n"] += 1
-        return passthrough.value
+        return c.read(passthrough)
 
     assert observer(ctx) == 0
     base = runs["n"]

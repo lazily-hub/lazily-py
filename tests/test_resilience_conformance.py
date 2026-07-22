@@ -44,7 +44,7 @@ def _spec_present() -> bool:
 def _observer(ctx: dict, reader: Any) -> Slot:  # type: ignore[type-arg]
     """A materialized observer Slot over a reactive reader. ``is_in(ctx)`` reports
     whether the cached value survived the last op (cached => not invalidated)."""
-    s: Slot = Slot(callable=lambda _ctx: reader())
+    s: Slot = Slot(callable=lambda _ctx: reader(_ctx))
     s(ctx)  # materialize the cache
     return s
 

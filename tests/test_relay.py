@@ -102,7 +102,7 @@ def test_reactive_readers_track_via_effect() -> None:
 
     @effect
     def watch(ctx) -> None:
-        seen.append(r.is_full())
+        seen.append(r.is_full(ctx))
 
     watch(ctx)
     assert seen == [False]

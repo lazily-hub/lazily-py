@@ -467,17 +467,28 @@ class StateChart:
         :meth:`send` (exit -> transition -> entry). Empty after a rejected event."""
         return list(self._last_actions)
 
-    def configuration(self) -> list[str]:
-        """Full active configuration (leaves plus all active ancestors), sorted."""
-        return sorted(self._config.value)
+    def _read_config(self, ctx: object | None) -> frozenset[str]:
+        """Read the active-configuration cell, value-threading through ``ctx``
+        (the caller's :class:`~lazily.compute.Compute` view) when given, else an
+        untracked bare read (``#lzcellkernel`` bare-read removal)."""
+        if ctx is None:
+            return self._config.value
+        return ctx.read(self._config)  # type: ignore[attr-defined]
 
-    def active_leaves(self) -> list[str]:
-        """Active atomic leaves, sorted (one per parallel region)."""
-        return sorted(s for s in self._config.value if self._def.is_leaf(s))
+    def configuration(self, ctx: object | None = None) -> list[str]:
+        """Full active configuration (leaves plus all active ancestors), sorted.
+        Pass the caller's compute view (``ctx``) to value-thread the edge."""
+        return sorted(self._read_config(ctx))
 
-    def matches(self, id: str) -> bool:
-        """Hierarchical "state-in" predicate: ``True`` iff ``id`` is active."""
-        return id in self._config.value
+    def active_leaves(self, ctx: object | None = None) -> list[str]:
+        """Active atomic leaves, sorted (one per parallel region). Pass the
+        caller's compute view (``ctx``) to value-thread the edge."""
+        return sorted(s for s in self._read_config(ctx) if self._def.is_leaf(s))
+
+    def matches(self, id: str, ctx: object | None = None) -> bool:
+        """Hierarchical "state-in" predicate: ``True`` iff ``id`` is active. Pass
+        the caller's compute view (``ctx``) to value-thread the edge."""
+        return id in self._read_config(ctx)
 
     def send(self, event: str, guards: Mapping[str, bool] | None = None) -> bool:
         """Run-to-completion transition.

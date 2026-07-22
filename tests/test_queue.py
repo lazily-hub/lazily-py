@@ -121,7 +121,7 @@ def test_closure_lifecycle() -> None:
 def _reader(ctx: dict, fn) -> Slot:  # type: ignore[type-arg]
     @Slot
     def r(ctx):
-        return fn()
+        return fn(ctx)  # value-thread the caller's compute view into the reader
 
     return r
 
@@ -335,8 +335,8 @@ def test_backpressure_pop_wakes_push_side_effect() -> None:
 
     @effect
     def push_side(ctx) -> None:
-        full = q.is_full()
-        n = q.len()
+        full = q.is_full(ctx)
+        n = q.len(ctx)
         log.append((full, n))
 
     push_side(ctx)
@@ -481,7 +481,7 @@ def test_raw_channel_reader_kinds_stay_reactive() -> None:
 
     @effect
     def len_watch(ctx) -> None:
-        log.append(q.len())
+        log.append(q.len(ctx))
 
     len_watch(ctx)
     assert log == [0]

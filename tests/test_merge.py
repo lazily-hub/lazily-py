@@ -98,7 +98,7 @@ def test_idempotent_merge_no_ops_via_guard() -> None:
 
     @effect
     def watch(ctx) -> None:
-        mc.get()
+        mc.get(ctx)
         runs[0] += 1
 
     watch(ctx)
@@ -136,7 +136,7 @@ def test_mergecell_algebra_fixture() -> None:
 
         @effect
         def watch(ctx, _mc=mc, _runs=runs) -> None:
-            _mc.get()
+            _mc.get(ctx)
             _runs[0] += 1
 
         watch(ctx)

@@ -46,7 +46,7 @@ def _spec_present() -> bool:
 def _observe(ctx: dict, cell: Any) -> Slot:
     """A materialized observer Slot reading ``cell.value``; ``is_in(ctx)`` reports
     whether its cache survived the last op (cached ⇒ reader not invalidated)."""
-    s: Slot = Slot(callable=lambda _ctx: cell.value)
+    s: Slot = Slot(callable=lambda _ctx: _ctx.read(cell))
     s(ctx)
     return s
 

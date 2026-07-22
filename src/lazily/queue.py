@@ -465,34 +465,41 @@ class QueueCell[T]:
 
     # -- reactive reader-kind reads ------------------------------------- #
 
-    def head(self) -> T | None:
+    def head(self, ctx: object | None = None) -> T | None:
         """Reactive read of the current head value. ``None`` when the queue is
         empty. A reader is invalidated when the head value *changes* — every
         pop, and a push only when transitioning from empty. Trivially ``None``
-        when the backend has no ``peek`` capability."""
-        return self._head(self.ctx)
+        when the backend has no ``peek`` capability.
 
-    def len(self) -> int:
+        Pass the caller's :class:`~lazily.compute.Compute` view (``ctx``) to
+        value-thread the dependency edge inside a reactive body; omit it for an
+        untracked top-level read (``#lzcellkernel`` bare-read removal)."""
+        return self._head(self.ctx if ctx is None else ctx)
+
+    def len(self, ctx: object | None = None) -> int:
         """Reactive read of the number of buffered elements. Invalidated
-        whenever the count changes (every successful push/pop)."""
-        return self._len(self.ctx)
+        whenever the count changes (every successful push/pop). See :meth:`head`
+        on ``ctx``."""
+        return self._len(self.ctx if ctx is None else ctx)
 
-    def is_empty(self) -> bool:
+    def is_empty(self, ctx: object | None = None) -> bool:
         """Reactive emptiness check. Invalidated only on the empty ↔ non-empty
-        transition."""
-        return self._is_empty(self.ctx)
+        transition. See :meth:`head` on ``ctx``."""
+        return self._is_empty(self.ctx if ctx is None else ctx)
 
-    def is_full(self) -> bool:
+    def is_full(self, ctx: object | None = None) -> bool:
         """Reactive fullness check (only meaningful when the backend is bounded).
         Invalidated on the full ↔ not-full transition — this is the backpressure
         signal. For an unbounded backend this is always ``False`` and never
-        invalidates."""
-        return self._is_full(self.ctx)
+        invalidates. See :meth:`head` on ``ctx``."""
+        return self._is_full(self.ctx if ctx is None else ctx)
 
-    def is_closed(self) -> bool:
+    def is_closed(self, ctx: object | None = None) -> bool:
         """Reactive read of the closed flag. Invalidated only on the open →
-        closed transition."""
-        return self._closed.value
+        closed transition. See :meth:`head` on ``ctx``."""
+        if ctx is None:
+            return self._closed.value
+        return ctx.read(self._closed)  # type: ignore[attr-defined]
 
     # -- reader-kind cell handles (advanced wiring) --------------------- #
 

@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from .effect import Effect
 from .slot import (
+    _AMBIENT_DISABLED,
     Slot,
     _ctx_base,
     _drain_resets,
@@ -248,7 +249,7 @@ class Computed[T]:
         read still tracks through the ambient bridge (``slot_stack[-1]``,
         ``#lzcellkernel`` residual).
         """
-        if slot_stack:
+        if slot_stack and not _AMBIENT_DISABLED:
             self._subscribe(slot_stack[-1])
         if not self._eager:
             # Lazy: recompute on read via the backing memo. The memo pushes itself
@@ -317,8 +318,8 @@ def computed_ripple_when[T](
     to **propagate** the recompute downstream and ``False`` to **suppress** it
     (treat it as "no meaningful change"). So the two identities hold::
 
-        computed(ctx, f)                              # natural-equality guard
-        computed_ripple_when(ctx, f, lambda o, n: o != n)   # ...same thing
+        computed(ctx, f)  # natural-equality guard
+        computed_ripple_when(ctx, f, lambda o, n: o != n)  # ...same thing
 
         # pass-through: always propagate (no suppression), the escape for a
         # value with no cheap/meaningful equality

@@ -52,7 +52,7 @@ def _spec_present() -> bool:
 def _observer(ctx: dict, output: Callable[[], Any]) -> Slot:
     """A cached Slot wrapping the operator's ``output`` reader; ``is_in(ctx)``
     reports whether the cache survived the last op (cached ⇒ not invalidated)."""
-    s: Slot = Slot(callable=lambda _ctx: output())
+    s: Slot = Slot(callable=lambda _ctx: output(_ctx))
     s(ctx)  # materialize the cache (subscribes to the output cell)
     return s
 
