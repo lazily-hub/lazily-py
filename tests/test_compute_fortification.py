@@ -24,10 +24,11 @@ from lazily import (
     Compute,
     Context,
     StaleComputeError,
+    computed,
     source,
     tracked_effect,
 )
-from lazily.slot import slot_stack
+from lazily.slot import Slot, slot_stack
 
 
 def _tracked_computed(ctx, body):
@@ -168,3 +169,49 @@ def test_untracked_escape_is_a_context():
     assert isinstance(escape, Context)
     assert escape.read(a) == 7
     assert a.dependent_count() == 0, "reading through the Context forms no edge"
+
+
+# --- The Compute surface subscribes correctly across *every* node kind -------
+#
+# For Compute to be the sole tracking surface it must establish a live
+# subscription no matter what kind of node is read through it — not only a
+# ``Source`` cell (which the tests above cover). A **lazy** ``Computed`` is the
+# one that regressed: it holds no settled value and never ``touch``es on its own,
+# so its live upstream edges are on its backing memo. ``Compute.read`` must
+# subscribe the reader to that memo, or an upstream change silently never reaches
+# the reader (the ambient ``.value`` path never had this gap because it pushes
+# the reader onto ``slot_stack`` *through* the memo read).
+@pytest.mark.parametrize(
+    ("kind", "build"),
+    [
+        ("source_cell", lambda ctx, a: a),
+        ("lazy_computed", lambda ctx, a: computed(ctx, lambda c: a.get() * 10)),
+        ("eager_computed", lambda ctx, a: computed(ctx, lambda c: a.get() * 10).eager()),
+        ("raw_slot", lambda ctx, a: Slot(callable=lambda c: a.get() * 10)),
+        (
+            "chained_lazy",
+            lambda ctx, a: computed(
+                ctx, lambda c: computed(ctx, lambda d: a.get() + 1).get() * 10
+            ),
+        ),
+    ],
+)
+def test_compute_read_subscribes_across_node_kinds(kind, build):
+    ctx: dict = {}
+    a = source(lambda _c: 1)(ctx)
+    node = build(ctx, a)
+
+    runs: list[object] = []
+    eff = tracked_effect(lambda c: runs.append(c.read(node)))
+    eff(ctx)
+    assert len(runs) == 1, f"{kind}: effect runs once on creation"
+
+    # Behavioural: an upstream change must rerun the effect for EVERY node kind.
+    a.set(7)
+    assert len(runs) == 2, (
+        f"{kind}: a Compute.read subscription must survive an upstream change"
+    )
+
+    eff.dispose()
+    a.set(9)
+    assert len(runs) == 2, f"{kind}: a disposed effect re-runs no more"

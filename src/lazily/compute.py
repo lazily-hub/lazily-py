@@ -258,9 +258,25 @@ class Compute:
             )
 
     def read(self, node: Any) -> Any:
-        """Tracked read: register ``node -> self.node`` and return the value."""
+        """Tracked read: register ``node -> self.node`` and return the value.
+
+        A **lazy** :class:`~lazily.signal.Computed` needs a second edge. A lazy
+        computed holds no settled value and never :meth:`~lazily.signal.Computed.touch`\\ es
+        on its own — only its *eager* form does, from the puller. Its live
+        upstream edges live on the **backing memo** (``_slot``), which is the node
+        an upstream change actually invalidates. Registering only ``node ->
+        self.node`` (the handle) would leave ``self.node`` subscribed to a node
+        that never propagates, so an upstream change would never reach the reader
+        (the ``lazy computed`` / ``chained lazy`` MISS the ambient ``.value`` path
+        catches by pushing the reader onto ``slot_stack`` through the memo read).
+        We therefore also subscribe ``self.node`` to the backing memo, so
+        ``upstream -> memo -> self.node`` propagates. Eager computeds and raw
+        slots need no second edge — they propagate through their own handle.
+        """
         self._guard()
         _register_edge(node, self.node)
+        if isinstance(node, Computed) and not node._eager:
+            _register_edge(node._slot, self.node)
         return _read_untracked(node, self._ctx)
 
     def get(self, node: Any) -> Any:
