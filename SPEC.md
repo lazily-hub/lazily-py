@@ -177,6 +177,44 @@ cells appears at most once per batch (the coalesced-frontier invariant).
 The lock-serialized counterpart that also linearizes concurrent writers lives at
 `ThreadSafeContext.batch`.
 
+### Struct bridge (`struct_source`)
+
+A `StructSource[T]` is one struct value held as **per-field** `Source` cells plus
+one guarded `Computed[T]` that re-materializes the struct from them. It is a
+Python-side convenience over the kernel, not a wire-plane or cross-binding
+obligation: it introduces no new node kind and no new invalidation rule.
+
+**Types:**
+
+| Type | Purpose |
+|------|---------|
+| `struct_source(ctx, instance)` / `struct_source(ctx, Type, **fields)` | Build a bridge |
+| `StructSource.field(name)` / `s[name]` | The `Source` backing one field |
+| `StructSource.struct` | The guarded `Computed[T]` re-materializing the struct |
+| `StructSource.update(...)` / `.set_field(...)` / `.apply(instance)` | Batched writes |
+| `StructBackend` | How one struct library is introspected and reconstructed |
+| `register_struct_backend` / `resolve_struct_backend` / `struct_backends` | Backend registry |
+
+**Semantics:**
+
+- **Per-field edges:** a reader that reads `s[name]` depends on that field only;
+  a sibling write forms no edge to it and never invalidates it.
+- **Whole-struct guard:** `s.struct` is an ordinary guarded `Computed`, so a
+  write that lands an equal value suppresses the cascade at the cell, and an
+  equal re-materialization suppresses it again downstream.
+- **One wave per update:** `update` and `apply` write through `batch`, so an
+  N-field change invalidates each dependent at most once.
+- **Bridged fields:** the `init` fields of the type, in declaration order.
+  Non-`init` / derived fields are excluded — the constructor recomputes them, so
+  they are not independent state.
+- **Backends:** msgspec `Struct`, pydantic v2 `BaseModel`, `attrs`, stdlib
+  `dataclasses`, stdlib `NamedTuple`, tried in that order. A backend's `matches`
+  probe is structural and MUST NOT import its library; registered backends take
+  precedence, and a registration replaces any built-in with the same `name`.
+- **No new runtime dependency:** the optional-dependency extras
+  (`lazily[msgspec]`, `[pydantic]`, `[attrs]`, `[structs]`) are install
+  ergonomics and the CI test matrix; `import lazily` loads none of them.
+
 ## Dependency Tracking
 
 Uses a global `slot_stack: list[Slot]` (acts as thread-local execution context).

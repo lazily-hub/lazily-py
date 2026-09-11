@@ -1,5 +1,23 @@
 ## Unreleased
 
+### Added
+
+- Struct ↔ reactive bridge, `lazily.struct_cell` (`#lzpystructcell`).
+  `struct_source(ctx, instance)` explodes one struct into per-field `Source`
+  cells plus a guarded `Computed` that re-materializes it, so a reader of one
+  field is invalidated only by that field while a whole-struct reader still pays
+  one construction per settled wave. `update` / `apply` write through `batch`,
+  and `apply` diffs a fresh instance so only the fields that moved invalidate —
+  the swap-in path for code that hands out a copy from a `status()` method.
+  Library-agnostic through a `StructBackend` registry with five built-ins
+  (msgspec `Struct`, pydantic v2 `BaseModel`, `attrs`, stdlib `dataclasses`,
+  stdlib `NamedTuple`) and `register_struct_backend` for anything else. The
+  backends probe structurally and never import their library to classify a type,
+  so `import lazily` still loads no third-party module and the runtime
+  dependency set is unchanged; the new `lazily[msgspec]` / `[pydantic]` /
+  `[attrs]` / `[structs]` extras are install ergonomics and the CI test matrix.
+
+
 ## 0.40.0
 
 ### Added

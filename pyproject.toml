@@ -38,9 +38,21 @@ dependencies = [
 "Source" = "https://github.com/lazily-hub/lazily-py"
 
 [project.optional-dependencies]
+# Struct-bridge backends (``lazily.struct_cell`` / ``#lzpystructcell``). These
+# are INSTALL ERGONOMICS, not dependencies: `struct_source` never imports any of
+# them at module scope and never imports one to decide whether a type belongs to
+# it (the backends probe structurally). The stdlib backends — dataclasses and
+# NamedTuple — need no extra at all, which is also why this bridge is not a
+# separate distribution: a standalone package would ship zero dependencies and
+# pin a lazily version to reach Source/Computed/batch.
+attrs = ["attrs>=23.1"]
+msgspec = ["msgspec>=0.18"]
+pydantic = ["pydantic>=2.0"]
+structs = ["lazily[attrs,msgspec,pydantic]"]
 dev = [
     "build==1.4.0",
     "jsonschema==4.23.0",
+    "lazily[structs]",
     "mypy[mypyc]>=2.3",
     "poethepoet==0.40.0",
     "pytest-cov==7.0.0",

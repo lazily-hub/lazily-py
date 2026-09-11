@@ -111,6 +111,15 @@ A family cell summarises 75 feature rows. For row-level marks, per-cell notes, a
 pip install lazily
 ```
 
+The library itself has no third-party runtime dependencies. The optional extras
+only pull in the struct libraries the
+[struct bridge](#struct-bridge--struct_source) can adapt — the stdlib backends
+(`dataclasses`, `NamedTuple`) need no extra at all:
+
+```
+pip install "lazily[msgspec]"    # or [pydantic], [attrs], [structs] for all three
+```
+
 ## Example usage
 
 ```python
@@ -290,6 +299,63 @@ from its Lean formal model in [`lazily-formal`](https://github.com/lazily-hub/la
 The test suite gates on `lazily-formal`'s `lake build` (every theorem checks)
 and mirrors the named Lean theorems as property tests. See `SPEC.md` for the
 full compliance surface.
+
+## Struct bridge — `struct_source`
+
+`struct_source` explodes one struct instance into **per-field** `Source` cells
+plus a single guarded `Computed` that re-materializes the struct. A reader that
+depends on one field is invalidated only when *that* field changes; a reader of
+the whole struct keeps depending on all of them and pays one construction per
+settled wave. It is the swap-in path for code that already holds a `*State`
+struct and hands out a fresh copy from a `status()` method.
+
+```python
+from dataclasses import dataclass
+
+from lazily import computed, struct_source
+
+
+@dataclass
+class Status:
+    queue_depth: int
+    last_error: str | None = None
+
+
+ctx: dict = {}
+status = struct_source(ctx, Status(queue_depth=0))
+
+# Depends on ONE field.
+depth_view = computed(ctx, lambda c: c.read(status["queue_depth"]) * 2).eager()
+# Depends on the whole struct.
+whole = computed(ctx, lambda c: c.read(status.struct)).eager()
+
+status.update(last_error="boom")   # depth_view is NOT invalidated
+status.update(queue_depth=3)       # both recompute
+status.update(queue_depth=3)       # guarded: equal write, nothing recomputes
+
+# Ingress for code that already produces a fresh instance: only the fields that
+# actually moved invalidate, and the whole write is one batch.
+status.apply(Status(queue_depth=4, last_error="boom"))
+
+status.value        # Status(queue_depth=4, last_error='boom')
+```
+
+The bridge is library-agnostic. Built-in backends, in resolution order: msgspec
+`Struct`, pydantic v2 `BaseModel`, `attrs`, stdlib `dataclasses`, stdlib
+`NamedTuple`. None of them is imported at module scope, and none is imported to
+*decide* whether a type belongs to it — the probes are structural (an MRO entry
+from that module, or the marker attribute the library stamps on the class), so
+an application that never imports `msgspec` never loads it because of lazily.
+Register another library with `register_struct_backend(backend)`; it takes
+precedence over the built-ins, and re-registering a built-in's `name` replaces
+it rather than shadowing it.
+
+Non-`init` fields are not bridged: they are recomputed by the constructor, so
+they are not independent state. pydantic re-materializes through
+`model_construct` (values are already validated, and re-validating per wave is
+the cost the bridge exists to remove); pass
+`PydanticBackend(validate=True)` to `struct_source(..., backend=...)` to
+validate on every re-materialization instead.
 
 ## Latest-durable projection — `lazily.latest_durable_projection`
 
