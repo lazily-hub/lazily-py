@@ -150,6 +150,7 @@ __all__ = [
     "Health",
     "HealthCell",
     "HealthCore",
+    "IllegalTransition",
     "InMemoryOutbox",
     "InMemoryStore",
     "InProcIngress",
@@ -264,6 +265,11 @@ __all__ = [
     "ProbabilisticSampleCell",
     "ProbabilisticSampleCore",
     "Progress",
+    "ProjectedChart",
+    "ProjectedChartCore",
+    "ProjectedChartDef",
+    "ProjectionOutcome",
+    "ProjectionOutcomeKind",
     "PrometheusUnavailableError",
     "PydanticBackend",
     "QueueCell",
@@ -464,6 +470,7 @@ __all__ = [
     "merge_cell",
     "normalize_ws",
     "presence",
+    "projected_chart",
     "projection",
     "queue",
     "rateshape",
@@ -530,6 +537,7 @@ from . import (
     membership,
     metrics,
     presence,
+    projected_chart,
     projection,
     prometheus_egress,
     queue,
@@ -799,6 +807,14 @@ from .presence import (
     EphemeralMapCore,
     EphemeralValue,
     PresenceCell,
+)
+from .projected_chart import (
+    IllegalTransition,
+    ProjectedChart,
+    ProjectedChartCore,
+    ProjectedChartDef,
+    ProjectionOutcome,
+    ProjectionOutcomeKind,
 )
 from .projection import StateMirror
 from .prometheus_egress import (

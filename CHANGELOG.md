@@ -2,6 +2,29 @@
 
 ### Added
 
+- `lazily.projected_chart` — a state chart that projects an external authority
+  (`#lzpyprojectedchart`). `lazily.statechart` owns its transitions, which is the
+  wrong shape when a workflow run's `status` is owned by Postgres and advanced by
+  Temporal. This chart decides nothing: you feed it observed states and it
+  answers the two questions the authority cannot. **Was the step legal?** The
+  authority always wins — every non-stale observation is adopted, including an
+  illegal step or an undeclared state — and the violation is recorded as an
+  `IllegalTransition` and counted on a reactive cell. Refusing the row would fork
+  this side from the database silently; adopting it quietly would say nothing.
+  **Is it wedged?** `wedged` is a derived cell (`now - entered_at > deadline`,
+  strictly; terminal, deadline-less and undeclared states never wedge), so an
+  effect or health cell on it runs exactly on the edge — the declarative form of
+  the hand-written "still `started`, too long" branch. A **repeated observation
+  does not reset the deadline**: a poller re-reading one `started` row is evidence
+  of a wedge, not of progress. Two clocks, one time base: `at` is the authority's
+  row timestamp and staleness is last-writer-wins on it, so out-of-order delivery
+  cannot walk the state backwards; `tick(now)` is the observer clock and raises on
+  a backwards reading rather than clamping. `tick`/`next_fire` match
+  `TimelineSource`, so the wedge registers with a `WorkflowContext` as a durable
+  engine timer instead of a polling loop, and because both clocks are inputs the
+  core is a pure function of its observation log — proven under `ReplayHarness`
+  in the suite.
+
 - `lazily.replay` — the replay-equivalence proof (`#lzpyreplayproof`), the
   provability half of the gate `lazily.workflow` opened. `ReplayHarness` rebuilds
   a graph from an ordered `ReplayLog` and asserts every observed cell value

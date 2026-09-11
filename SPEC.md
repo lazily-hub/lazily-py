@@ -299,6 +299,50 @@ other). Graph-agnostic: the subject is any object with `apply(event)` and
 - **Hashing:** BLAKE2b-256 (`hashlib`), not BLAKE3 — no runtime dependency. Not
   wire-compatible with tsift's digests.
 
+### Projected state chart (`lazily.projected_chart`)
+
+A chart whose state is owned elsewhere. Python-side addition, not a spec family:
+`lazily.statechart` remains the conformant Harel/SCXML chart that owns its own
+transitions, and this one deliberately owns none.
+
+**Types:**
+
+| Type | Purpose |
+|------|---------|
+| `ProjectedChartDef.of(initial, transitions, deadlines, terminal)` | The lifecycle the authority is expected to follow |
+| `ProjectedChartCore(defn, *, at)` | The graph-agnostic projection |
+| `ProjectedChartCore.observe(state, *, at)` | Adopt one observed state |
+| `ProjectedChartCore.tick(now)` / `next_fire` | `TimelineSource`: elapse a deadline, schedule the next wedge |
+| `ProjectedChart(ctx, defn)` | Reactive shell: `state` / `wedged` / `violation_count` cells |
+| `ProjectionOutcome` / `ProjectionOutcomeKind` | `entered`, `reaffirmed`, `illegal`, `unknown_state`, `stale` |
+| `IllegalTransition` | An adopted step the lifecycle did not justify |
+
+**Semantics:**
+
+- **The authority wins:** every non-stale observation is adopted, including an
+  illegal step and an undeclared state. The chart records the violation instead
+  of refusing the row — a projection that disagreed with its authority would
+  fork silently, which is worse than not modelling it.
+- **Reaffirmation is not entry:** re-observing the current state advances
+  `observed_at` but not `entered_at`, so a poller re-reading one row cannot reset
+  the wedge deadline.
+- **Last-writer-wins on the authority clock:** an observation older than the last
+  adopted one is `stale` and dropped, so out-of-order delivery cannot walk the
+  state backwards. An older-than-`now` authority timestamp is *not* stale — the
+  two clocks are separate.
+- **The observer clock is strictly monotone:** `tick` raises on a backwards
+  reading rather than clamping (`ManualClock` clamps; a deadline off a regressing
+  clock is not a deadline).
+- **Wedge:** `now - entered_at > deadline`, strictly. At the deadline is not past
+  it. Terminal states, states with no declared deadline, and undeclared states
+  never wedge. `next_fire` is the wedge instant, or `None` once already wedged.
+- **Closed definition:** `of` rejects an undeclared successor, initial, deadline
+  or terminal state, and a non-positive deadline.
+- **Replayable:** both clocks are inputs, so the core is a pure function of its
+  observation log and provable under `lazily.replay`.
+- **Sync only:** no thread-safe or async flavour; the subject is one external
+  row per chart.
+
 ### Named keyed fold (`lazily.keyed_fold`)
 
 **Types:**

@@ -485,6 +485,78 @@ Hashing is BLAKE2b-256 from `hashlib`, not BLAKE3: lazily-py has no runtime
 dependencies. Digests are not wire-compatible with tsift's and are not meant to
 be.
 
+## Projected state chart — `lazily.projected_chart`
+
+`lazily.statechart` owns its transitions: you send it an event and it decides
+where to go. That is the wrong shape when the state lives somewhere else. A
+workflow run's `status` column is owned by Postgres and advanced by Temporal —
+the database is the authority and the graph is strictly downstream of it.
+Sending such a chart an event would fork the model from the row.
+
+So this chart never decides anything. You feed it observed states and it answers
+the two questions the authority cannot.
+
+```python
+from lazily import ProjectedChart, ProjectedChartDef
+
+defn = ProjectedChartDef.of(
+    initial="queued",
+    transitions={
+        "queued": ["started", "failed"],
+        "started": ["completed", "failed"],
+        "completed": [],
+        "failed": ["started"],            # a retry is legal
+    },
+    deadlines={"queued": 30_000, "started": 300_000},
+    terminal=["completed"],
+)
+chart = ProjectedChart(ctx, defn)
+
+chart.observe("started", at=row.updated_at_ms)   # adopt what the DB says
+chart.tick(now_ms)                               # elapse the deadline
+
+if chart.wedged():                               # a derived cell
+    alert(chart.state(), chart.overdue_by())
+```
+
+- **Was that transition legal?** The authority still wins — an observation is
+  *always* adopted — but a step the declared lifecycle does not allow is recorded
+  as an `IllegalTransition` and counted on a reactive cell. Refusing the row
+  would make this side silently disagree with the database, which is worse than
+  not modelling it at all; adopting it quietly would tell you nothing. It adopts
+  and says so. An undeclared state is the same story, and cannot wedge — no
+  deadline is knowable for a state the chart has never heard of, so the violation
+  is the signal rather than a fabricated deadline.
+- **Is it wedged?** In a state past that state's deadline with no advance.
+  `wedged` is a derived cell, so an effect, alarm, or health cell reading it is
+  invalidated exactly on the edge — the declarative form of the hand-written "is
+  it still `started`, and has it been too long" branch that otherwise accretes in
+  a service. Terminal states and states with no deadline never wedge: a finished
+  run is not late.
+- **A repeated observation does not reset the deadline.** Re-observing the state
+  the chart is already in advances the authority timestamp but *not*
+  `entered_at`. A poller that keeps reading the same `started` row is evidence
+  the run is wedged, not evidence it just advanced — resetting there would make
+  the wedge unreachable, which is the bug this module exists to express.
+- **Two clocks, one time base.** `at` is the *authority's* timestamp for the row
+  and staleness is last-writer-wins on it, so an out-of-order delivery cannot
+  walk the state backwards. `tick(now)` is the *observer's* clock and is what
+  makes a deadline elapse; it is strictly monotone and raises on a backwards
+  reading, because a deadline computed from a regressing clock is not a deadline.
+  Both must be the same time base (epoch milliseconds).
+- **It is a `TimelineSource`.** `tick` / `next_fire` match the protocol, so the
+  wedge composes with the rest of the time-operator family: register it with a
+  `WorkflowContext` and the wedge check becomes a durable engine timer instead of
+  a polling loop.
+- **It is replayable.** Both clock inputs are arguments, so `ProjectedChartCore`
+  is a pure function of its observation log — the suite proves one under
+  `ReplayHarness` (see `lazily.replay`), wedge and violations included.
+
+`ProjectedChartCore` is the graph-agnostic projection (no cells, no clock of its
+own); `ProjectedChart` is the reactive shell. Sync-only — unlike the spec
+families there are no thread-safe or async flavours, because the subject here is
+one external row per chart.
+
 ## Named keyed fold — `lazily.keyed_fold`
 
 N independent writers, one key each. A writer sets, folds and **clears only its
