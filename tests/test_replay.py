@@ -122,8 +122,51 @@ def test_type_tags_keep_lookalike_values_distinct() -> None:
 
 
 def test_length_prefixes_keep_concatenations_distinct() -> None:
-    # Without length framing both encode to the same member bytes.
+    # The equality CLASS every binding agrees on: a sequence is its members in
+    # order, not their concatenation. This pair does NOT pin the length prefix
+    # on its own -- see the test below for the pairs that do.
     assert canonical_digest(["a", "bc"]) != canonical_digest(["ab", "c"])
+
+
+def test_a_member_that_spells_the_next_frame_still_needs_the_length() -> None:
+    """The framing pairs that collide in THIS binding's OWN bytes (#lzreplayframing).
+
+    The pair above asserts a real equality class, but it does not pin the
+    length: ``_frame`` puts a type tag in front of every member, so ``"a"``
+    then ``"bc"`` and ``"ab"`` then ``"c"`` stay distinct as byte strings even
+    with the length dropped entirely (``lsasbc`` vs ``lsabsc``). Only a member
+    whose CONTENT spells the next member's frame prefix can collide, and which
+    bytes those are is a fact about this binding's layout that no
+    cross-binding fixture can carry -- see
+    ``lazily-spec/docs/replay-equivalence.md`` section 3.
+
+    lazily-py IS the reference layout that document names: a netstring frame
+    ``tag + decimal_length + b":" + body``, string tag ``s``, sequence ``l``,
+    mapping ``m``, set ``t``, bytes ``y``, int ``i``, float ``f``. So the
+    corpus's reference-layout pair is also this binding's pair, and it is
+    pinned here as well as through the corpus, because the corpus fixture
+    would stop covering this repo the day the tags moved.
+
+    Two shapes of "the length is gone" are covered, because a mutation can
+    take the whole ``<len>:`` netstring prefix or only its digits:
+
+    * ``tag + body``       -- ``["a", "sbc"]`` and ``["as", "bc"]`` both become
+      ``lsassbc``; ``{"a": "sb"}`` and ``{"as": "b"}`` both become ``msassb``.
+    * ``tag + b":" + body`` -- the frame prefix is then ``s:``, so the colliding
+      content has to spell ``s:``: ``["a", "s:bc"]`` and ``["as:", "bc"]`` both
+      become ``l:s:as:s:bc``.
+
+    The nested pair needs neither: a container boundary has no tag to hide
+    behind, so it collides under ANY unframed concatenation, in this layout or
+    in any other.
+    """
+    # `tag + body`: the member content spells the next member's tag `s`.
+    assert canonical_digest(["a", "sbc"]) != canonical_digest(["as", "bc"])
+    assert canonical_digest({"a": "sb"}) != canonical_digest({"as": "b"})
+    # `tag + b":" + body`: the member content spells the tag AND the `:`.
+    assert canonical_digest(["a", "s:bc"]) != canonical_digest(["as:", "bc"])
+    # Layout-independent: a nested container's boundary is only the length.
+    assert canonical_digest([["a"], "b"]) != canonical_digest([["a", "b"]])
 
 
 def test_signed_zero_and_nan_are_exact() -> None:

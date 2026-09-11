@@ -450,10 +450,16 @@ KNOWN_UNBOUND_BLOCKS: dict[str, str] = {
 #: fix a failure.
 #:
 #: Tracks what the run ACTUALLY inventories, exactly — no margin, no slack.
-#: Re-pinned 2026-08-11 at 578 from a full ``make test`` over the same 139/150
-#: opened fixtures, when the inventory walk widened from ``assertions``-only to
-#: the whole of ``BLOCK_KEYS`` at every depth (#lzunboundblockguard). It had sat
-#: at 31 — the count the narrow walk produced — so 547 blocks could have stopped
+#: Re-pinned 2026-09-11 at 620 from a full ``make test`` over 145/156 opened
+#: fixtures, against lazily-spec ``4010d99``, which added three member-framing
+#: rows to ``replay/canonical_encoding_equality.json`` (#lzreplayframing). The
+#: pin had sat at 578 since 2026-08-11 — 42 blocks of accumulated slack, the
+#: exact rot this comment warns about (#lzscenariofloordrift).
+#:
+#: The 2026-08-11 pin at 578 came from a full ``make test`` over 139/150 opened
+#: fixtures, when the inventory walk widened from ``assertions``-only to the
+#: whole of ``BLOCK_KEYS`` at every depth (#lzunboundblockguard). It had sat at
+#: 31 — the count the narrow walk produced — so 547 blocks could have stopped
 #: being inventoried with this rung still green.
 #:
 #: Do not raise this "by however many blocks a change adds" while leaving an old
@@ -461,7 +467,7 @@ KNOWN_UNBOUND_BLOCKS: dict[str, str] = {
 #: to 40 replays behind reality (#lzscenariofloordrift). ``conftest`` prints an
 #: ``assertion-block inventory OK`` line carrying the live count, so re-pin this
 #: from a completed CI log rather than guessing.
-MIN_DECLARED_BLOCKS = 578
+MIN_DECLARED_BLOCKS = 620
 
 #: digest -> {"fixture|where"} for every block an opened fixture carried.
 _DECLARED_BLOCKS: dict[str, set[str]] = {}

@@ -194,7 +194,13 @@ fi
 # lossless-tree/out_of_order_delivery_buffers.json, and this binding now replays
 # both (#lzspecoutoforderfixtures). Corpus 150 -> 152, opened 139 -> 141, held
 # exactly — no margin, per the paragraph above.
-MIN_FIXTURES="${MIN_FIXTURES:-141}"
+# 2026-09-11: 141 -> 145. The pin had drifted four fixtures behind the live
+# count while the corpus grew to 156 — the exact rot the paragraph above warns
+# about (#lzscenariofloordrift). Re-pinned from a completed
+# `poe conformance_coverage` run against lazily-spec 4010d99 (on origin/main,
+# so CI's clone has it): 145/156 OPENED, 11 KNOWN_UNCOVERED. Held exactly — 146
+# fails.
+MIN_FIXTURES="${MIN_FIXTURES:-145}"
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2
   echo "       Every check above is vacuously green over an empty population:" >&2

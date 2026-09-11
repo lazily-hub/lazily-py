@@ -223,7 +223,11 @@ def test_canonical_encoding_equality_classes() -> None:
     assert fixture["model"] == "CanonicalEncoding"
     values = fixture["config"]["values"]
     steps = fixture["steps"]
-    assert len(steps) >= 11
+    # Exactly what lazily-spec 4010d99 ships, no margin: the fixture grew from
+    # 11 steps to 14 when the member-framing row became three rows
+    # (#lzreplayframing). A floor with slack lets a corpus row stop being
+    # replayed with this guard still green (#lzscenariofloordrift).
+    assert len(steps) >= 14
     outcomes: set[bool] = set()
 
     for index, step in enumerate(steps):
