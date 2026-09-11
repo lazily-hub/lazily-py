@@ -40,6 +40,7 @@ from lazily import (
     ReplayLog,
     ReplayLogMismatchError,
     ReplayProofError,
+    ReplayStrideMismatchError,
     ResyncCoordinator,
     canonical_bytes,
     canonical_digest,
@@ -392,8 +393,16 @@ def test_a_fingerprint_recorded_at_another_stride_is_refused() -> None:
 
     assert [checkpoint.seq for checkpoint in sparse.checkpoints] == [INITIAL_SEQ, 1, 3]
 
-    with pytest.raises(ReplayProofError, match="recorded at stride 2"):
+    with pytest.raises(
+        ReplayStrideMismatchError, match="recorded at stride 2"
+    ) as excinfo:
         ReplayHarness(Counter).verify(log, sparse)
+
+    # A distinct type, not a message match: the log is right, the two checkpoint
+    # sequences were never comparable.
+    assert excinfo.value.expected_stride == 2
+    assert excinfo.value.actual_stride == 1
+    assert isinstance(excinfo.value, ReplayProofError)
 
     assert ReplayHarness(Counter, stride=2).verify(log, sparse) == sparse
 

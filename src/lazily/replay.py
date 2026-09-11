@@ -75,6 +75,7 @@ __all__ = [
     "ReplayLog",
     "ReplayLogMismatchError",
     "ReplayProofError",
+    "ReplayStrideMismatchError",
     "canonical_bytes",
     "canonical_digest",
     "replay_log_from_outbox",
@@ -134,6 +135,24 @@ class ReplayLogMismatchError(ReplayProofError):
             "fingerprint was recorded against a different event log "
             f"(fingerprint log_digest={expected_digest}, replayed log "
             f"digest={actual_digest}); re-record the fingerprint against this log"
+        )
+
+
+class ReplayStrideMismatchError(ReplayProofError):
+    """The fingerprint was recorded at a different checkpoint stride.
+
+    Separate from :class:`ReplayLogMismatchError` because it is a different
+    fault: the log is the right one, but the two checkpoint sequences were never
+    comparable. Kept a distinct type so a caller can route on it without
+    matching on a message.
+    """
+
+    def __init__(self, *, expected_stride: int, actual_stride: int) -> None:
+        self.expected_stride = expected_stride
+        self.actual_stride = actual_stride
+        super().__init__(
+            f"fingerprint was recorded at stride {expected_stride} but this "
+            f"harness samples at stride {actual_stride}; re-record it"
         )
 
 
@@ -581,11 +600,9 @@ class ReplayHarness:
                 actual_digest=replayed.log_digest,
             )
         if fingerprint.stride != replayed.stride:
-            msg = (
-                f"fingerprint was recorded at stride {fingerprint.stride} but this "
-                f"harness samples at stride {replayed.stride}; re-record it"
+            raise ReplayStrideMismatchError(
+                expected_stride=fingerprint.stride, actual_stride=replayed.stride
             )
-            raise ReplayProofError(msg)
 
     def _replay(
         self, log: ReplayLog
