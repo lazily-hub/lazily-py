@@ -215,6 +215,42 @@ obligation: it introduces no new node kind and no new invalidation rule.
   (`lazily[msgspec]`, `[pydantic]`, `[attrs]`, `[structs]`) are install
   ergonomics and the CI test matrix; `import lazily` loads none of them.
 
+### Workflow-safe context (`lazily.workflow`)
+
+The durable-execution boundary. Python-side; no dependency on `temporalio` (the
+engine is injected as a clock accessor plus a `WorkflowScheduler`).
+
+**Types:**
+
+| Type | Purpose |
+|------|---------|
+| `WorkflowClock(now, *, resolution_ns)` | lazily's logical tick bound to the engine's replayed clock |
+| `WorkflowContext(ctx, clock, *, scheduler)` | Owns the driven `TimelineSource` set |
+| `WorkflowContext.register/advance/next_wakeup` | Registration and clock-driven ticking |
+| `WorkflowContext.schedule_next/activity` | Engine timer and activity hand-offs |
+| `WorkflowScheduler` | `start_timer(delay)` / `start_activity(name, ...)` |
+| `deterministic_scope()` | Raises `NonDeterminismError` on reachable non-determinism |
+
+**Semantics:**
+
+- **One reading per advance:** `advance` reads the clock once and ticks every
+  registered source, so no two sources disagree about `now`.
+- **Strict monotonicity:** a backwards clock reading raises rather than being
+  clamped (`ManualClock` clamps; a replayed clock that regresses is a defect).
+- **`next_wakeup` distinguishes `0` from `None`:** `0` is an already-due source
+  and a real instruction to the engine; `None` means nothing is pending.
+- **No engine, no effects:** `schedule_next` and `activity` raise
+  `NonDeterminismError` when no scheduler was injected — a workflow cannot sleep
+  or act except through the engine.
+- **The guard is not a sandbox:** `deterministic_scope` rebinds module
+  attributes and restores them on exit (including on an exception, and nesting
+  safely). It cannot intercept `datetime.datetime.now()`, a reference bound
+  before the scope opened, or C-internal calls; module re-import isolation is the
+  correct layer for those.
+- **Naming:** `lazily.temporal` is the time-operator family and is unrelated to
+  temporal.io. The collision is documented in that module's docstring rather
+  than renamed, because the name is public API in nine bindings.
+
 ### Named keyed fold (`lazily.keyed_fold`)
 
 **Types:**

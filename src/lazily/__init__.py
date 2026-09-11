@@ -241,6 +241,7 @@ __all__ = [
     "NodeSeed",
     "NodeSnapshot",
     "NodeState",
+    "NonDeterminismError",
     "OpId",
     "OpKind",
     "OrSet",
@@ -402,6 +403,9 @@ __all__ = [
     "WorkQueueDelivery",
     "WorkQueueItem",
     "WorkQueueReaderHandles",
+    "WorkflowClock",
+    "WorkflowContext",
+    "WorkflowScheduler",
     "align",
     "applied_receipt",
     "assign_stable_keys",
@@ -429,6 +433,7 @@ __all__ = [
     "crdt_registers",
     "crdt_tree",
     "decode_message",
+    "deterministic_scope",
     "dispose_node",
     "effect",
     "encode_message",
@@ -485,6 +490,7 @@ __all__ = [
     "unregister_metrics",
     "windowing",
     "word_lcs_len",
+    "workflow_context",
 ]
 __version__ = "0.39.0"
 
@@ -526,6 +532,7 @@ from . import (
     thread_safe_reactive_family,
     tree,
     windowing,
+    workflow,
 )
 from .async_context import (
     AsyncCellHandle,
@@ -997,6 +1004,14 @@ from .work_queue import (
     WorkQueueDelivery,
     WorkQueueItem,
     WorkQueueReaderHandles,
+)
+from .workflow import (
+    NonDeterminismError,
+    WorkflowClock,
+    WorkflowContext,
+    WorkflowScheduler,
+    deterministic_scope,
+    workflow_context,
 )
 
 

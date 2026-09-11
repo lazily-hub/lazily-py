@@ -358,6 +358,57 @@ the cost the bridge exists to remove); pass
 `PydanticBackend(validate=True)` to `struct_source(..., backend=...)` to
 validate on every re-materialization instead.
 
+## Durable execution — `lazily.workflow`
+
+> **`lazily.temporal` is not temporal.io.** It is lazily's *time-operator*
+> family (`TimerCell`, `IntervalCell`, `CronCell`, `DeadlineCell`) — "temporal"
+> in the tense / logical-clock sense, and older than the engine of the same
+> name. The temporal.io integration is **`lazily.workflow`**. The name is kept
+> because `lazily.temporal` is public API in nine bindings and renaming it
+> across all of them would be a breaking change bought only for this note.
+
+A durable engine replays workflow code from its event log and expects the same
+decisions in the same order. A reactive graph fits that well — it is already a
+pure function of its sources — until something in it reads the wall clock, a
+random number, or a UUID. Then replay diverges silently and surfaces much later
+as a workflow that will not complete.
+
+`lazily.workflow` is the boundary that makes that loud. **It does not depend on
+`temporalio`**: the engine is injected as a clock accessor plus a two-method
+scheduler, so the same code runs against temporal.io, a test double, or any
+other durable engine.
+
+```python
+from lazily import TimerCore, deterministic_scope, workflow_context
+
+# inside a temporalio workflow
+wf = workflow_context(ctx, workflow.now, scheduler=TemporalScheduler())
+timer = wf.register(TimerCore(fire_at=wf.clock.tick() + 5_000))
+
+with deterministic_scope():
+    while not timer.fired():
+        await wf.schedule_next()   # a durable engine timer, not a sleep
+        wf.advance()               # one clock reading drives every source
+```
+
+- **One reading per advance.** `advance()` reads the engine clock once and ticks
+  every registered source, so two sources can never disagree about what time it
+  is — the shape that makes a replay diverge from the original run.
+- **The clock refuses to go backwards.** `ManualClock` clamps a backwards move,
+  which is right for a game loop and wrong here: a replayed clock cannot regress,
+  so a backwards reading means something is feeding it wall time. It raises.
+- **`activity()` is the only sanctioned side effect.** A reactive effect inside a
+  workflow must not perform I/O itself — the effect reruns on replay and the I/O
+  would rerun with it.
+- **`deterministic_scope()`** rebinds `time.time` / `monotonic` / `perf_counter`
+  (and the `_ns` forms), the module-level `random` functions, `os.urandom`, and
+  `uuid.uuid1` / `uuid4` to raise `NonDeterminismError`, restoring all of them on
+  exit including on an exception. It is a guard, **not a sandbox**: it cannot
+  intercept `datetime.datetime.now()` (a C-type method), a name bound before the
+  scope opened, or anything a C extension does internally. Module re-import
+  isolation is the layer for those, which is what temporal.io's own workflow
+  sandbox does.
+
 ## Named keyed fold — `lazily.keyed_fold`
 
 N independent writers, one key each. A writer sets, folds and **clears only its

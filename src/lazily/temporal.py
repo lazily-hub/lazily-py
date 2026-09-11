@@ -1,5 +1,22 @@
 """Temporal source primitives (``#lztime``).
 
+.. warning::
+
+   **This module is not temporal.io.** "Temporal" here is the tense /
+   logical-clock sense: these are lazily's *time operators* (:class:`TimerCell`,
+   :class:`IntervalCell`, :class:`CronCell`, :class:`DeadlineCell`) driven by a
+   monotone integer tick. The module predates the durable-execution engine of
+   the same name and shares nothing with it — no import, no concept.
+
+   If you are looking for durable execution, the temporal.io integration is
+   :mod:`lazily.workflow`. If you are inside a workflow, drive these sources
+   through :class:`lazily.workflow.WorkflowContext`: it binds the tick to the
+   engine's replayed clock, so a source cannot invent its own "now" and diverge
+   the replay.
+
+   The name is kept because it is public API in nine bindings and renaming it
+   across all of them would be a breaking change bought only for this paragraph.
+
 The Python counterpart of ``lazily-rs/src/time.rs`` (and
 ``lazily-spec/docs/temporal-sources.md`` / the Lean model
 ``lazily-formal/LazilyFormal/Temporal.lean``). Time is modeled by a **logical

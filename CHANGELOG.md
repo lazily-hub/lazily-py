@@ -2,6 +2,21 @@
 
 ### Added
 
+- `lazily.workflow` — the durable-execution boundary (`#lzpyworkflowdeterminism`).
+  `WorkflowClock` binds lazily's logical tick to the engine's replayed clock and
+  raises rather than clamping when a reading goes backwards; `WorkflowContext`
+  owns the registered `TimelineSource` set so one clock reading drives all of
+  them; `schedule_next()` hands the next wake-up to a durable engine timer and
+  `activity()` is the only sanctioned side effect. `deterministic_scope()` raises
+  `NonDeterminismError` on `time`/`random`/`os.urandom`/`uuid` reads, restoring
+  every patch on exit. **No dependency on `temporalio`** — the engine is injected
+  as a clock accessor plus a two-method scheduler. The guard's limits (it cannot
+  intercept `datetime.datetime.now()`, a pre-bound reference, or C-internal
+  calls) are documented and asserted, not implied away.
+- `lazily.temporal`'s docstring now states plainly that it is **not** temporal.io
+  — it is the time-operator family, older than the engine of the same name — and
+  points at `lazily.workflow`. Not renamed: it is public API in nine bindings.
+
 - `KeyedFold` (`lazily.keyed_fold`, `#lzpykeyedfold`): N independent writers,
   one key each. A writer sets, folds and clears **only its own key**; the
   summary is a guarded `Computed` over the live set, so a key reader is never
