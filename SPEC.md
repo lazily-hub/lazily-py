@@ -251,6 +251,54 @@ engine is injected as a clock accessor plus a `WorkflowScheduler`).
   temporal.io. The collision is documented in that module's docstring rather
   than renamed, because the name is public API in nine bindings.
 
+### Replay-equivalence proof (`lazily.replay`)
+
+The provability half of the durable-execution gate (`lazily.workflow` is the
+other). Graph-agnostic: the subject is any object with `apply(event)` and
+`observe() -> Mapping[str, Any]`.
+
+**Types:**
+
+| Type | Purpose |
+|------|---------|
+| `ReplayEvent(seq, name, payload)` | One log entry |
+| `ReplayLog(events)` / `.of` / `.from_records` | Ordered log, `digest` over canonical bytes |
+| `replay_log_from_outbox(outbox, *, cursor)` | A log from `DurableOutbox.replay_from` |
+| `ReplayGraph` | `apply(event)` / `observe()` — the subject protocol |
+| `ReplayHarness(build, *, stride, deterministic)` | Rebuilds and drives the subject |
+| `ReplayHarness.record/verify/check/prove` | Record, assert, report, self-check |
+| `ReplayCheckpoint` / `ReplayFingerprint` | Per-cell digests, bound to a `log_digest` |
+| `ReplayDivergence` | First diverging checkpoint, cell label, kind |
+| `canonical_bytes` / `canonical_digest` | The type-tagged, order-stable encoding |
+| `ReplayProofError` and subclasses | `ReplayEncodingError`, `ReplayLogMismatchError`, `ReplayDivergenceError` |
+
+**Semantics:**
+
+- **The contract:** given the same `ReplayLog`, a rebuilt graph observes the same
+  values at every checkpoint. Any deviation is a defect in the graph, not a
+  tolerance.
+- **Revalidate before comparing:** `verify` and `check` compare `log_digest`
+  first and raise `ReplayLogMismatchError` when it differs, so a stale
+  fingerprint is deterministically suppressed rather than compared. `stride` is
+  recorded too and a mismatch raises `ReplayProofError`; equal digest plus equal
+  stride means the checkpoint sequence numbers cannot disagree.
+- **First divergence wins:** comparison stops at the earliest diverging
+  checkpoint, because later ones are the same defect carried forward. A cell that
+  disappears from `observe` is `missing`; a new one is `unexpected`.
+- **A fresh subject per replay:** `build` is called once per replay. `prove`
+  records and re-replays (default 2 replays), which catches non-determinism with
+  no recorded fingerprint at all.
+- **Canonical or nothing:** the encoding is type-tagged and length-framed,
+  orders mapping/set members by their own encoded bytes, encodes floats by
+  `float.hex()` (exact, and `-0.0` ≠ `0.0`), and tags enums and dataclasses with
+  their type name. An unencodable value raises `ReplayEncodingError`; there is no
+  `repr` fallback, because an address-bearing `repr` would diverge every run.
+- **Sequence numbers strictly increase but need not be contiguous:** an
+  ack-truncated outbox replays real epochs, and the truncated prefix is visible
+  in the log digest.
+- **Hashing:** BLAKE2b-256 (`hashlib`), not BLAKE3 — no runtime dependency. Not
+  wire-compatible with tsift's digests.
+
 ### Named keyed fold (`lazily.keyed_fold`)
 
 **Types:**

@@ -2,6 +2,28 @@
 
 ### Added
 
+- `lazily.replay` — the replay-equivalence proof (`#lzpyreplayproof`), the
+  provability half of the gate `lazily.workflow` opened. `ReplayHarness` rebuilds
+  a graph from an ordered `ReplayLog` and asserts every observed cell value
+  against a recorded `ReplayFingerprint`. The fingerprint carries the digest of
+  the log that produced it and `verify`/`check` revalidate that binding **before**
+  comparing anything (tsift's body-hash rule): a fingerprint from another log
+  raises `ReplayLogMismatchError` and is never compared, so it cannot pass by
+  coincidence nor be misreported as a graph defect. Every event is a checkpoint
+  (`stride=` to sample sparsely), so a divergence names the *first* event where
+  the values parted and the exact cell. `prove(log)` records and re-replays, which
+  catches a graph that is not a pure function of its log with no recorded
+  fingerprint at all. `canonical_bytes` is type-tagged and length-framed — dict
+  and set ordering are not part of a value, but `1` / `"1"` / `1.0` / `True` are
+  distinct — and raises `ReplayEncodingError` instead of falling back to `repr`,
+  whose object addresses would report a false divergence every run.
+  `deterministic=True` runs each replay inside `deterministic_scope()`.
+  `replay_log_from_outbox` turns `reliable_sync`'s `DurableOutbox.replay_from`
+  into a fingerprinted log (outbox epochs as event seqs, so an ack-truncated
+  prefix changes the digest instead of shifting every event); the suite proves
+  `LatestDurableProjectionCore` and a `ResyncCoordinator` under the contract.
+  BLAKE2b-256 from `hashlib`, not BLAKE3: no runtime dependency.
+
 - `lazily.workflow` — the durable-execution boundary (`#lzpyworkflowdeterminism`).
   `WorkflowClock` binds lazily's logical tick to the engine's replayed clock and
   raises rather than clamping when a reading goes backwards; `WorkflowContext`

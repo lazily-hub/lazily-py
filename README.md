@@ -409,6 +409,82 @@ with deterministic_scope():
   isolation is the layer for those, which is what temporal.io's own workflow
   sandbox does.
 
+## Replay-equivalence proof — `lazily.replay`
+
+`lazily.workflow` makes the *reachable* non-determinism raise. This is the other
+half of the same gate: it makes replay equivalence **provable**. Nobody should
+put a reactive graph inside a workflow without that proof, and this is the proof.
+
+The discipline is borrowed from `tsift`, whose cached excerpts are trustworthy
+because every one records a body hash and *revalidates it against the source
+bytes* before the excerpt is returned — a stale body deterministically
+suppresses the cached answer rather than returning a plausible-looking one. Here
+the event log is the source bytes.
+
+```python
+from lazily import LatestDurableProjectionCore, ReplayHarness, ReplayLog
+
+
+class Projection:
+    def __init__(self) -> None:
+        self.core = LatestDurableProjectionCore(generation=1)
+
+    def apply(self, event) -> None:              # exactly one event
+        getattr(self.core, event.name)(*event.payload)
+
+    def observe(self) -> dict[str, object]:      # the cells under proof
+        return {"snapshot": self.core.snapshot()}
+
+
+log = ReplayLog.from_records([
+    ("upsert_desired", ("a", 1, 10)),
+    ("claim", ("a", 1)),
+    ("ack_applied", ("a", 1, 1)),
+])
+harness = ReplayHarness(Projection, deterministic=True)
+
+fingerprint = harness.record(log)     # pin it, or commit `fingerprint.to_wire()`
+harness.verify(log, fingerprint)      # raises unless the replay is identical
+harness.prove(log)                    # record + re-replay, no fingerprint needed
+```
+
+- **The fingerprint is bound to the log that produced it.** `verify` checks
+  `log_digest` *before* comparing any value. A fingerprint recorded against a
+  different log raises `ReplayLogMismatchError` and is never compared — so it can
+  neither pass by coincidence (two logs, same final state) nor be misreported as
+  a graph defect. `check()`, which is non-raising for value divergence, still
+  raises here: a stale fingerprint is an unanswerable question, not a report.
+- **Divergence is located, not just detected.** Every event is a checkpoint
+  (`stride=N` to sample sparsely), so the error names the **first** event where
+  the values parted and the exact cell label. A fingerprint covering only the
+  final state tells you the graph is wrong but not where.
+- **`prove(log)` needs no recorded fingerprint.** It records, replays again, and
+  compares: a graph that is not a pure function of its log already disagrees with
+  itself. `build` is called once per replay, so a harness cannot accidentally
+  prove a graph against its own leftover state.
+- **The encoding is canonical or it raises.** `canonical_bytes` is type-tagged
+  and length-framed: dict insertion order and set iteration order are not part of
+  a value, but `1`, `"1"`, `1.0` and `True` are all distinct, and so are
+  `["a", "bc"]` and `["ab", "c"]`. A value with no defined encoding raises
+  `ReplayEncodingError` rather than degrading to `repr`, which embeds object
+  addresses and would report a false divergence on every run.
+- **`deterministic=True`** wraps each replay in `deterministic_scope()`, so a
+  wall-clock read raises at the line that reached it instead of appearing as a
+  divergence one checkpoint later.
+- **The machinery was already there.**
+  `reliable_sync`'s `DurableOutbox.replay_from()` *is* a replay source;
+  `replay_log_from_outbox(outbox, cursor=0)` makes it a fingerprinted one, using
+  outbox epochs as event seqs so an ack-truncated prefix shows up in the log
+  digest instead of silently shifting every event.
+  `latest_durable_projection` is a deterministic state machine over such a log.
+  What was missing was the stated contract: **given the same `ReplayLog`, a
+  rebuilt graph observes the same values at every checkpoint — any deviation is a
+  defect, not a tolerance.**
+
+Hashing is BLAKE2b-256 from `hashlib`, not BLAKE3: lazily-py has no runtime
+dependencies. Digests are not wire-compatible with tsift's and are not meant to
+be.
+
 ## Named keyed fold — `lazily.keyed_fold`
 
 N independent writers, one key each. A writer sets, folds and **clears only its
