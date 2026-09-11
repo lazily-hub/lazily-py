@@ -184,6 +184,9 @@ __all__ = [
     "IpcMessage",
     "IpcValue",
     "KeepLatest",
+    "KeyAlreadyClaimedError",
+    "KeyedFold",
+    "KeyedFoldWriter",
     "KeyedRelay",
     "LatestDurableAck",
     "LatestDurableAckKind",
@@ -436,6 +439,7 @@ __all__ = [
     "in_batch",
     "ipc",
     "key_between",
+    "keyed_fold",
     "kind_of",
     "lossless_tree_crdt",
     "membership",
@@ -687,6 +691,12 @@ from .ipc import (
     ShmBlobRef,
     Snapshot,
     WireStamp,
+)
+from .keyed_fold import (
+    KeyAlreadyClaimedError,
+    KeyedFold,
+    KeyedFoldWriter,
+    keyed_fold,
 )
 from .latest_durable_projection import (
     AsyncLatestDurableProjection,

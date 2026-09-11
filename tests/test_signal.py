@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from lazily import Slot, computed, source
+import pytest
+
+from lazily import DisposedError, Slot, Source, SourceMap, computed, source
 
 
 def test_computed_eager_value_at_creation() -> None:
@@ -141,3 +143,54 @@ def test_computed_get_and_call_aliases() -> None:
     assert sig.get() == 7
     assert sig() == 7
     assert sig.value == 7
+
+
+def test_eager_computed_survives_an_upstream_disposal() -> None:
+    """An upstream disposal must not freeze an eager computed forever.
+
+    A disposal walk clears each dirtied node's dependent set and deliberately
+    schedules nothing, which between them used to strand the eager puller: the
+    memo edge that would rerun it was gone, so the computed kept serving the
+    value it held at disposal time and stopped tracking every *other*
+    dependency too. ``_EagerPuller._drop_cached`` re-registers the memo edge and
+    marks the owner stale so the next read re-materializes.
+    """
+    ctx: dict = {}
+    entries = SourceMap[str, int](ctx)
+    runs = {"n": 0}
+
+    def body(compute: dict) -> dict:
+        runs["n"] += 1
+        return {key: entries.get(key, compute) for key in entries.keys(compute)}
+
+    view = computed(ctx, body).eager()
+    entries.set("a", 1)
+    entries.set("b", 2)
+    assert view.value == {"a": 1, "b": 2}
+    before = runs["n"]
+
+    # ``remove`` disposes the entry cell — the disposal path.
+    assert entries.remove("a") is True
+    assert view.value == {"b": 2}
+    assert runs["n"] > before
+
+    # And it is still live afterwards, which the stranded puller was not.
+    entries.set("c", 3)
+    assert view.value == {"b": 2, "c": 3}
+
+
+def test_eager_computed_recomputes_on_read_after_a_direct_source_disposal() -> None:
+    """The eager path agrees with the lazy one once its upstream is disposed.
+
+    Both recompute on the next read; a body that still reads the disposed cell
+    raises there, rather than the eager form silently serving a stale value.
+    """
+    ctx: dict = {}
+    src = Source(ctx, 1)
+    other = Source(ctx, 2)
+    sig = computed(ctx, lambda c: c.read(src) + c.read(other)).eager()
+    assert sig.value == 3
+
+    src.dispose()
+    with pytest.raises(DisposedError):
+        _ = sig.value

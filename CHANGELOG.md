@@ -2,6 +2,17 @@
 
 ### Added
 
+- `KeyedFold` (`lazily.keyed_fold`, `#lzpykeyedfold`): N independent writers,
+  one key each. A writer sets, folds and clears **only its own key**; the
+  summary is a guarded `Computed` over the live set, so a key reader is never
+  invalidated by a sibling write and a summary reader only when the summary
+  actually changes. `claim` is exclusive and raises on a second claim — two
+  components writing one key is the last-writer-wins defect this generalizes
+  away. `policy=` selects the `MergePolicy` `writer.merge` folds under, seeding
+  a fresh key with the operand. The general shape `service.HealthCell`
+  implements for booleans and `merge.MergeCell` had the algebra for but no keyed
+  surface.
+
 - Counter / gauge cell family, `lazily.metrics`, plus the `prometheus_client`
   egress adapter `lazily.prometheus_egress` (`#lzpypromegress`). A family's
   child is either writable (`CounterCell` / `GaugeCell` over a `Source`) or
@@ -33,6 +44,21 @@
   dependency set is unchanged; the new `lazily[msgspec]` / `[pydantic]` /
   `[attrs]` / `[structs]` extras are install ergonomics and the CI test matrix.
 
+
+### Fixed
+
+- An eager `Computed` no longer freezes when an upstream node is **disposed**
+  (found while building `KeyedFold`, whose summary reads a `SourceMap` whose
+  entries get removed). A disposal walk clears each dirtied node's dependent set
+  and deliberately schedules nothing; between them those two correct rules
+  stranded the eager puller Effect, because the memo edge that would rerun it
+  was exactly the edge the walk removed. The computed then served the value it
+  held at disposal time forever — and stopped tracking every *other* dependency
+  too, so no later write could repair it. `_EagerPuller._drop_cached` now
+  re-registers the memo edge and marks the owner stale, deferring
+  re-materialization to the next read, which is the first point it can recompute
+  without running an effect inside `dispose`. The eager form now agrees with the
+  lazy one after an upstream disposal. Regression tests in `tests/test_signal.py`.
 
 ## 0.40.0
 

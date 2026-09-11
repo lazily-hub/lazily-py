@@ -215,6 +215,35 @@ obligation: it introduces no new node kind and no new invalidation rule.
   (`lazily[msgspec]`, `[pydantic]`, `[attrs]`, `[structs]`) are install
   ergonomics and the CI test matrix; `import lazily` loads none of them.
 
+### Named keyed fold (`lazily.keyed_fold`)
+
+**Types:**
+
+| Type | Purpose |
+|------|---------|
+| `KeyedFold(ctx, summarize, *, policy, eager)` | The fold |
+| `KeyedFold.claim(key)` | Exclusive ownership of one key |
+| `KeyedFold.writer(key)` | A shared (non-exclusive) handle |
+| `KeyedFoldWriter.set/merge/clear/release` | The whole writer surface |
+| `KeyedFold.summary` | The guarded summary `Computed` |
+
+**Semantics:**
+
+- **Key ownership:** a writer's surface names only its own key, so it can
+  publish and retract only its own contribution. `claim` raises
+  `KeyAlreadyClaimedError` on a second claim of the same key.
+- **Per-key isolation:** a reader of one key is not invalidated by a sibling
+  write; the entries are independent cells in a `SourceMap`.
+- **Guarded summary:** the summary depends on membership *and* on every live
+  value, and on nothing else. An equal entry write is inert at the cell; a
+  summary that does not move is inert at the `Computed`.
+- **Merge seeding:** `merge` folds under `policy`, seeding a fresh key with the
+  operand — a `MergePolicy` is an associative merge, not a monoid, so there is
+  no identity to start from. `set` bypasses the policy.
+- **Eager by default,** matching `HealthCell`: the summary re-projects after
+  every write so a summary reader is invalidated only on a real change.
+  `eager=False` defers the fold to the first read and forgoes that guard.
+
 ### Metrics family (`lazily.metrics`)
 
 A Python-side surface over the kernel, not a cross-binding obligation: it adds

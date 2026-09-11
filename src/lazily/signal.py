@@ -108,6 +108,7 @@ class Computed[T]:
         "_parents",
         "_puller",
         "_slot",
+        "_stale",
         "_value",
         "ctx",
     )
@@ -115,6 +116,10 @@ class Computed[T]:
     _parents: set[Slot[Any, Any, Any]] | None
     _eager: bool
     _puller: Effect | None
+    # Set by :meth:`_EagerPuller._drop_cached` when a disposal walk dirties the
+    # puller. An eager computed cannot repair itself during ``dispose`` (a
+    # disposal schedules nothing), so the repair is deferred to the next read.
+    _stale: bool
     _slot: Slot[dict, dict, T]
     _value: T
     # Propagate predicate ``changed(old, new)`` -> ``True`` to propagate, ``False``
@@ -140,6 +145,7 @@ class Computed[T]:
         self._parents = None
         self._eager = False
         self._puller = None
+        self._stale = False
         self._value = _UNSET
         self._changed = changed
         self._slot = Slot(callable=callable)
@@ -165,7 +171,7 @@ class Computed[T]:
         if self._eager:
             return self
         self._eager = True
-        puller = Effect(self._pull)
+        puller = _EagerPuller(self, self._pull)
         self._puller = puller
         _eager_by[self] = puller
         puller(self.ctx)
@@ -182,6 +188,7 @@ class Computed[T]:
         if not self._eager:
             return
         self._eager = False
+        self._stale = False
         puller = _eager_by.pop(self, None)
         self._puller = None
         if puller is not None:
@@ -190,6 +197,23 @@ class Computed[T]:
     def is_eager(self) -> bool:
         """Whether this computed is currently eager (has an active puller)."""
         return self._eager
+
+    def _rearm(self) -> None:
+        """Re-materialize after a disposal walk dirtied the puller.
+
+        A disposal schedules nothing (:func:`~lazily.slot._dirty_disposed_dependents`
+        invariant 2), so the puller cannot repair the value while ``dispose`` is
+        running — recomputing there would re-enter a body that reads the node
+        being torn down. The repair therefore happens on the next read, which is
+        the first moment it is safe, and goes through the puller so the run also
+        re-establishes the puller's own upstream edges.
+        """
+        self._stale = False
+        puller = self._puller
+        if puller is None or puller.disposed:
+            self._value = self._slot(self.ctx)
+            return
+        puller(self.ctx)
 
     def _pull(self, ctx: Any) -> None:
         """Puller-Effect body: re-materialize the backing memo into ``_value``.
@@ -251,6 +275,8 @@ class Computed[T]:
             # Lazy: recompute on read via the backing memo, which mints its own
             # compute view so its reads attribute to it.
             return self._slot(self.ctx)
+        if self._stale:
+            self._rearm()
         return self._value
 
     def __call__(self) -> T:
@@ -281,6 +307,36 @@ class Computed[T]:
         write.
         """
         self.lazy()
+
+
+@mypyc_attr(allow_interpreted_subclasses=True)
+class _EagerPuller(Effect):
+    """The puller Effect of an eager :class:`Computed`.
+
+    Exists only to survive a disposal walk. The walk clears each dirtied node's
+    dependent set on its way through and deliberately does not schedule the
+    effects it reaches — both right for a user effect, and together fatal for a
+    puller: the memo edge that would rerun it is gone, so without this hook an
+    eager computed keeps serving the value it held when the upstream was
+    disposed, forever, and deaf to every later change.
+
+    So the hook does the two things the walk cannot: re-register the memo edge,
+    and mark the owner stale so the next read re-materializes.
+    """
+
+    __slots__ = ("_owner",)
+
+    _owner: Computed[Any]
+
+    def __init__(self, owner: Computed[Any], body: Callable[[dict], Any]) -> None:
+        super().__init__(body)
+        self._owner = owner
+
+    def _drop_cached(self, ctx: Any) -> None:
+        super()._drop_cached(ctx)
+        owner = self._owner
+        owner._stale = True
+        _register_edge(owner._slot, self)
 
 
 def computed[T](ctx: Any, callable: Callable[[dict], T]) -> Computed[T]:

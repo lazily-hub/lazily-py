@@ -358,6 +358,47 @@ the cost the bridge exists to remove); pass
 `PydanticBackend(validate=True)` to `struct_source(..., backend=...)` to
 validate on every re-materialization instead.
 
+## Named keyed fold — `lazily.keyed_fold`
+
+N independent writers, one key each. A writer sets, folds and **clears only its
+own key**; the summary is a guarded `Computed` over the live set. This is the
+general shape `service.HealthCell` implements for booleans and `merge.MergeCell`
+has the algebra for but no keyed surface.
+
+The bug it exists to prevent is the last-writer-wins one: several components
+sharing a single cell for "the current errors", where whoever writes last erases
+everyone else's entry and whoever clears erases entries that were never theirs.
+
+```python
+from lazily import KeyedFold
+
+ctx: dict = {}
+errors = KeyedFold[str, str, dict[str, str]](ctx)
+
+intake = errors.claim("intake")          # exclusive: a second claim raises
+dispatcher = errors.claim("dispatcher")
+
+intake.set("connection refused")
+dispatcher.set("timeout")
+intake.clear()                           # dispatcher's entry survives
+
+errors.value                             # {'dispatcher': 'timeout'}
+```
+
+A reader of one key is never invalidated by a sibling's write, and a reader of
+the summary is invalidated only when the summary actually changes — so a
+`summarize` that counts entries is untouched when a *value* moves:
+
+```python
+fold = KeyedFold[str, int, int](ctx, lambda entries: len(entries))
+```
+
+`policy=` selects the merge algebra `writer.merge(op)` folds under (default
+`KeepLatest`, i.e. replace); a first write seeds the entry with the operand,
+since a policy is an associative merge and has no identity to start from.
+`writer.set` bypasses the policy. `eager=False` defers the fold to the first
+read, at the cost of the summary guard.
+
 ## Metrics — `lazily.metrics` and `lazily.prometheus_egress`
 
 A metric here is a reactive node, not a mirror of one. A family's child is
