@@ -48,11 +48,15 @@ dependencies = [
 attrs = ["attrs>=23.1"]
 msgspec = ["msgspec>=0.18"]
 pydantic = ["pydantic>=2.0"]
+# `prometheus_client` egress adapter (``lazily.prometheus_egress``). Same rule:
+# `lazily.metrics` renders the text exposition format with no dependency at all,
+# and the adapter imports prometheus_client lazily inside the calls that need it.
+prometheus = ["prometheus-client>=0.20"]
 structs = ["lazily[attrs,msgspec,pydantic]"]
 dev = [
     "build==1.4.0",
     "jsonschema==4.23.0",
-    "lazily[structs]",
+    "lazily[prometheus,structs]",
     "mypy[mypyc]>=2.3",
     "poethepoet==0.40.0",
     "pytest-cov==7.0.0",

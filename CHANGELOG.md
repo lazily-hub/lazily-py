@@ -2,6 +2,22 @@
 
 ### Added
 
+- Counter / gauge cell family, `lazily.metrics`, plus the `prometheus_client`
+  egress adapter `lazily.prometheus_egress` (`#lzpypromegress`). A family's
+  child is either writable (`CounterCell` / `GaugeCell` over a `Source`) or
+  **derived** — `derive(labels, compute)` binds a `Computed` that reads the
+  graph, so the exported number and the state it describes cannot disagree and
+  no hand-written mirror step exists to go stale. Counters are monotonic in both
+  directions of use (`inc` rejects a negative delta, `set` rejects a total below
+  the current one), derived children are lazy by default with `eager=True` for
+  the settled-value guard, and one label set holds a writable or a derived child
+  but never both. `MetricsRegistry.render_text()` emits the Prometheus text
+  exposition format with **no third-party dependency**; `register_metrics`
+  registers the whole registry with `prometheus_client` as a pull collector that
+  resolves the graph on each scrape. `prometheus_client` is optional
+  (`lazily[prometheus]`) and imported lazily, so `import lazily` still loads no
+  third-party package.
+
 - Struct ↔ reactive bridge, `lazily.struct_cell` (`#lzpystructcell`).
   `struct_source(ctx, instance)` explodes one struct into per-field `Source`
   cells plus a guarded `Computed` that re-materializes it, so a reader of one

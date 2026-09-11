@@ -117,7 +117,8 @@ only pull in the struct libraries the
 (`dataclasses`, `NamedTuple`) need no extra at all:
 
 ```
-pip install "lazily[msgspec]"    # or [pydantic], [attrs], [structs] for all three
+pip install "lazily[msgspec]"      # or [pydantic], [attrs], [structs] for all three
+pip install "lazily[prometheus]"  # the prometheus_client egress adapter
 ```
 
 ## Example usage
@@ -356,6 +357,65 @@ they are not independent state. pydantic re-materializes through
 the cost the bridge exists to remove); pass
 `PydanticBackend(validate=True)` to `struct_source(..., backend=...)` to
 validate on every re-materialization instead.
+
+## Metrics — `lazily.metrics` and `lazily.prometheus_egress`
+
+A metric here is a reactive node, not a mirror of one. A family's child is
+either **writable** (`CounterCell` / `GaugeCell` over a `Source`) or **derived**
+— bound with `derive`, its value read straight off the graph. A derived child is
+the point: the scrape reads the graph, so there is no push step, no
+hand-maintained mirror, and no window in which the exported number disagrees
+with the state it describes.
+
+```python
+from lazily import MetricsRegistry, source
+
+ctx: dict = {}
+metrics = MetricsRegistry(ctx)
+connected = source(lambda c: False)
+
+up = metrics.gauge("service_up", "1 when the component is connected.", ("component",))
+up.derive(("intake",), lambda c: 1.0 if connected(c).value else 0.0)
+
+accepted = metrics.counter("accepted_total", "Accepted messages.", ("source",))
+accepted.labels("http").inc(3)
+
+connected(ctx).value = True
+# No mirror step ran. The gauge IS the graph read.
+print(metrics.render_text())
+# HELP service_up 1 when the component is connected.
+# TYPE service_up gauge
+# service_up{component="intake"} 1.0
+# ...
+```
+
+`render_text()` emits the Prometheus text exposition format with **no
+third-party dependency**. For a real exporter, `lazily.prometheus_egress`
+registers the whole registry as a `prometheus_client` custom collector — a pull,
+for the same reason:
+
+```python
+from prometheus_client import CollectorRegistry, generate_latest
+
+from lazily import register_metrics, unregister_metrics
+
+prom = CollectorRegistry()
+collector = register_metrics(metrics, prom)
+generate_latest(prom)        # resolves the graph on this scrape
+unregister_metrics(collector, prom)
+```
+
+`prometheus_client` is optional (`pip install "lazily[prometheus]"`) and
+imported lazily inside the calls that need it, so `import lazily` still loads no
+third-party package.
+
+A counter is monotonic in both directions of use: `inc` rejects a negative
+delta and `set` refuses to move backwards, so mirroring an externally-owned
+absolute total can never publish a decrease a scraper would read as a counter
+reset. `derive` is **lazy** by default — the expression runs on collection, not
+on every upstream change — which is the right default for a scrape; pass
+`eager=True` when a reactive consumer of `observe()` should be shielded by the
+`Computed` guard from upstream changes that do not move the number.
 
 ## Latest-durable projection — `lazily.latest_durable_projection`
 

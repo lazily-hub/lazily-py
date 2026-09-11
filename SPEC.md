@@ -215,6 +215,47 @@ obligation: it introduces no new node kind and no new invalidation rule.
   (`lazily[msgspec]`, `[pydantic]`, `[attrs]`, `[structs]`) are install
   ergonomics and the CI test matrix; `import lazily` loads none of them.
 
+### Metrics family (`lazily.metrics`)
+
+A Python-side surface over the kernel, not a cross-binding obligation: it adds
+no node kind, no invalidation rule, and no canonical fixture.
+
+**Types:**
+
+| Type | Purpose |
+|------|---------|
+| `MetricsRegistry(ctx)` | Named set of families plus text exposition |
+| `MetricsRegistry.counter/gauge(name, doc, label_names)` | Get or create a family |
+| `MetricFamily.labels(...)` / `.child()` | The writable child at a label set |
+| `MetricFamily.derive(labels, compute, *, eager=False)` | Bind a graph read as the child |
+| `CounterCell` / `GaugeCell` | A `Source`-backed child |
+| `MetricFamilySnapshot` / `MetricSample` | A resolved family |
+| `lazily.prometheus_egress.ReactiveCollector` | `prometheus_client` pull collector |
+
+**Semantics:**
+
+- **Counter monotonicity:** `inc` rejects a negative delta; `set` rejects a
+  total below the current one. A counter can therefore never publish a decrease
+  that a scraper would read as a process restart.
+- **Gauge guard:** a gauge is one `Source`, so an equal `set` is inert.
+- **Derived children are graph reads:** `derive` binds a `Computed` whose
+  expression runs against the graph, so the exported value and the state it
+  describes cannot disagree. The expression runs once at bind time to
+  materialize the child.
+- **Laziness is the default:** a derived child recomputes on collection, not on
+  every upstream change. `eager=True` keeps a settled value, which is what makes
+  the `Computed` guard observable to a reactive consumer of `observe`; a lazy
+  child has no settled value to compare and so cannot suppress an equal
+  recompute.
+- **One kind per label set:** a label set holds a writable child or a derived
+  child, never both — they disagree about who owns the value.
+- **Collection is untracked by default.** A scrape is not a graph node; passing
+  a compute view (`observe`) is the explicit opt-in to depend on every child.
+- **Exposition is dependency-free:** `render_text` emits the Prometheus text
+  format directly, including `+Inf` / `-Inf` / `NaN` and the documentation /
+  label-value escapes. The `prometheus_client` adapter is optional, imported
+  lazily, and a **pull** collector — it resolves the registry on each scrape.
+
 ## Dependency Tracking
 
 Uses a global `slot_stack: list[Slot]` (acts as thread-local execution context).

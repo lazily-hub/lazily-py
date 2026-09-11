@@ -439,6 +439,7 @@ dev = [
     { name = "msgspec" },
     { name = "mypy", extra = ["mypyc"] },
     { name = "poethepoet" },
+    { name = "prometheus-client" },
     { name = "pydantic" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -449,6 +450,9 @@ dev = [
 ]
 msgspec = [
     { name = "msgspec" },
+]
+prometheus = [
+    { name = "prometheus-client" },
 ]
 pydantic = [
     { name = "pydantic" },
@@ -470,11 +474,12 @@ requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = "==1.4.0" },
     { name = "jsonschema", marker = "extra == 'dev'", specifier = "==4.23.0" },
     { name = "lazily", extras = ["attrs", "msgspec", "pydantic"], marker = "extra == 'structs'" },
-    { name = "lazily", extras = ["structs"], marker = "extra == 'dev'" },
+    { name = "lazily", extras = ["prometheus", "structs"], marker = "extra == 'dev'" },
     { name = "msgspec", marker = "extra == 'msgspec'", specifier = ">=0.18" },
     { name = "mypy", extras = ["mypyc"], marker = "extra == 'dev'", specifier = ">=2.3" },
     { name = "mypy-extensions", specifier = ">=1.0" },
     { name = "poethepoet", marker = "extra == 'dev'", specifier = "==0.40.0" },
+    { name = "prometheus-client", marker = "extra == 'prometheus'", specifier = ">=0.20" },
     { name = "pydantic", marker = "extra == 'pydantic'", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.2" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = "==7.0.0" },
@@ -483,7 +488,7 @@ requires-dist = [
     { name = "twine", marker = "extra == 'dev'", specifier = "==6.2.0" },
     { name = "ty", marker = "extra == 'dev'", specifier = "==0.0.14" },
 ]
-provides-extras = ["attrs", "msgspec", "pydantic", "structs", "dev"]
+provides-extras = ["attrs", "msgspec", "pydantic", "prometheus", "structs", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "lazily", extras = ["dev"] }]
@@ -759,6 +764,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/38/9d/054c8435b03324ed9abd5d5ab8c45065b1f42c23952cd23f13a5921d8465/poethepoet-0.40.0.tar.gz", hash = "sha256:91835f00d03d6c4f0e146f80fa510e298ad865e7edd27fe4cb9c94fdc090791b", size = 81114, upload-time = "2026-01-05T19:09:13.116Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/bc/73327d12b176abea7a3c6c7d760e1a953992f7b59d72c0354e39d7a353b5/poethepoet-0.40.0-py3-none-any.whl", hash = "sha256:afd276ae31d5c53573c0c14898118d4848ccee3709b6b0be6a1c6cbe522bbc8a", size = 106672, upload-time = "2026-01-05T19:09:11.536Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/73/f1334c29c2af4cd9dba6c7817e61b611bd0215e2eb5565c6064a4de18802/prometheus_client-0.26.0.tar.gz", hash = "sha256:04a91bcf94e2cf74a44a1a874d651a2e853ed354b6e822f3b7487751465d5c2b", size = 92910, upload-time = "2026-07-24T19:36:41.893Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/a3/b69efbf4143b5b9859b977770bbbabcc2796b702fa69dc40271e45cd5a56/prometheus_client-0.26.0-py3-none-any.whl", hash = "sha256:fa93d06737aa02bacd05794768508bb97d2fbee28cb3bca04eaae92f0ca953d6", size = 64494, upload-time = "2026-07-24T19:36:40.854Z" },
 ]
 
 [[package]]
