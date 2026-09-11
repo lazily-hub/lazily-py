@@ -22,11 +22,11 @@ from pathlib import Path
 
 from conformance_assert import (
     CORPUS_DIR_ENV,
-    MIN_DECLARED_BLOCKS,
     block_bind_failures,
     consumption_failures,
     corpus_dir,
     declared_block_count,
+    expected_declared_blocks,
     prose_failures,
     record_declared_blocks,
     scenario_failures,
@@ -274,14 +274,16 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untype
     if report:
         sys.stderr.write("\n".join(report) + "\n")
     elif _opened:
-        # Positive evidence, printed so MIN_DECLARED_BLOCKS can be re-pinned from a
-        # CI log rather than guessed. Every rung above is a NEGATIVE check that
-        # says nothing about magnitude, and the floor's input was never reported
-        # anywhere — a floor nobody can read the real number for is a floor that
-        # drifts (#lzscenariofloordrift).
+        # Positive evidence. Every rung above is a NEGATIVE check that says
+        # nothing about magnitude, so the magnitude is printed — both the live
+        # count and the number DERIVED from the corpus listing minus
+        # KNOWN_UNCOVERED (#lzblockfloorpin). Nobody re-pins anything from this
+        # line any more; it is here so a reader can see the two agree, and see
+        # which side moved when they do not.
         sys.stderr.write(
             f"assertion-block inventory OK: {declared_block_count()} distinct block(s) "
-            f"inventoried from opened fixtures (floor {MIN_DECLARED_BLOCKS})\n"
+            f"inventoried from opened fixtures "
+            f"(derived from the corpus: {expected_declared_blocks()})\n"
         )
     if (
         failures or prose_bad or scenario_bad or unbound or vacuous

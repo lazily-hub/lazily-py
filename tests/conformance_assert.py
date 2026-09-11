@@ -234,6 +234,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
@@ -260,10 +261,14 @@ __all__ = [
     "corpus_path",
     "corpus_subdir",
     "declared_block_count",
+    "default_corpus_dir",
     "discharged_prose",
     "excuse_key",
     "excuse_scenario",
+    "expected_declared_blocks",
     "instrument",
+    "iter_declared_blocks",
+    "known_uncovered_fixtures",
     "prose_failures",
     "prose_key",
     "record_block_bind",
@@ -445,29 +450,171 @@ KNOWN_UNBOUND_BLOCKS: dict[str, str] = {
     ),
 }
 
-#: Positive-evidence floor (``#lzvacuousrun``). Zero declared blocks means zero
-#: unbound blocks, which reports OK having compared nothing. Do not lower this to
-#: fix a failure.
+#: Positive-evidence magnitude (``#lzvacuousrun`` / ``#lzblockfloorpin``). Zero
+#: declared blocks means zero unbound blocks, which reports OK having compared
+#: nothing, so how much the run inventoried is asserted and not only that nothing
+#: it inventoried was unbound.
 #:
-#: Tracks what the run ACTUALLY inventories, exactly — no margin, no slack.
-#: Re-pinned 2026-09-11 at 620 from a full ``make test`` over 145/156 opened
-#: fixtures, against lazily-spec ``4010d99``, which added three member-framing
-#: rows to ``replay/canonical_encoding_equality.json`` (#lzreplayframing). The
-#: pin had sat at 578 since 2026-08-11 — 42 blocks of accumulated slack, the
-#: exact rot this comment warns about (#lzscenariofloordrift).
+#: This is DERIVED and it is an EQUALITY, not a floor and not a typed constant.
+#: It used to be both: a ``MIN_DECLARED_BLOCKS`` literal, re-pinned by hand at
+#: 31 -> 578 -> 620, carrying a docstring that warned the convention rots — and
+#: then demonstrated it. The pin sat at 578 from 2026-08-11 while the real
+#: inventory was 620, so 42 blocks could have stopped being inventoried with this
+#: rung still green (``#lzscenariofloordrift``). A number a person retypes after
+#: reading a log lags the corpus by however long nobody reads the log, and a
+#: ``>=`` comparison cannot notice the lag at all.
 #:
-#: The 2026-08-11 pin at 578 came from a full ``make test`` over 139/150 opened
-#: fixtures, when the inventory walk widened from ``assertions``-only to the
-#: whole of ``BLOCK_KEYS`` at every depth (#lzunboundblockguard). It had sat at
-#: 31 — the count the narrow walk produced — so 547 blocks could have stopped
-#: being inventoried with this rung still green.
+#: The two inputs both move on their own:
 #:
-#: Do not raise this "by however many blocks a change adds" while leaving an old
-#: margin in place — that convention is what let the sibling bindings' floors rot
-#: to 40 replays behind reality (#lzscenariofloordrift). ``conftest`` prints an
-#: ``assertion-block inventory OK`` line carrying the live count, so re-pin this
-#: from a completed CI log rather than guessing.
-MIN_DECLARED_BLOCKS = 620
+#:   1. the CANONICAL corpus directory listing (:func:`default_corpus_dir` — the
+#:      lazily-spec sibling, NOT the ``LAZILY_SPEC_CONFORMANCE_DIR`` override; see
+#:      :func:`expected_declared_blocks`), and
+#:   2. this binding's own committed ledger of the fixtures it does NOT open —
+#:      ``KNOWN_UNCOVERED`` in ``scripts/check-conformance-coverage.sh``.
+#:
+#: Corpus minus ledger is exactly the set this suite opens; the coverage guard
+#: asserts that same identity from the runtime manifest, from the other side.
+#: Walking those fixtures with :func:`iter_declared_blocks` — the SAME walk the
+#: loader-side inventory uses, so the two sides cannot disagree about what counts
+#: as a block — yields the distinct digests the run owes. A fixture landing
+#: upstream moves this number with no edit here; a fixture this binding stops
+#: opening moves it only through a committed ledger line.
+#:
+#: What it deliberately does NOT read: :data:`_DECLARED_FIXTURES`, conftest's
+#: ``_opened``, or anything else this run produced. An expectation derived from
+#: what the run read goes to zero alongside the actual count the moment the loader
+#: detaches, and the rung is vacuously green again — the ``#lzvacuousrun`` failure
+#: the floor existed to prevent.
+#:
+#: The walk is object-valued blocks only, matching :func:`iter_declared_blocks`.
+#: That is why this binding derives a different number from a sibling over an
+#: almost identical opened set: an array-valued tracked key contributes no site
+#: here and does contribute one in bindings that descend into array elements.
+
+#: The committed ledger the opened set is derived from. Parsed out of the shell
+#: script rather than restated in Python: a second copy would be one more thing to
+#: re-pin by hand, which is the defect being removed. Keeping the array in the
+#: script is also an upstream constraint — lazily-spec's ``check-corpus-floors.mjs``
+#: classifies the ledger arrays declared there and fails on an unclassified one.
+COVERAGE_SCRIPT = (
+    Path(__file__).resolve().parents[1] / "scripts" / "check-conformance-coverage.sh"
+)
+
+
+def known_uncovered_fixtures() -> frozenset[str]:
+    """Corpus-relative paths of the fixtures this binding does not open.
+
+    Read out of the bash ``KNOWN_UNCOVERED=( ... )`` array in
+    :data:`COVERAGE_SCRIPT`. A missing or unparsable array is a hard failure: the
+    expectation is derived from corpus-minus-ledger, and silently treating an
+    unreadable ledger as empty would derive a larger expectation from a set the
+    suite never opens, reporting the guard's own blindness as a corpus problem.
+    """
+    try:
+        with open(COVERAGE_SCRIPT, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot read {COVERAGE_SCRIPT}, which holds the KNOWN_UNCOVERED ledger "
+            f"the assertion-block expectation is derived from."
+        ) from exc
+    marker = "\nKNOWN_UNCOVERED=(\n"
+    start = text.find(marker)
+    if start < 0:
+        raise RuntimeError(
+            f"{COVERAGE_SCRIPT} no longer declares a KNOWN_UNCOVERED=( array. The "
+            f"assertion-block expectation is derived from it, so a rename has to be "
+            f"mirrored here rather than quietly deriving over a different set."
+        )
+    start += len(marker)
+    end = text.find("\n)\n", start)
+    if end < 0:
+        raise RuntimeError(
+            f"{COVERAGE_SCRIPT}: the KNOWN_UNCOVERED=( array is never closed by a "
+            f"line holding only ')'."
+        )
+    entries: set[str] = set()
+    for line in text[start:end].splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        entries.update(re.findall(r'"([^"]+)"', stripped))
+    if not entries:
+        raise RuntimeError(
+            f"{COVERAGE_SCRIPT}: KNOWN_UNCOVERED parsed as EMPTY. Shrinking that list "
+            f"to nothing is the goal state, but so is a parser that has stopped "
+            f"matching its entries, and the two are indistinguishable from here. "
+            f"If the list is genuinely empty, relax this check deliberately."
+        )
+    return frozenset(entries)
+
+
+#: Derived expectations, keyed by RESOLVED corpus root: a probe that repoints
+#: ``LAZILY_SPEC_CONFORMANCE_DIR`` at a scratch copy must re-derive rather than
+#: answer from the canonical corpus it is no longer reading.
+_EXPECTED_BLOCKS: dict[str, int] = {}
+
+
+def expected_declared_blocks() -> int:
+    """Distinct assertion blocks the fixtures this binding opens really carry.
+
+    Derived from the CANONICAL corpus minus :func:`known_uncovered_fixtures`,
+    walked with :func:`iter_declared_blocks`. See the comment above for why this
+    is derived rather than typed, and why it is compared for EQUALITY.
+
+    This is the one seam in this module that reads :func:`default_corpus_dir`
+    instead of :func:`corpus_dir`, and the reason is the same one that makes the
+    expectation independent of ``_DECLARED_FIXTURES``. A perturbation probe points
+    ``LAZILY_SPEC_CONFORMANCE_DIR`` at a scratch copy and doctors the bytes in it;
+    if the expectation followed the copy it would shrink in step with the doctored
+    inventory and agree with itself, which is the vacuous green the whole rung
+    exists to reject. The expectation is what the CANONICAL corpus owes; the
+    inventory is what the run really booked; the comparison is only worth making
+    while those two come from different places.
+    """
+    root = default_corpus_dir().resolve()
+    key = str(root)
+    cached = _EXPECTED_BLOCKS.get(key)
+    if cached is not None:
+        return cached
+    if not root.is_dir():
+        raise RuntimeError(
+            f"cannot derive the assertion-block expectation: the canonical corpus "
+            f"is not at {root}. Clone the lazily-spec sibling. Pointing "
+            f"{CORPUS_DIR_ENV} somewhere else does not substitute for it — this "
+            f"number is what the run is judged AGAINST, not what it replayed."
+        )
+    excused = known_uncovered_fixtures()
+    digests: set[str] = set()
+    for path in sorted(root.rglob("*.json")):
+        rel = path.relative_to(root).as_posix()
+        if rel in excused:
+            continue
+        # ``builtins.open``, NOT ``Path.read_text`` / ``Path.open``: conftest wraps
+        # both to record the runtime manifest, so deriving through them would book
+        # every one of these fixtures as OPENED and inventory all of their blocks
+        # into ``_DECLARED_BLOCKS``. The expectation would then be compared against
+        # an inventory it had just populated itself, and this rung would agree with
+        # itself whatever the suite actually replayed.
+        try:
+            with open(path, "rb") as handle:
+                doc = json.loads(handle.read().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                f"cannot derive the assertion-block expectation: {rel} under {root} "
+                f"is unreadable or is not JSON ({exc}). A fixture we cannot parse is "
+                f"missing evidence, not a fixture carrying no blocks."
+            ) from exc
+        if not isinstance(doc, dict):
+            continue
+        for _where, block in iter_declared_blocks(doc):
+            digest = block_digest(block)
+            if digest:
+                digests.add(digest)
+    total = len(digests)
+    _EXPECTED_BLOCKS[key] = total
+    return total
+
 
 #: digest -> {"fixture|where"} for every block an opened fixture carried.
 _DECLARED_BLOCKS: dict[str, set[str]] = {}
@@ -526,10 +673,11 @@ def record_declared_blocks(fixture: str, text: str) -> None:
     runner is the whole point: a block the runner never looks at is exactly the
     one this rung exists to find, and it is invisible to every rung above.
 
-    A block is emitted and NOT descended into, which is what ``instrument`` does
-    (it wraps the block and stops). Descending would inventory a fixture's
-    ``expect`` nested inside its own ``assertions`` as a second, separately
-    bindable site that no runner can bind without unwrapping the tracker.
+    The walk itself lives in :func:`iter_declared_blocks`, which is also what
+    :func:`expected_declared_blocks` derives the expected magnitude with. One
+    definition, two callers: a derived expectation that walked the corpus
+    differently from the inventory it is compared against would be worse than the
+    typed constant it replaced.
     """
     try:
         doc = json.loads(text)
@@ -539,29 +687,49 @@ def record_declared_blocks(fixture: str, text: str) -> None:
         return
     _DECLARED_FIXTURES.add(fixture)
 
-    def declare(where: str, block: Mapping[str, Any]) -> None:
+    for where, block in iter_declared_blocks(doc):
         digest = block_digest(block)
         if not digest:
-            return
+            continue
         site = f"{fixture}|{where}"
         _DECLARED_BLOCKS.setdefault(digest, set()).add(site)
         _DECLARED_SITES[site] = digest
 
-    def walk(node: Any, path: str) -> None:
+
+def iter_declared_blocks(doc: Any) -> Iterator[tuple[str, Mapping[str, Any]]]:
+    """Yield ``(where, block)`` for every assertion-bearing block a fixture carries.
+
+    This repo's one definition of the walk rule. Every name in :data:`BLOCK_KEYS`,
+    at every depth, OBJECT-VALUED ONLY, walked exactly the way :func:`instrument`
+    walks the same document — including the ``name``-preferring list labels, so the
+    declaring side and the binding side spell a site identically and an excuse
+    written against a reported label matches.
+
+    An array-valued tracked key contributes NO site here. That is deliberate and
+    it is why this binding's derived magnitude differs from a sibling's over an
+    almost identical opened set.
+
+    A block is emitted and NOT descended into, which is what ``instrument`` does
+    (it wraps the block and stops). Descending would inventory a fixture's
+    ``expect`` nested inside its own ``assertions`` as a second, separately
+    bindable site that no runner can bind without unwrapping the tracker.
+    """
+
+    def walk(node: Any, path: str) -> Iterator[tuple[str, Mapping[str, Any]]]:
         if isinstance(node, dict):
             for key, value in node.items():
                 child = f"{path}.{key}" if path else key
                 if key in BLOCK_KEYS and isinstance(value, dict):
-                    declare(child, value)
+                    yield child, value
                     continue
-                walk(value, child)
+                yield from walk(value, child)
         elif isinstance(node, list):
             for index, value in enumerate(node):
                 label = value.get("name") if isinstance(value, dict) else None
                 tag = label if isinstance(label, str) else str(index)
-                walk(value, f"{path}[{tag}]")
+                yield from walk(value, f"{path}[{tag}]")
 
-    walk(doc, "")
+    yield from walk(doc, "")
 
 
 def record_block_bind(data: Mapping[str, Any]) -> None:
@@ -588,10 +756,11 @@ def reset_blocks() -> None:
 def block_bind_failures(*, enforce_floor: bool = False) -> list[str]:
     """Report lines for blocks an opened fixture carried and no runner bound.
 
-    ``enforce_floor`` applies the positive-evidence floor and is set by
-    ``conftest`` whenever the run opened any canonical fixture at all. It has to
-    be conditional: a checkout without the ``lazily-spec`` sibling opens nothing
-    and every conformance suite skips by design, and failing that run would be
+    ``enforce_floor`` applies the positive-evidence magnitude check — the derived
+    :func:`expected_declared_blocks` equality — and is set by ``conftest`` whenever
+    the run opened any canonical fixture at all. It has to be conditional: a
+    checkout without the ``lazily-spec`` sibling opens nothing and every
+    conformance suite skips by design, and failing that run would be
     reporting on an absence rather than on a gap. But a run that DID open
     fixtures and inventoried no block has a detached recorder, which reports zero
     unbound blocks — the vacuous green this rung would otherwise inherit.
@@ -642,12 +811,42 @@ def block_bind_failures(*, enforce_floor: bool = False) -> list[str]:
         )
 
     declared = len(_DECLARED_BLOCKS)
-    if enforce_floor and declared < MIN_DECLARED_BLOCKS:
-        lines.append(
-            f"only {declared} distinct assertion block(s) were inventoried, expected "
-            f">= {MIN_DECLARED_BLOCKS}. The loader-side inventory detached, or "
-            f"fixtures stopped being read. Do not lower MIN_DECLARED_BLOCKS."
-        )
+    if enforce_floor:
+        # EQUALITY, under exactly the gate the old `>=` floor ran under and no
+        # wider one. `enforce_floor` is already the "this run opened canonical
+        # fixtures at all" condition, and a `pytest -k` subset was held to the old
+        # floor too — a filtered run has always failed this rung, and it fails it
+        # with one line, not a wall. Widening the gate is what would turn filtered
+        # runs into noise, so the gate is left alone and only the comparison is
+        # sharpened: `>=` cannot see slack, and slack is what rotted the pin.
+        try:
+            expected = expected_declared_blocks()
+        except RuntimeError as exc:
+            # Missing evidence, reported the same way a gap is. Deriving is the
+            # only way this rung knows a magnitude at all, so "could not derive"
+            # must not read as "nothing to compare".
+            lines.append(f"cannot derive the expected block count: {exc}")
+            return lines
+        if declared != expected:
+            short = expected - declared
+            direction = (
+                f"{short} FEWER than the canonical corpus owes"
+                if short > 0
+                else f"{-short} MORE than the canonical corpus owes"
+            )
+            lines.append(
+                f"{declared} distinct assertion block(s) were inventoried, expected "
+                f"exactly {expected} — {direction}. The expectation is derived from "
+                f"the canonical corpus at {default_corpus_dir()} minus the "
+                f"KNOWN_UNCOVERED ledger in scripts/check-conformance-coverage.sh, so "
+                f"a mismatch means one of two plain things. Either the CORPUS MOVED — "
+                f"re-pull the lazily-spec sibling, and if this binding now opens a "
+                f"different set of fixtures, say so in KNOWN_UNCOVERED; running "
+                f"against a doctored or older copy via {CORPUS_DIR_ENV} shows up here "
+                f"too, which is the point. Or the LOADER-SIDE INVENTORY DETACHED and "
+                f"fixtures stopped being read, or stopped being walked. There is no "
+                f"number to re-pin: fix whichever of the two it is."
+            )
     return lines
 
 
@@ -2052,6 +2251,21 @@ def corpus_dir() -> Path:
                 f"over bytes nobody perturbed (#lzoverrideallrunners)."
             )
         return root
+    return default_corpus_dir()
+
+
+def default_corpus_dir() -> Path:
+    """The CANONICAL corpus — the ``lazily-spec`` sibling checkout — with the
+    override deliberately not applied.
+
+    The single spelling of the default root; :func:`corpus_dir` falls back to it.
+    Exactly one caller is allowed to reach for it directly:
+    :func:`expected_declared_blocks`, which needs the corpus this run is JUDGED
+    AGAINST rather than the bytes it happened to replay. Everything else — every
+    runner, every guard that reasons about what was read — must go through
+    :func:`corpus_path` / :func:`corpus_subdir` / :func:`corpus_fixture` so the
+    override moves it (``#lzoverrideallrunners``).
+    """
     return Path(__file__).resolve().parents[2] / "lazily-spec" / "conformance"
 
 
