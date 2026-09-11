@@ -91,7 +91,7 @@ def _final_sum(build: Any, log: ReplayLog) -> int:
 # -- obligations 1 and 2 ------------------------------------------------------
 
 
-def _drive_harness_fixture(name: str, *, minimum_steps: int) -> None:
+def _drive_harness_fixture(name: str) -> None:
     fixture = _load(name)
     assert fixture["kind"] == "Replay"
     assert fixture["model"] == "ReplayHarness"
@@ -99,7 +99,16 @@ def _drive_harness_fixture(name: str, *, minimum_steps: int) -> None:
     logs = {key: _log(value) for key, value in config["logs"].items()}
     fingerprints: dict[str, Any] = {}
     steps = fixture["steps"]
-    assert len(steps) >= minimum_steps
+    # No hard-coded step floor here (#lzcorpusfloorguard). A constant that has
+    # to be re-pinned by hand every time the corpus moves is exactly what
+    # drifted: eight of nine bindings sat at 11 while this fixture family grew,
+    # so new rows landed inside the slack and were never replayed. The corpus's
+    # own step counts are now pinned corpus-side, in lazily-spec's
+    # `conformance/corpus-counts.json` and enforced by
+    # `scripts/check-corpus-floors.mjs`, which is the one place a SHRINKING
+    # corpus can be caught. What this runner owes instead is exactness: every
+    # step it LOADED was EXECUTED, asserted below without a number.
+    executed = 0
 
     for index, step in enumerate(steps):
         op = step["op"]
@@ -109,6 +118,7 @@ def _drive_harness_fixture(name: str, *, minimum_steps: int) -> None:
         if op["type"] == "log_digest_equal":
             actual = logs[op["left"]].digest == logs[op["right"]].digest
             assert step["returns"] == actual, f"{where}: returns"
+            executed += 1
             continue
 
         build = _build(config, op)
@@ -135,12 +145,14 @@ def _drive_harness_fixture(name: str, *, minimum_steps: int) -> None:
             assert fingerprint.final.as_dict()["sum"] == canonical_digest(final_sum), (
                 f"{where}: the recorded `sum` digest is not the subject's final sum"
             )
+            executed += 1
             continue
 
         if op["type"] == "prove":
             harness.prove(log, replays=op["replays"])
             assert_key(expected, "outcome", "ok", where)
             assert_key(expected, "divergences", 0, where)
+            executed += 1
             continue
 
         fingerprint = fingerprints[op["fingerprint"]]
@@ -162,6 +174,7 @@ def _drive_harness_fixture(name: str, *, minimum_steps: int) -> None:
                 assert_key(expected, "first_divergent_seq", first.seq, where)
                 assert_key(expected, "first_divergent_label", first.label, where)
                 assert_key(expected, "first_divergent_kind", first.kind, where)
+            executed += 1
             continue
 
         if op["type"] == "check":
@@ -170,20 +183,33 @@ def _drive_harness_fixture(name: str, *, minimum_steps: int) -> None:
             except ReplayLogMismatchError:
                 assert_key(expected, "outcome", "log_mismatch", where)
                 assert_key(expected, "divergences", 0, where)
+                executed += 1
                 continue
             assert_key(expected, "outcome", "ok", where)
             assert_key(expected, "divergences", divergences, where)
+            executed += 1
             continue
 
+        # An op type this runner does not implement is a HARD failure, never a
+        # skip: a corpus step carrying a new op would otherwise be loaded,
+        # stepped over, and counted as passing.
         raise AssertionError(f"unknown canonical replay operation {op['type']!r}")
+
+    # Exact, constant-free, and immune to corpus drift: a step that reached no
+    # dispatch arm, or an arm that stops booking its own execution, reddens here
+    # naming the shortfall.
+    assert executed == len(steps), (
+        f"{name}: loaded {len(steps)} steps but executed {executed} — "
+        f"{len(steps) - executed} step(s) were replayed by no dispatch arm"
+    )
 
 
 def test_canonical_fingerprint_log_binding() -> None:
-    _drive_harness_fixture("fingerprint_log_binding.json", minimum_steps=8)
+    _drive_harness_fixture("fingerprint_log_binding.json")
 
 
 def test_canonical_divergence_localization() -> None:
-    _drive_harness_fixture("divergence_localization.json", minimum_steps=7)
+    _drive_harness_fixture("divergence_localization.json")
 
 
 # -- obligation 3 -------------------------------------------------------------
@@ -223,11 +249,14 @@ def test_canonical_encoding_equality_classes() -> None:
     assert fixture["model"] == "CanonicalEncoding"
     values = fixture["config"]["values"]
     steps = fixture["steps"]
-    # Exactly what lazily-spec 4010d99 ships, no margin: the fixture grew from
-    # 11 steps to 14 when the member-framing row became three rows
-    # (#lzreplayframing). A floor with slack lets a corpus row stop being
-    # replayed with this guard still green (#lzscenariofloordrift).
-    assert len(steps) >= 14
+    # The `>= 14` floor that used to stand here is GONE (#lzcorpusfloorguard).
+    # It was re-pinned by hand when this fixture grew 11 -> 14
+    # (#lzreplayframing), which only reset the drift clock: the next growth
+    # would sit inside the slack again. A shrinking corpus is now caught
+    # corpus-side by lazily-spec's `conformance/corpus-counts.json` +
+    # `scripts/check-corpus-floors.mjs`; this runner owes exactness instead —
+    # loaded == executed, below.
+    executed = 0
     outcomes: set[bool] = set()
 
     for index, step in enumerate(steps):
@@ -240,6 +269,7 @@ def test_canonical_encoding_equality_classes() -> None:
             )
             assert step["returns"] == actual, f"{where}: returns"
             outcomes.add(actual)
+            executed += 1
             continue
 
         if op["type"] == "digest_defined":
@@ -250,9 +280,18 @@ def test_canonical_encoding_equality_classes() -> None:
                 defined = False
             assert step["returns"] == defined, f"{where}: returns"
             assert_key(step["expected"], "outcome", "encoding_error", where)
+            executed += 1
             continue
 
+        # Hard failure, never a silent skip: a future corpus step carrying a new
+        # op type must redden this runner rather than pass unexecuted.
         raise AssertionError(f"unknown canonical encoding operation {op['type']!r}")
+
+    # Every step LOADED was EXECUTED. No number, so nothing to re-pin.
+    assert executed == len(steps), (
+        f"{name}: loaded {len(steps)} steps but executed {executed} — "
+        f"{len(steps) - executed} step(s) were replayed by no dispatch arm"
+    )
 
     # Both outcomes really occurred: a runner that only ever saw `False` would
     # pass every inequality claim with a broken encoding.

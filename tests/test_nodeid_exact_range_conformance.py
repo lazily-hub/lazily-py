@@ -180,7 +180,23 @@ def test_nodeid_exact_range_conformance() -> None:
 
     verify_prose(fixture)
 
-    assert accepted == 6, (
-        f"accepted {accepted} scenarios, want 6: a Python int is arbitrary-precision, "
-        "so lazily-py has no identifier in this corpus it may refuse"
+    # The `want 6` gloss is GONE (#lzcorpusfloorguard): a hand-pinned corpus
+    # count resets its own drift clock every time the corpus moves, and a
+    # SHRINKING corpus is caught corpus-side by lazily-spec's
+    # `conformance/corpus-counts.json` + `scripts/check-corpus-floors.mjs`. The
+    # exact claim needs no number — a Python int is arbitrary-precision, so
+    # lazily-py has no identifier in this corpus it may refuse, which means
+    # every scenario LOADED must have been ACCEPTED.
+    declared = len(fixture["scenarios"])
+    assert accepted == declared, (
+        f"loaded {declared} scenarios but accepted {accepted} — lazily-py has no "
+        f"identifier in this corpus it may refuse, so every one must decode"
     )
+
+    # NOTE (#lzcorpusfloorguard): this literal is NOT the live guard any more —
+    # the constant-free `accepted == declared` assertion above is. It survives
+    # only as the anchor lazily-spec's `scripts/check-assertion-ordering.py`
+    # matches for the `py` binding (the `accepted == 6` equality, ORDERED_CHECKS).
+    # Deleting it here alone turns `make check` red on a contract owned by
+    # another repo. Remove it together with that anchor.
+    assert accepted == 6

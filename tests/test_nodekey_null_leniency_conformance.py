@@ -265,13 +265,13 @@ def test_nodekey_null_leniency_conformance() -> None:
     # `present` count is what only a real decode can produce.
     keys_decoded = 0
     replayed = 0
+    present_on_wire = 0
     observed_fields: set[str] = set()
     observed_key_forms: set[str] = set()
     observed_codecs: set[str] = set()
 
     for scenario in scenarios(fixture):
         expect: TrackedBlock = scenario["expect"]
-        replayed += 1
         observed_fields.add(scenario["field"])
         observed_codecs.add(scenario["codec"])
 
@@ -291,6 +291,8 @@ def test_nodekey_null_leniency_conformance() -> None:
             f"own wire carries {on_wire!r} — the label and the bytes disagree"
         )
         observed_key_forms.add(on_wire)
+        if on_wire == "present":
+            present_on_wire += 1
 
         message = _decode(scenario, expect)
         key = _decoded_key(scenario, message)
@@ -313,6 +315,9 @@ def test_nodekey_null_leniency_conformance() -> None:
             else message.delta.epoch
         )
         assert_key(expect, "epoch", epoch)
+        # Booked at the END of the body: a scenario the loop steps over is
+        # missing from the count rather than credited for arriving.
+        replayed += 1
 
     # Against what the run REPLAYED, not against hand-written literals and not
     # against len(fixture["scenarios"]) — the old forms compared the fixture to a
@@ -347,8 +352,33 @@ def test_nodekey_null_leniency_conformance() -> None:
 
     verify_prose(fixture)
 
-    assert replayed == 12, "two fields x three key forms x two codecs"
-    assert keys_decoded == 4, (
-        f"decoded {keys_decoded} keys, want 4: only the `present` scenarios carry one, "
-        "so a runner reporting absent for everything satisfies the null cases trivially"
+    # The hard-coded counts that used to stand here are GONE
+    # (#lzcorpusfloorguard). A literal re-pinned by hand every time the corpus
+    # moves is the thing that drifted; a SHRINKING corpus is now caught
+    # corpus-side by lazily-spec's `conformance/corpus-counts.json` +
+    # `scripts/check-corpus-floors.mjs`. What this runner owes instead is
+    # exactness: every scenario LOADED reached an executing arm.
+    declared = len(fixture["scenarios"])
+    assert replayed == declared, (
+        f"loaded {declared} scenarios but replayed {replayed} — "
+        f"{declared - replayed} scenario(s) reached no arm. A wire form this "
+        f"runner does not implement is an AssertionError in `_wire_key_form`, "
+        f"never a skip."
     )
+    # The anti-vacuity count, now derived from what THIS RUN classified off the
+    # raw wire rather than from a literal: exactly the frames whose `key` slot
+    # really carried a string must have decoded into a key. A decoder that
+    # reports absent for everything satisfies the omitted/null families
+    # trivially, and only this comparison separates it.
+    assert keys_decoded == present_on_wire, (
+        f"decoded {keys_decoded} keys but {present_on_wire} scenarios carry a "
+        f"string in the raw `key` slot"
+    )
+
+    # NOTE (#lzcorpusfloorguard): this literal is NOT the live guard any more —
+    # the constant-free `replayed == declared` assertion above is. It survives only as the
+    # anchor lazily-spec's `scripts/check-assertion-ordering.py` matches for the
+    # `py` binding (the `replayed == 12` equality, ORDERED_CHECKS["py"]); deleting it here alone turns
+    # `make check` red on a contract owned by another repo. Remove it together
+    # with that anchor.
+    assert replayed == 12

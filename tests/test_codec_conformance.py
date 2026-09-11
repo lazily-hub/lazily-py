@@ -291,7 +291,36 @@ def _assert_scenario_count(fixture: dict, replayed: int) -> None:
 
 
 def _assert_replay_floor(replayed: int) -> None:
-    assert replayed == 3, "one scenario per IpcMessage variant"
+    """Anti-vacuity, with the `== 3` literal GONE (#lzcorpusfloorguard).
+
+    The exact obligation moved to `_assert_every_scenario_replayed`, which needs
+    no number. What is left here is the one claim a count cannot express: this
+    run round-tripped something at all. The NAME is kept because lazily-spec's
+    `scripts/check-assertion-ordering.py` anchors the `py` ordering contract on
+    this call site.
+    """
+    assert replayed > 0, "round-tripped zero scenarios"
+
+
+def _assert_every_scenario_replayed(fixture: dict, replayed: int) -> None:
+    """Every scenario LOADED was EXECUTED — exact, and with no number to re-pin.
+
+    No hard-coded corpus count here (#lzcorpusfloorguard): a literal that
+    must be re-pinned by hand every time the corpus moves is the thing that
+    drifted. A SHRINKING corpus is caught corpus-side by lazily-spec's
+    `conformance/corpus-counts.json` + `scripts/check-corpus-floors.mjs`.
+    What this runner owes is exactness: every scenario LOADED was EXECUTED.
+
+    The unknown-frame direction is already closed: `_variant` and
+    `_assert_msgpack_encoding` raise on a variant this runner does not
+    implement, so a corpus frame carrying a new one reddens instead of being
+    skipped.
+    """
+    declared = len(fixture["scenarios"])
+    assert replayed == declared, (
+        f"loaded {declared} scenarios but round-tripped {replayed} — "
+        f"{declared - replayed} scenario(s) were replayed by no arm"
+    )
 
 
 def test_json_frames_round_trip() -> None:
@@ -305,6 +334,7 @@ def test_json_frames_round_trip() -> None:
     )
     _assert_scenario_count(fixture, replayed)
     verify_prose(fixture)
+    _assert_every_scenario_replayed(fixture, replayed)
     _assert_replay_floor(replayed)
 
 
@@ -327,4 +357,5 @@ def test_msgpack_frames_round_trip() -> None:
     )
     _assert_scenario_count(fixture, replayed)
     verify_prose(fixture)
+    _assert_every_scenario_replayed(fixture, replayed)
     _assert_replay_floor(replayed)

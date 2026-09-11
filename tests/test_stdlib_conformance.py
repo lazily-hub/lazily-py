@@ -567,11 +567,14 @@ def test_independent_model_agrees_with_the_unperturbed_corpus() -> None:
 
 def test_every_declared_mutation_is_observed_by_the_independent_interpreter() -> None:
     pairs = 0
+    entries_declared = 0
+    entries_applied = 0
     for name in FIXTURES:
         fixture = load_plain(name)
         baseline, _ = independent_failures(fixture, None)
         assert baseline == set(), f"stdlib/{name}: unperturbed replay already fails"
         assert fixture["mutations"], f"stdlib/{name}: empty mutation ledger"
+        entries_declared += len(fixture["mutations"])
         for mutation in fixture["mutations"]:
             operator = mutation["operator"]
             must_fail = set(mutation["must_fail"])
@@ -598,13 +601,25 @@ def test_every_declared_mutation_is_observed_by_the_independent_interpreter() ->
                 f"operator applied AND without it, so the mutation proves nothing"
             )
             pairs += len(must_fail)
+            entries_applied += 1
         # Every entry contributes at least one (operator, scenario) pair, so the
         # corpus's own `mutation_floor` is also a floor on what this run applied.
         assert pairs >= fixture["mutation_floor"]
-    # timer 4 + timeout 5 + revision_barrier 6. A floor, not an equality: the
-    # corpus may grow pairs, and this run must never apply fewer than it does
-    # today (#lzpystdlibmutants).
-    assert pairs >= 15, f"applied only {pairs} (operator, scenario) pairs"
+    # The `>= 15` floor (timer 4 + timeout 5 + revision_barrier 6) is GONE
+    # (#lzcorpusfloorguard). It was a hand-maintained literal describing corpus
+    # content, and a corpus that grows past it hides a row inside the slack. A
+    # SHRINKING corpus is caught corpus-side by lazily-spec's
+    # `conformance/corpus-counts.json` + `scripts/check-corpus-floors.mjs`; the
+    # per-fixture `mutation_floor` above is the corpus's own declaration. What
+    # is left here is exact and constant-free: every declared ledger entry was
+    # APPLIED. The unknown-operator direction is already a hard failure
+    # (`operator in consulted`), never a silent skip (#lzpystdlibmutants).
+    assert entries_applied == entries_declared, (
+        f"the corpus declares {entries_declared} mutation ledger entries but this "
+        f"run applied {entries_applied} — "
+        f"{entries_declared - entries_applied} entry(ies) were never perturbed"
+    )
+    assert pairs > 0, "applied zero (operator, scenario) pairs"
 
 
 def test_the_complement_is_not_asserted_because_the_corpus_does_not_support_it() -> (

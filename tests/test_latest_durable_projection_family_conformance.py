@@ -131,6 +131,8 @@ def test_canonical_latest_durable_projection_fixture(projection_cls: type[Any]) 
     assert fixture["kind"] == "LatestDurableProjection"
     assert fixture["model"] == "LatestDurableProjectionCore"
     count = 0
+    declared_steps = 0
+    scenarios_replayed = 0
 
     for scenario in scenarios(fixture):
         ctx: dict = {}
@@ -139,6 +141,7 @@ def test_canonical_latest_durable_projection_fixture(projection_cls: type[Any]) 
         _, previous = counter.drive()
         steps = scenario["steps"]
         assert steps
+        declared_steps += len(steps)
 
         for index, step in enumerate(steps):
             before_runs, _ = counter.drive()
@@ -154,7 +157,23 @@ def test_canonical_latest_durable_projection_fixture(projection_cls: type[Any]) 
             previous = current
             count += 1
 
-    assert count >= 20
+        scenarios_replayed += 1
+
+    # The `>= 20` step floor is GONE (#lzcorpusfloorguard). A hand-pinned
+    # literal describing corpus content lets a corpus that grows past it hide a
+    # row inside the slack, and re-pinning it only resets the drift clock. A
+    # SHRINKING corpus is caught corpus-side by lazily-spec's
+    # `conformance/corpus-counts.json` + `scripts/check-corpus-floors.mjs`. What
+    # is left here is exact and needs no number: every step LOADED was EXECUTED.
+    # The unknown-op direction is already closed — `_apply` raises on an op kind
+    # this runner does not implement, it never skips one.
+    assert scenarios_replayed == len(fixture["scenarios"]), (
+        f"loaded {len(fixture['scenarios'])} scenarios but drove {scenarios_replayed}"
+    )
+    assert count == declared_steps, (
+        f"loaded {declared_steps} steps but executed {count} — "
+        f"{declared_steps - count} step(s) were applied by no arm"
+    )
 
 
 def test_core_preserves_newer_desire_across_failure_and_stale_tokens() -> None:

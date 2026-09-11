@@ -33,7 +33,6 @@ def test_capability_handshake_conformance() -> None:
     replayed = 0
 
     for scenario in scenarios(fixture):
-        replayed += 1
         local = CapabilityHandshake.from_wire(scenario["local"])
         remote = CapabilityHandshake.from_wire(scenario["remote"])
         result = local.negotiate_with(remote)
@@ -53,4 +52,16 @@ def test_capability_handshake_conformance() -> None:
             assert result.field is not None
             assert_key(expected, "field", result.field)
 
-    assert replayed == 5, "the settled handshake fixture has five scenarios"
+        # Booked at the END of the body, so a scenario the loop steps over —
+        # a future `continue`, an early `break` — is missing from the count.
+        replayed += 1
+
+    # No hard-coded corpus count here (#lzcorpusfloorguard): a literal that
+    # must be re-pinned by hand every time the corpus moves is the thing that
+    # drifted. A SHRINKING corpus is caught corpus-side by lazily-spec's
+    # `conformance/corpus-counts.json` + `scripts/check-corpus-floors.mjs`.
+    # What this runner owes is exactness: every scenario LOADED was EXECUTED.
+    assert replayed == len(fixture["scenarios"]), (
+        f"loaded {len(fixture['scenarios'])} scenarios but negotiated "
+        f"{replayed} — a scenario was skipped rather than replayed"
+    )

@@ -344,6 +344,8 @@ def test_blob_backend_discriminator_conformance() -> None:
     rejected = 0
     decoded_backends: set[str] = set()
     reencode_present = 0
+    reencode_present_backends: set[str] = set()
+    reencode_absent_backends: set[str] = set()
     observed_codecs: set[str] = set()
     observed_outcomes: set[str] = set()
     observed_forms: set[str] = set()
@@ -445,6 +447,9 @@ def test_blob_backend_discriminator_conformance() -> None:
         present = "backend" in reencoded
         if present:
             reencode_present += 1
+            reencode_present_backends.add(blob.backend.value)
+        else:
+            reencode_absent_backends.add(blob.backend.value)
         assert_key(expect, "reencoded_backend_field_present", present)
 
         assert_key(expect, "node", op.node)
@@ -483,14 +488,34 @@ def test_blob_backend_discriminator_conformance() -> None:
     # asserted (#lzprosekeyconvention).
     verify_prose(fixture)
 
-    assert accepted == 10, (
-        f"accepted {accepted} scenarios, want 10: five accepting backend forms "
-        f"(omitted, shm, arrow, in_process, null) x two codecs"
+    # The hard-coded counts that used to stand here are GONE
+    # (#lzcorpusfloorguard). A literal re-pinned by hand every time the corpus
+    # moves is the thing that drifted; a SHRINKING corpus is now caught
+    # corpus-side by lazily-spec's `conformance/corpus-counts.json` +
+    # `scripts/check-corpus-floors.mjs`. What this runner owes instead is
+    # exactness: every scenario LOADED reached an executing arm.
+    # The accept/reject split itself stays guarded without a number: `outcome`
+    # is dispatched exhaustively (an outcome this runner does not implement is
+    # an AssertionError above, never a skip), and both arms must have fired or
+    # the run proved only one direction.
+    declared = len(fixture["scenarios"])
+    assert accepted + rejected == declared, (
+        f"loaded {declared} scenarios but classified {accepted + rejected} "
+        f"({accepted} accepted, {rejected} rejected) — "
+        f"{declared - accepted - rejected} scenario(s) reached no arm"
     )
-    assert rejected == 4, (
-        f"rejected {rejected} scenarios, want 4: the `rdma` and non-string frames "
-        f"under each codec"
+    assert accepted > 0 and rejected > 0, (
+        f"accepted {accepted} / rejected {rejected}: a run that saw only one "
+        f"outcome proves nothing about the other"
     )
+
+    # NOTE (#lzcorpusfloorguard): this literal is NOT the live guard any more —
+    # the constant-free `accepted + rejected == declared` assertion above is. It survives only as the
+    # anchor lazily-spec's `scripts/check-assertion-ordering.py` matches for the
+    # `py` binding (the `accepted == 10` equality, ORDERED_CHECKS["py"]); deleting it here alone turns
+    # `make check` red on a contract owned by another repo. Remove it together
+    # with that anchor.
+    assert accepted == 10
     # Every wire shape is carried under BOTH codecs. Several bindings bridge
     # msgpack into the same DOM the JSON decoder produces, so this proves the
     # bridge and the encoder, NOT two independent discriminator verdicts — see
@@ -498,8 +523,20 @@ def test_blob_backend_discriminator_conformance() -> None:
     assert forms_by_codec == dict.fromkeys(observed_codecs, observed_forms), (
         f"each backend form must be replayed under every codec; got {forms_by_codec}"
     )
-    assert reencode_present == 4, (
-        f"re-encoded the field in {reencode_present} scenarios, want 4: only the "
-        "`arrow` and `in_process` frames may carry it, and a binding that echoes "
-        "the received field back out writes it in six"
+    # The `== 4` literal is GONE (#lzcorpusfloorguard). Per scenario the
+    # fixture's own `reencoded_backend_field_present` is already asserted above,
+    # so what the aggregate owes is anti-vacuity — and that needs no number.
+    # Both outcomes must really have occurred (a binding that echoes the
+    # received field back out writes it for every accepted frame; one that never
+    # writes it writes it for none), and presence has to be a function of the
+    # DECODED BACKEND rather than of whatever the frame arrived carrying.
+    assert 0 < reencode_present < accepted, (
+        f"re-encoded the field in {reencode_present} of {accepted} accepted "
+        f"scenarios: a run at either extreme proves nothing about the omit rule"
+    )
+    both = reencode_present_backends & reencode_absent_backends
+    assert not both, (
+        f"backend(s) {sorted(both)} re-encoded the `backend` field in one "
+        f"scenario and omitted it in another — presence is echoing the input "
+        f"frame, not following the backend"
     )
