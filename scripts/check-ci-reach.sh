@@ -285,6 +285,64 @@ while [ -n "$queue" ]; do
 	done < <(prereqs_of "$current")
 done
 
+# ------------------------------------------------ per-target readability probe
+
+# The root probe above is NOT sufficient, and the gap is not hypothetical: five
+# bindings have now reproduced it. `make -n $ROOT_TARGET` can exit 0 while
+# `make -n <member>` exits 2, because `MAKECMDGOALS` differs between the two
+# invocations and a prerequisite can be added conditionally on it:
+#
+#     ifeq ($(MAKECMDGOALS),type-check)
+#     type-check: only-when-type-check-is-the-goal
+#     endif
+#
+# Measured on this binding's own Makefile: `make -n check` exits 0 (the
+# conditional is false when `check` is the goal), `make -n type-check` exits 2
+# with "No rule to make target 'only-when-type-check-is-the-goal'". Against the
+# root probe alone the false green SURVIVED — `no gate type-check`,
+# "OK - 7 target(s) reached by CI, 0 excused, 2 carrying no gate", exit 0 —
+# because `dry_run`'s `|| true` swallows the member's 2 and silence reads as an
+# empty recipe. `own_commands` asks make one target at a time, so the probe has
+# to as well.
+#
+# Both probes stay, and they answer different questions: the root probe names
+# the cause when the root itself is unbuildable (an include, a `$(error)`, a
+# missing tool), and prints make's stderr verbatim. This one finds the member
+# that drops out while the root stays green.
+#
+# Main shell, for the reason the root probe is here: `dry_run` is reached
+# through `$(dry_run ... | wc -l)` and `$(own_commands ... | anchors ...)`, so an
+# `exit 1` inside it dies with the subshell. `dry_run "${deps[@]}"` — the
+# multi-goal call — is deliberately NOT probed: when IT fails, `prefix` becomes
+# 0 and the target is credited with its prerequisites' anchors too, which
+# over-reports and fails closed. It is the single-target call whose failure
+# turns into silence.
+unreadable=" "
+unreadable_targets=()
+unreadable_errors=()
+while IFS= read -r target; do
+	[ -n "$target" ] || continue
+	probe_err=""
+	if ! probe_err="$("$MAKE_BIN" -n "$target" 2>&1 >/dev/null)"; then
+		unreadable="$unreadable$target "
+		unreadable_targets+=("$target")
+		unreadable_errors+=("$(printf '%s' "$probe_err" | tr '\n' ' ')")
+	fi
+done <<<"$closure"
+
+# Mirrors `excuse_reason`: a lookup whose only call site is a `printf` argument
+# after membership is already established, so its no-match return status is
+# never the thing anyone reads.
+unreadable_reason() {
+	local t="$1" i
+	for i in "${!unreadable_targets[@]}"; do
+		if [ "${unreadable_targets[$i]}" = "$t" ]; then
+			printf '%s' "${unreadable_errors[$i]}"
+			return
+		fi
+	done
+}
+
 # `make -n` for a target emits its prerequisites' commands first, then its own.
 # Asking make for the prerequisite list alone yields exactly that prefix — make
 # applies the same de-duplication to both invocations — so removing it leaves the
@@ -543,6 +601,7 @@ excuse_reason() {
 
 unreached=""
 unreached_count=0
+unreadable_count=0
 stale=""
 stale_count=0
 nogate=""
@@ -552,6 +611,21 @@ excused_ok=0
 
 while IFS= read -r target; do
 	[ -n "$target" ] || continue
+
+	# BEFORE the excuse check, and before anything reads a recipe. A target make
+	# refuses to dry-run has no readable recipe at all, so every verdict about it
+	# — reached, excused, carrying no gate — would be a statement about an empty
+	# string. An excuse must not launder it either: an excuse is a claim about
+	# what CI runs, not a licence for a Makefile make cannot read.
+	case "$unreadable" in
+	*" $target "*)
+		printf 'UNREADABLE %s\n' "$target"
+		printf '           %s -n %s failed: %s\n' \
+			"$MAKE_BIN" "$target" "$(unreadable_reason "$target")"
+		unreadable_count=$((unreadable_count + 1))
+		continue
+		;;
+	esac
 
 	target_anchors="$(own_commands "$target" | anchors | sort -u || true)"
 
@@ -605,12 +679,24 @@ done <<<"$nogate"
 
 # A guard that examined nothing must not report OK — the same vacuity rule the
 # conformance guards apply (#lzvacuousrun).
-if [ "$((reached + excused_ok + unreached_count))" -eq 0 ]; then
+if [ "$((reached + excused_ok + unreached_count + unreadable_count))" -eq 0 ]; then
 	echo "check-ci-reach: '$ROOT_TARGET' has no prerequisite target carrying a gate — nothing was verified" >&2
 	exit 1
 fi
 
 status=0
+if [ "$unreadable_count" -gt 0 ]; then
+	echo >&2
+	echo "check-ci-reach: $unreadable_count target(s) in 'make $ROOT_TARGET''s closure that" >&2
+	echo "                $MAKE_BIN refuses to dry-run, so their recipes could not be read" >&2
+	echo "                at all. Left unreported this is a FALSE GREEN, not a missing" >&2
+	echo "                verdict: an unreadable recipe reads as an empty one, and an" >&2
+	echo "                empty one is excused as 'carrying no gate' (#lzgrepcpipefail)." >&2
+	for i in "${!unreadable_targets[@]}"; do
+		echo "  - ${unreadable_targets[$i]}: ${unreadable_errors[$i]}" >&2
+	done
+	status=1
+fi
 if [ "$stale_count" -gt 0 ]; then
 	echo >&2
 	while IFS= read -r t; do

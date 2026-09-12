@@ -262,3 +262,122 @@ def test_the_availability_guard_precedes_the_first_make_invocation() -> None:
         f"own first use is dead code: the missing tool surfaces as bash's "
         f"`command not found` with neither the guard's name nor its remedy."
     )
+
+
+#: The target Attack 2 is planted on. Any closure member would do; `type-check`
+#: is a gate whose disappearance is easy to state the cost of.
+_ATTACK2_TARGET = "type-check"
+_ATTACK2_PREREQ = "only-when-type-check-is-the-goal"
+
+
+def _plant_a_goal_conditional_prerequisite(tree: Path) -> None:
+    """Make `type-check` unbuildable ONLY when it is the goal being asked for.
+
+    `MAKECMDGOALS` differs between `make -n check` and `make -n type-check`, so a
+    prerequisite added under `ifeq ($(MAKECMDGOALS),type-check)` is invisible to
+    a probe of the ROOT and fatal to a probe of the MEMBER. That asymmetry is the
+    whole attack: `own_commands` asks make one target at a time, which is the
+    invocation that fails, and `dry_run`'s `|| true` turns the failure into
+    silence.
+    """
+    makefile = tree / "Makefile"
+    source = makefile.read_text(encoding="utf-8")
+    rule = f"\n{_ATTACK2_TARGET}:\n"
+    assert source.count(rule) == 1, (
+        f"expected exactly one `{_ATTACK2_TARGET}:` rule line to perturb; found "
+        f"{source.count(rule)}. The perturbation has to land on a target really "
+        f"in `make check`'s closure or this test proves nothing."
+    )
+    conditional = (
+        f"\nifeq ($(MAKECMDGOALS),{_ATTACK2_TARGET})\n"
+        f"{_ATTACK2_TARGET}: {_ATTACK2_PREREQ}\n"
+        f"endif\n"
+        f"{_ATTACK2_TARGET}:\n"
+    )
+    makefile.write_text(source.replace(rule, conditional, 1), encoding="utf-8")
+
+
+def test_a_goal_conditional_prerequisite_is_refused(tree: Path) -> None:
+    """A member drops out while the ROOT probe stays green (Attack 2).
+
+    Reproduced on this binding before the per-target probe existed: `make -n
+    check` exited 0, `make -n type-check` exited 2, and the guard printed
+    ``no gate type-check`` / ``OK - 7 target(s) reached by CI, 0 excused, 2
+    carrying no gate`` and exited 0. Five bindings have reproduced this class;
+    the root probe alone does not see it.
+    """
+    _plant_a_goal_conditional_prerequisite(tree)
+
+    root = subprocess.run(
+        ["make", "-n", "check"], cwd=tree, capture_output=True, text=True
+    )
+    member = subprocess.run(
+        ["make", "-n", _ATTACK2_TARGET], cwd=tree, capture_output=True, text=True
+    )
+    assert root.returncode == 0, (
+        f"`make -n check` FAILED, which makes this the same state as the "
+        f"unconditional-prerequisite test above rather than the asymmetry under "
+        f"test. A root probe would catch it and the per-target probe would not "
+        f"be what this test exercises.\nstderr:\n{root.stderr}"
+    )
+    assert member.returncode != 0, (
+        f"`make -n {_ATTACK2_TARGET}` succeeded, so the member never dropped "
+        f"out and there is nothing here to catch.\nstderr:\n{member.stderr}"
+    )
+
+    result = _run_guard(tree)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode != 0, (
+        f"a closure member make refuses to dry-run was reported as fine, with "
+        f"the root probe green throughout (#lzgrepcpipefail).\n{combined}"
+    )
+    assert "UNREADABLE" in result.stdout, (
+        f"the guard failed without naming the target whose recipe it could not "
+        f"read, which is the difference between a named refusal and a gate that "
+        f"silently vanishes.\n{combined}"
+    )
+    assert _ATTACK2_TARGET in result.stdout, (
+        f"the UNREADABLE verdict does not name `{_ATTACK2_TARGET}`.\n{combined}"
+    )
+    assert f"no gate  {_ATTACK2_TARGET}" not in combined, (
+        f"`{_ATTACK2_TARGET}` was classified as carrying no checkable command. "
+        f"Its recipe was never read; make refused the target.\n{combined}"
+    )
+    assert "check-ci-reach: OK" not in result.stdout, (
+        f"the guard reached its OK verdict line anyway.\n{combined}"
+    )
+
+
+def test_an_excuse_cannot_launder_an_unreadable_target(tree: Path) -> None:
+    """An excuse is a claim about CI, not a licence for an unreadable Makefile.
+
+    The readability verdict therefore lands BEFORE the excuse check. Were the
+    order reversed, an excused target would print ``excused`` and the run would
+    exit 0 — a second laundering route into the same false green, and one an
+    excuse list is meant to make auditable rather than to hide.
+    """
+    _plant_a_goal_conditional_prerequisite(tree)
+    conf = tree / "scripts" / "ci-reach.conf"
+    conf.write_text(
+        conf.read_text(encoding="utf-8")
+        + f"excuse: {_ATTACK2_TARGET}: asserted here only to prove it is ignored\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(tree)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode != 0, (
+        f"an excuse laundered a target make refuses to dry-run.\n{combined}"
+    )
+    assert "UNREADABLE" in result.stdout, (
+        f"the guard failed by some route other than the readability verdict, so "
+        f"the ordering this test is about is not what produced the refusal."
+        f"\n{combined}"
+    )
+    assert f"excused  {_ATTACK2_TARGET}" not in combined, (
+        f"`{_ATTACK2_TARGET}` was reported as excused. Its recipe was never "
+        f"read, so there is nothing to have an opinion about excusing."
+        f"\n{combined}"
+    )
