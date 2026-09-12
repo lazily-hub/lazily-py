@@ -57,8 +57,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install build
-      - run: python -m build --sdist --outdir wheelhouse
+      # Named, like every other run: step in this repo. Neither of these gates
+      # anything today — this workflow is deliberately NOT listed in
+      # scripts/ci-reach.conf, so check-ci-reach.sh never reads it — but
+      # EXPECTED_GATE_STEPS pins gates BY STEP NAME (#reversereachdirection), and an
+      # unnamed step is one a pin cannot name. Naming them is not a behaviour
+      # change; it is what keeps listing this workflow later from being blocked
+      # on an unrelated edit.
+      - name: Install build
+        run: python -m pip install build
+      - name: Build sdist
+        run: python -m build --sdist --outdir wheelhouse
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
