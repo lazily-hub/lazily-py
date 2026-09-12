@@ -359,10 +359,32 @@ def test_an_excuse_cannot_launder_an_unreadable_target(tree: Path) -> None:
     """
     _plant_a_goal_conditional_prerequisite(tree)
     conf = tree / "scripts" / "ci-reach.conf"
+    # No colon after the target name. The conf parser takes the first
+    # whitespace-delimited word of an `excuse:` value as the target, so
+    # `excuse: type-check: reason` names the target `type-check:`, which matches
+    # nothing — and this test then asserted that an excuse cannot launder an
+    # unreadable target while planting no excuse at all. It passed for years
+    # regardless of where the readability verdict sat relative to the excuse
+    # check, which is the one thing it claims to pin. Surfaced by the
+    # stray-excuse check added under #pinreachclosure, which refused the
+    # misspelled name as an excuse for a target outside the closure.
     conf.write_text(
         conf.read_text(encoding="utf-8")
-        + f"excuse: {_ATTACK2_TARGET}: asserted here only to prove it is ignored\n",
+        + f"excuse: {_ATTACK2_TARGET} asserted here only to prove it is ignored\n",
         encoding="utf-8",
+    )
+
+    premise = _run_guard(tree)
+    assert f"excuse for '{_ATTACK2_TARGET}' has no reason" not in premise.stderr, (
+        f"the planted excuse was rejected as reasonless, so no excuse was in play "
+        f"and the laundering this test is about could not have been attempted.\n"
+        f"stderr:\n{premise.stderr}"
+    )
+    assert "which is not in the closure" not in premise.stderr, (
+        f"the planted excuse names a target outside the closure, so it was refused "
+        f"before the readability verdict could be laundered. The excuse has to "
+        f"name a REAL closure member for this test to mean anything.\n"
+        f"stderr:\n{premise.stderr}"
     )
 
     result = _run_guard(tree)
