@@ -24,6 +24,7 @@ from conformance_assert import (
     assert_key_with,
     corpus_fixture,
     instrument,
+    require_flag,
     sub_entries,
 )
 
@@ -263,12 +264,25 @@ def _replay(flavor: _Flavor, fixture_name: str) -> None:
         invalidates = expected.sub("invalidates")
         matrices += 1
 
-        dirty = set(
+        # `invalidates.value` is a LIST of the entry keys whose value readers
+        # must have recomputed. REQUIRE the list (#lzflagcoercion): `set()`
+        # accepts any iterable, so a fixture spelling the bare string `"a"`
+        # instead of `["a"]` became `{"a"}` and was INDISTINGUISHABLE from the
+        # correct spelling — these entry keys are single characters, so the
+        # coercion landed on a real reader name. A JSON list is the contract.
+        want_value_dirty = (
             assert_key_into(invalidates, "value", lambda fixture_value: fixture_value)
-            or []
             if "value" in invalidates
             else []
         )
+        assert isinstance(want_value_dirty, list), (
+            f"{where(i)}: invalidates.value must be a JSON list of entry keys, "
+            f"got {want_value_dirty!r} of type {type(want_value_dirty).__name__} "
+            f"— a bare string would be iterated CHARACTER BY CHARACTER into the "
+            f"dirty set and, for single-character entry keys, would pass "
+            f"(#lzflagcoercion)"
+        )
+        dirty = set(want_value_dirty)
         survivors = set(got_order)
         for key, drive in value_readers.items():
             if key not in survivors:
@@ -284,9 +298,17 @@ def _replay(flavor: _Flavor, fixture_name: str) -> None:
                     "per-entry independence is the whole point"
                 )
 
-        want_membership_dirty = bool(
-            assert_key_into(
-                invalidates, "membership", lambda fixture_value: fixture_value
+        # `bool(...)` here was the flag coercion (#lzflagcoercion): `bool("false")`
+        # is TRUE, so the string spelling asserted the opposite of what it reads
+        # as, and `null`/`0`/`[]`/`{}`/`""` all collapsed to "must NOT
+        # invalidate" and went green with no boolean in the fixture at all. A
+        # key the step omits is still a legitimate "no claim" default of False.
+        want_membership_dirty = (
+            require_flag(
+                assert_key_into(
+                    invalidates, "membership", lambda fixture_value: fixture_value
+                ),
+                where=f"{where(i)}: invalidates.membership",
             )
             if "membership" in invalidates
             else False
@@ -296,8 +318,13 @@ def _replay(flavor: _Flavor, fixture_name: str) -> None:
             "a pure reorder must NOT invalidate set-identity readers"
         )
 
-        want_order_dirty = bool(
-            assert_key_into(invalidates, "order", lambda fixture_value: fixture_value)
+        want_order_dirty = (
+            require_flag(
+                assert_key_into(
+                    invalidates, "order", lambda fixture_value: fixture_value
+                ),
+                where=f"{where(i)}: invalidates.order",
+            )
             if "order" in invalidates
             else False
         )

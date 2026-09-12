@@ -23,6 +23,7 @@ from conformance_assert import (
     corpus_fixture,
     corpus_subdir,
     instrument,
+    require_flag,
     sub_entries,
 )
 
@@ -142,6 +143,14 @@ def _assert_invalidation(
     wanted = invalidates or dict.fromkeys(readers, False)
     for name, should_invalidate in wanted.items():
         assert name in readers, f"{where}: fixture names unknown reader {name!r}"
+        # REQUIRE the boolean before counting with it (#lzflagcoercion).
+        # `int(...)` already refused `null`, `"false"` and `[]`, but it accepted
+        # the STRING spellings `"0"` and `"1"` — and `"0"` is a non-empty
+        # string, so anything that read this flag by truthiness instead would
+        # reach the opposite verdict from the one `int()` reaches here.
+        should_invalidate = require_flag(
+            should_invalidate, where=f"{where}: invalidates.{name}"
+        )
         after = readers[name].drive()
         delta = after - baseline[name]
         assert delta == int(should_invalidate), (

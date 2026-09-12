@@ -280,6 +280,7 @@ __all__ = [
     "record_declared_blocks",
     "record_scenario",
     "replayed_scenarios",
+    "require_flag",
     "reset",
     "reset_blocks",
     "scenario_failures",
@@ -1890,6 +1891,43 @@ def assert_key_into(
     return projected
 
 
+def require_flag(value: Any, *, where: str) -> bool:
+    """Return ``value``, refusing anything that is not a JSON boolean.
+
+    For a fixture key whose contract is a two-valued flag and whose value is
+    then consumed by something OTHER than ``assert_key``'s ``==`` — a
+    truthiness test, a ``bool()``, an ``int()``, a branch. Those coerce, and
+    coercion is the whole defect (``#lzflagcoercion``): the fixture's spelling
+    has to BE a boolean before it is allowed to stand for one.
+
+    Python makes this quieter than any other binding in the family, which is
+    why it is a named helper rather than an inline ``isinstance``:
+
+    * ``bool("false")`` is ``True`` — a non-empty string is truthy, so the
+      string spelling of a flag asserts the OPPOSITE of what it reads as.
+    * ``1 == True`` and ``0 == False``, so an integer satisfies a boolean
+      comparison without ever being one.
+    * ``null``, ``0``, ``[]``, ``{}`` and ``""`` are all falsy, so each of them
+      silently becomes the assertion "this did NOT happen" and passes against
+      any run where it did not happen — an assertion the fixture never made.
+
+    ``assert_key`` needs none of this: the fixture's value is one operand of an
+    ``==`` against a native ``bool``, so ``"true"`` and ``"false"`` both fail
+    loudly there. Only a call site that coerces needs to require the type, and
+    a site whose type is already static needs nothing.
+    """
+    if value is True or value is False:
+        return value
+    raise AssertionError(
+        f"{where}: expected a JSON boolean, got {value!r} of type "
+        f"{type(value).__name__}. A flag has to be spelled `true` or `false` "
+        f"in the fixture — this value was NOT coerced, because coercing it is "
+        f'the defect (#lzflagcoercion): Python truthiness reads `"false"` as '
+        f'TRUE and reads `null`/`0`/`[]`/`{{}}`/`""` as a confident '
+        f"assertion the fixture never made."
+    )
+
+
 def assert_invalidates(
     block: Mapping[str, Any],
     observed: Mapping[str, bool],
@@ -1922,7 +1960,15 @@ def assert_invalidates(
         f"{unwatched} that this runner never observed"
     )
     for reader, expected in want.items():
-        if expected:
+        # REQUIRE the boolean; never coerce it (#lzflagcoercion). `if expected:`
+        # read every non-boolean spelling through Python truthiness, which is
+        # confidently wrong in both directions: `null`, `0`, `[]`, `{}` and `""`
+        # all read as "stayed cached" and went GREEN against a reader that
+        # really did stay cached, so the step passed with no boolean in the
+        # fixture at all; `"false"` is a non-empty string and therefore TRUTHY,
+        # so it asserted the exact opposite of what the fixture says. lazily-go
+        # shipped the same coercion as `want == true` (6a1a6b9).
+        if require_flag(expected, where=f"reader `{reader}`{site}"):
             assert observed[reader], f"reader `{reader}`{site} should have invalidated"
         else:
             assert not observed[reader], (

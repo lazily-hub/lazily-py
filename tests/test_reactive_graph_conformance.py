@@ -811,9 +811,23 @@ async def _replay(
         return result
 
     async def alive(node_id: str) -> bool:
-        handle = nodes.get(node_id)
-        if handle is None:
-            return False
+        # A node this replay never created is NOT "not readable" — it is a
+        # fixture naming something the run does not carry, and answering False
+        # let `readable: {<typo>: false}` be satisfied by the node's
+        # NON-EXISTENCE rather than by its readability (#lzflagcoercion).
+        # lazily-go shipped the identical sibling: `IsCached(id)` also returns
+        # false for a node that does not exist, so `sibling_a_cached: false`
+        # passed on absence. `nodes` is append-only — `register` is its only
+        # writer — so an absent id can only mean the op that would have made it
+        # never ran. Named failure, like `node_of`.
+        if node_id not in nodes:
+            raise AssertionError(
+                f"{name}: `readable` names unknown node {node_id} — this replay "
+                f"never created it, so its readability was never observed. "
+                f"Answering `false` here would let the expectation be satisfied "
+                f"by the node's ABSENCE (#lzflagcoercion)."
+            )
+        handle = nodes[node_id]
         if model.is_effect(handle):
             return model.is_effect_active(handle)
         return (await read_id(node_id)) != _ERR
@@ -1013,7 +1027,20 @@ async def _replay(
             elif key == "cleanup_order":
                 # Only effects run a cleanup callback, so the expected order is
                 # projected onto its effect entries.
-                wanted = [i for i in want if model.is_effect(stale.get(i))]
+                # The projection onto effect entries must not double as a
+                # presence filter (#lzflagcoercion): `stale.get(i)` answered
+                # None for a name this replay never registered, `is_effect(None)`
+                # is False, and the name was silently DROPPED from the
+                # expectation — so a `cleanup_order` naming a node that does not
+                # exist compared a shortened list and passed at either end.
+                for i in want:
+                    assert i in stale, (
+                        f"{name}: `cleanup_order` names unknown node {i} — this "
+                        f"replay never registered it, so it could not have run a "
+                        f"cleanup. Filtering it out silently shortens the "
+                        f"expected order (#lzflagcoercion)."
+                    )
+                wanted = [i for i in want if model.is_effect(stale[i])]
                 check("cleanup_order", cleaned, wanted)
             elif key == "scope_owned_count":
                 for scope_name, count in sub_entries(expect, key):

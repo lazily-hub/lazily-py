@@ -52,6 +52,7 @@ from conformance_assert import (
     record_declared_blocks,
     record_scenario,
     replayed_scenarios,
+    require_flag,
     reset,
     reset_blocks,
     scenario_failures,
@@ -1692,3 +1693,78 @@ def test_an_excuse_for_a_fixture_this_run_never_opened_is_out_of_scope(
     KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "not opened here"
 
     assert not block_bind_failures()
+
+
+# ---------------------------------------------------------------------------
+# The flag that was never a boolean (#lzflagcoercion)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("spelling", [True, False])
+def test_require_flag_passes_a_json_boolean_through(spelling: bool) -> None:
+    """The two legitimate spellings are returned unchanged."""
+    assert require_flag(spelling, where="selftest") is spelling
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "true",
+        "false",
+        "0",
+        "1",
+        "",
+        0,
+        1,
+        -1,
+        None,
+        [],
+        {},
+        ["true"],
+        {"value": True},
+        0.0,
+    ],
+    ids=repr,
+)
+def test_require_flag_refuses_every_non_boolean(spelling: object) -> None:
+    """A flag has to BE a boolean before it may stand for one.
+
+    The enumeration is the point. Python coerces all of these into a confident
+    verdict, and each one is wrong in its own way: `"false"` is a non-empty
+    string and therefore TRUTHY, so truthiness reads it as the OPPOSITE of what
+    it says; `1 == True` and `0 == False`, so an integer satisfies an equality
+    against a native bool without being one; and `None`/`[]`/`{}`/`""` are all
+    falsy, so each silently becomes the assertion "this did not happen" — an
+    assertion the fixture never made — and passes against any run where it did
+    not happen. That last set is what made this class silent rather than loud:
+    a fixture carrying no boolean at all replayed GREEN.
+    """
+    with pytest.raises(AssertionError) as excinfo:
+        require_flag(spelling, where="selftest")
+    message = str(excinfo.value)
+    assert "expected a JSON boolean" in message, message
+    assert "#lzflagcoercion" in message, message
+    assert repr(spelling) in message, message
+
+
+def test_require_flag_does_not_confuse_bool_with_its_int_equals() -> None:
+    """`1 == True` in Python, so equality is not enough to tell them apart."""
+    assert 1 == True  # the premise under test
+    assert 0 == False  # the premise under test
+    # ... and yet:
+    with pytest.raises(AssertionError):
+        require_flag(1, where="selftest")
+    with pytest.raises(AssertionError):
+        require_flag(0, where="selftest")
+
+
+def test_require_flag_refuses_the_truthy_string_spelling_of_false() -> None:
+    """The quietest instance in this binding, called out on its own.
+
+    `bool("false")` is `True`. A runner that coerced asserted the exact
+    opposite of what the fixture reads as — lazily-go's `want == true`
+    (6a1a6b9) was the same coercion reached from the other side.
+    """
+    assert bool("false") is True  # the premise
+    with pytest.raises(AssertionError, match="expected a JSON boolean"):
+        require_flag("false", where="selftest")
