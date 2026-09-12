@@ -46,6 +46,7 @@ from conformance_assert import (
     expected_declared_sites,
     expected_ledgered_blocks,
     instrument,
+    iter_declared_blocks,
     prose_failures,
     prose_key,
     record_declared_blocks,
@@ -1082,6 +1083,120 @@ def test_per_frame_and_per_scenario_blocks_are_inventoried(block_ledger) -> None
         "selftest/nested.json|frames[0].assertions",
         "selftest/nested.json|scenarios[0].assertions",
     ]
+
+
+# -- A site per array element under a tracked key (#lzarrayelementsites) ------
+#
+# The canonical corpus exercises exactly ONE shape of this — the 12 plain-object
+# elements of `signaling/anti_spoof_session.json`'s eight per-step `expect`
+# arrays — so the corpus cannot catch OVER-widening, which is the risk here. The
+# table below is synthetic for exactly that reason: it pins what the rule does
+# NOT emit as hard as what it does.
+
+#: ``(label, document, sites the walk owes)``, the widening's whole contract.
+_ARRAY_ELEMENT_PROBE = (
+    ("an OBJECT value is unchanged", {"expect": {"a": 1}}, ["expect"]),
+    (
+        "an array of two objects is two sites",
+        {"expect": [{"a": 1}, {"b": 2}]},
+        ["expect[0]", "expect[1]"],
+    ),
+    ("an array of scalars is no site", {"expect": [1, "two", None]}, []),
+    (
+        "a mixed array keeps TRUE indexes",
+        {"expect": [{"a": 1}, 3, {"b": 2}]},
+        ["expect[0]", "expect[2]"],
+    ),
+    ("a nested array is one level too deep", {"expect": [[{"a": 1}]]}, []),
+    (
+        "an UNTRACKED key is still not a block",
+        {"scenarios": [{"a": 1}]},
+        [],
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("doc", "owed"),
+    [(doc, owed) for _, doc, owed in _ARRAY_ELEMENT_PROBE],
+    ids=[label for label, _, _ in _ARRAY_ELEMENT_PROBE],
+)
+def test_the_array_element_rule_on_synthetic_shapes(doc: dict, owed: list[str]) -> None:
+    """The widening's exact reach, over shapes the corpus does not carry.
+
+    ``iter_declared_blocks`` is a pure function of the document, so this needs no
+    ledger and no corpus — which is the point: a probe that had to doctor
+    ``lazily-spec/conformance`` to ask this question would redden every other
+    binding to answer it.
+    """
+    assert [where for where, _ in iter_declared_blocks(doc)] == owed
+
+
+def _tracked_labels(node: object) -> list[str]:
+    """Every ``TrackedBlock`` label an instrumented document carries.
+
+    A tracked block is recorded and NOT descended into, mirroring the walk: the
+    tracker owns everything beneath it from there on.
+    """
+    if isinstance(node, TrackedBlock):
+        return [node.block]
+    if isinstance(node, dict):
+        return [label for value in node.values() for label in _tracked_labels(value)]
+    if isinstance(node, list):
+        return [label for value in node for label in _tracked_labels(value)]
+    return []
+
+
+@pytest.mark.parametrize(
+    ("doc", "owed"),
+    [(doc, owed) for _, doc, owed in _ARRAY_ELEMENT_PROBE],
+    ids=[label for label, _, _ in _ARRAY_ELEMENT_PROBE],
+)
+def test_instrument_wraps_exactly_what_the_walk_enumerates(
+    block_ledger, doc: dict, owed: list[str]
+) -> None:
+    """The declaring and binding halves of the widening, pinned to each other.
+
+    ``iter_declared_blocks`` derives the magnitude the inventory ``instrument``
+    feeds is compared against, so the two spelling a site differently — or one
+    reaching an element the other does not — cannot produce a green run. This is
+    the comparison that says so directly instead of leaving it to a 741-site
+    equality to report as an off-by-twelve.
+    """
+    labels = _tracked_labels(instrument(doc, name="selftest/probe.json"))
+    assert sorted(labels) == sorted(owed)
+
+
+def test_two_elements_of_one_array_are_named_separately(block_ledger) -> None:
+    """The set-identity property the ELEMENT being the site exists for.
+
+    A label per ARRAY would collapse a step's frames into one site, and two
+    frames that are individually falsifiable would stop being individually
+    nameable. So bind the MIDDLE element of a three-element array and leave its
+    two siblings detached: the report owes two lines naming ``[0]`` and ``[2]``
+    distinctly, and the bound one must not appear in either.
+    """
+    record_declared_blocks(
+        "selftest/array.json",
+        json.dumps({"steps": [{"expect": [{"to": "a"}, {"to": "b"}, {"to": "c"}]}]}),
+    )
+    # The bind is keyed by CONTENT, so binding the middle element is enough to
+    # clear exactly it — no corpus edit, and no manifest to doctor.
+    tracked(
+        {"to": "b"},
+        fixture="selftest/array.json",
+        block="steps[0].expect[1]",
+    )
+
+    reported = block_bind_failures()
+    assert len(reported) == 2, (
+        f"expected exactly the two detached ELEMENTS, got {reported}"
+    )
+    assert "selftest/array.json|steps[0].expect[0]" in reported[0]
+    assert "selftest/array.json|steps[0].expect[2]" in reported[1]
+    assert not any("steps[0].expect[1]" in line for line in reported), (
+        "the bound element was reported, so the sites are not per element"
+    )
 
 
 def test_an_excuse_suppresses_the_report(block_ledger, monkeypatch) -> None:

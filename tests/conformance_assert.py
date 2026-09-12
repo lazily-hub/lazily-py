@@ -872,19 +872,50 @@ def iter_declared_blocks(doc: Any) -> Iterator[tuple[str, Mapping[str, Any]]]:
     """Yield ``(where, block)`` for every assertion-bearing block a fixture carries.
 
     This repo's one definition of the walk rule. Every name in :data:`BLOCK_KEYS`,
-    at every depth, OBJECT-VALUED ONLY, walked exactly the way :func:`instrument`
-    walks the same document — including the ``name``-preferring list labels, so the
-    declaring side and the binding side spell a site identically and an excuse
-    written against a reported label matches.
+    at every depth, walked exactly the way :func:`instrument` walks the same
+    document — including the ``name``-preferring list labels, so the declaring
+    side and the binding side spell a site identically and an excuse written
+    against a reported label matches. A site is emitted for
 
-    An array-valued tracked key contributes NO site here. That is deliberate and
-    it is why this binding's derived magnitude differs from a sibling's over an
-    almost identical opened set.
+    * the OBJECT value of a tracked key, and
+    * each plain-OBJECT ELEMENT of an ARRAY value of a tracked key
+      (``#lzarrayelementsites``).
+
+    The second is the widening, and :func:`instrument` says exactly the same —
+    the two are pinned against each other by construction, because this walk
+    derives the magnitude the inventory ``instrument`` feeds is compared against.
+    If either side were wider than the other a green run would be impossible: an
+    element ``instrument`` wraps and this walk never enumerates is a bound digest
+    no site declares, and an element this walk enumerates and ``instrument``
+    never wraps fails as unbound.
+
+    Before the widening an array-valued tracked key contributed NO site, on the
+    stated grounds that a runner binds elements rather than the array — which was
+    always this rule's own parenthetical, pointing at a site nobody emitted.
+    ``signaling/anti_spoof_session.json`` holds its expected outbound signaling
+    frames that way, 12 elements across 8 steps, and every one was invisible to
+    rung 0 while ``test_signaling_conformance`` read and asserted all of them:
+    the bind-pending shape, where falsifying a VALUE was caught and a runner that
+    stopped asserting them was not.
+
+    The SITE is the ELEMENT, ``steps[3].expect[1]``, never the array. A label per
+    array would collapse a step's frames into one site, and two frames that are
+    individually falsifiable would stop being individually nameable — the
+    set-identity failure the site dimension exists to catch. The index is the
+    element's TRUE position, so a mixed ``[{...}, 3, {...}]`` emits ``expect[0]``
+    and ``expect[2]`` and never renumbers the second object to ``[1]``.
+
+    Exactly ONE level: an element of a NESTED array (``expect[0][1]``) is not
+    directly under a tracked key and gets no site of its own. The canonical
+    corpus carries no such shape.
 
     A block is emitted and NOT descended into, which is what ``instrument`` does
     (it wraps the block and stops). Descending would inventory a fixture's
     ``expect`` nested inside its own ``assertions`` as a second, separately
-    bindable site that no runner can bind without unwrapping the tracker.
+    bindable site that no runner can bind without unwrapping the tracker. An
+    emitted array ELEMENT is not descended into for the same reason — a runner
+    reaching a tracked key nested inside one would be holding a ``TrackedBlock``,
+    and the nested site would be declared and unbindable.
     """
 
     def walk(node: Any, path: str) -> Iterator[tuple[str, Mapping[str, Any]]]:
@@ -893,6 +924,20 @@ def iter_declared_blocks(doc: Any) -> Iterator[tuple[str, Mapping[str, Any]]]:
                 child = f"{path}.{key}" if path else key
                 if key in BLOCK_KEYS and isinstance(value, dict):
                     yield child, value
+                    continue
+                if key in BLOCK_KEYS and isinstance(value, list):
+                    # TRUE indexes, and no ``name`` preference: the label has to
+                    # distinguish two elements of ONE array, which is what the
+                    # index does and what a name shared by two frames would not.
+                    for index, element in enumerate(value):
+                        label = f"{child}[{index}]"
+                        if isinstance(element, dict):
+                            yield label, element
+                        else:
+                            # A scalar or nested array is no site, but anything
+                            # tracked BELOW it is still reached, exactly as
+                            # before the widening.
+                            yield from walk(element, label)
                     continue
                 yield from walk(value, child)
         elif isinstance(node, list):
@@ -2163,6 +2208,16 @@ def instrument(
     ``prose`` names keys that are narration rather than assertions wherever they
     appear in this fixture. Keep the list short and justified at the call site —
     it is the one legitimate way for a key to go unchecked.
+
+    A tracked key holding an ARRAY has each of its plain-OBJECT elements wrapped
+    individually, under the label ``"<key>[<index>]"``
+    (``#lzarrayelementsites``). This is the binding half of the widening in
+    :func:`iter_declared_blocks`, and the two are pinned against each other:
+    that walk derives the magnitude this inventory is compared against, so
+    wrapping an element it does not enumerate, or failing to wrap one it does,
+    cannot produce a green run. A runner keeps indexing the list exactly as
+    before — ``step["expect"][0]`` is now a tracked view of that frame rather
+    than a bare ``dict``, so every key of it must be consumed and asserted.
     """
 
     def walk(node: Any, path: str) -> Any:
@@ -2174,6 +2229,21 @@ def instrument(
                     out[key] = TrackedBlock(
                         value, fixture=name, block=child, prose=prose
                     )
+                elif key in block_keys and isinstance(value, list):
+                    # TRUE indexes and no ``name`` preference, matching
+                    # ``iter_declared_blocks`` label for label; a non-object
+                    # element is not a block and is walked as it always was.
+                    out[key] = [
+                        TrackedBlock(
+                            element,
+                            fixture=name,
+                            block=f"{child}[{index}]",
+                            prose=prose,
+                        )
+                        if isinstance(element, dict)
+                        else walk(element, f"{child}[{index}]")
+                        for index, element in enumerate(value)
+                    ]
                 else:
                     out[key] = walk(value, child)
             return out

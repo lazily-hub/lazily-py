@@ -16,7 +16,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from conformance_assert import assert_key, corpus_fixture, instrument
+from conformance_assert import (
+    assert_key,
+    assert_key_set,
+    corpus_fixture,
+    instrument,
+)
 
 from lazily.signaling import (
     PermissionMode,
@@ -114,11 +119,23 @@ def test_signaling_anti_spoof_session() -> None:
             f"step {inp}: emit count {len(emits)} != {len(step['expect'])}"
         )
         for (target_conn, emitted), want in zip(emits, step["expect"], strict=True):
-            assert target_conn == want["to"], f"step {inp}: target conn mismatch"
+            # `want` is a TrackedBlock: each element of an `expect` ARRAY is its
+            # own assertion-block site (#lzarrayelementsites), so both of its
+            # keys have to reach a comparison against the FIXTURE's value. A
+            # bare `assert target_conn == want["to"]` reads the key and books no
+            # evidence, which is the shape a runner that stopped asserting these
+            # frames would have left behind unnoticed.
+            assert_key(want, "to", target_conn, where=f"step {inp}")
             wire = emitted.to_wire()
-            assert wire == want["frame"], (
-                f"step {inp}: emitted {wire} != {want['frame']}"
-            )
+            # The KEY SET first, in both directions, ahead of the value
+            # comparison: the message then names a field the room emitted and
+            # the fixture omits (or the reverse) instead of dumping two whole
+            # frames. The equality below is a WHOLE-object one and so subsumes
+            # it — this runner never had the per-key loop that makes an omitted
+            # field compared by nothing — but the key set is the cheaper
+            # diagnostic and the tracker wants it marked either way.
+            assert_key_set(want, "frame", wire.keys(), where=f"step {inp}")
+            assert_key(want, "frame", wire, where=f"step {inp}")
             # Anti-spoof: forwarded frames carry a server-stamped `from`,
             # never a client-supplied value; `to`/`from` never both present.
             assert not (emitted.to is not None and emitted.frm is not None)
