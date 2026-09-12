@@ -196,6 +196,50 @@ is_makefile_target() {
 	' Makefile
 }
 
+# ------------------------------------------------------------- make sanity gate
+
+# Every verdict below is derived from `make -n`, and `dry_run` reads its output
+# through `... | grep -v ... || true` (#lzgrepcpipefail). That `|| true` is
+# CORRECT for the grep: a recipe whose every line is make's own chatter leaves
+# the filter with nothing to print, and zero commands is a legitimate
+# measurement here — it is the "carrying no gate" verdict. It is also
+# indiscriminate. make's OWN failure exits nonzero through the same path,
+# `2>/dev/null` hides what it said, and the empty stdout is then read as "this
+# recipe runs no checkable command": the target drops out of the reach
+# requirement and the guard reports OK.
+#
+# Measured, not supposed. Give `test:` a prerequisite with no rule
+# (`test: build/generated-fixtures.json`). `make -n test` exits 2 with
+# "No rule to make target ... needed by 'test'", and this guard printed
+#
+#   no gate  test      recipe runs no checkable command
+#   check-ci-reach: OK - 7 target(s) reached by CI, 0 excused, 2 carrying no gate
+#
+# and exited 0. The pytest target — which carries conformance rungs 2-4 — had
+# quietly stopped being required in CI, and the run was green, not fail-closed.
+#
+# The check belongs HERE rather than inside `dry_run`, because `dry_run` is
+# called from command substitutions and pipelines (`$(dry_run ... | wc -l)`)
+# where it runs in a SUBSHELL: an `exit 1` there kills the subshell and the
+# script carries on with the empty output it was trying to refuse. This runs in
+# the main shell, on the ROOT target, whose prerequisite closure is exactly the
+# set every `dry_run` below asks about — so if make can dry-run the root it can
+# dry-run any part of it, and the `|| true` downstream is then measuring the
+# grep and nothing else.
+#
+# No temp file: a second `trap ... EXIT` would REPLACE the one the anchor files
+# install further down, so make's diagnostic is captured into a variable.
+# `2>&1 >/dev/null` in that order keeps stderr and discards the recipe dump.
+make_dry_err=""
+if ! make_dry_err="$("$MAKE_BIN" -n "$ROOT_TARGET" 2>&1 >/dev/null)"; then
+	echo "check-ci-reach: '$MAKE_BIN -n $ROOT_TARGET' FAILED, so every recipe below would" >&2
+	echo "                read as empty and every target would be reported as carrying no" >&2
+	echo "                gate — a broken Makefile announced as OK (#lzgrepcpipefail)." >&2
+	echo "                make said:" >&2
+	printf '%s\n' "$make_dry_err" | sed 's/^/                  /' >&2
+	exit 1
+fi
+
 # Breadth-first closure of ROOT_TARGET's prerequisites, parents before children.
 closure=""
 queue="$ROOT_TARGET"
