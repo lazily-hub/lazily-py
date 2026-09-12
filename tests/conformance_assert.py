@@ -243,8 +243,8 @@ from typing import Any
 __all__ = [
     "BLOCK_KEYS",
     "CORPUS_DIR_ENV",
+    "EXPECTED_LEDGERED_BLOCKS_ENV",
     "KNOWN_UNBOUND_BLOCKS",
-    "MAX_LEDGERED_BLOCKS_ENV",
     "PROSE_DECLARATION_KEY",
     "PROSE_KEYS",
     "SCENARIO_EXCUSES",
@@ -270,10 +270,10 @@ __all__ = [
     "excuse_scenario",
     "expected_declared_blocks",
     "expected_declared_sites",
+    "expected_ledgered_blocks",
     "instrument",
     "iter_declared_blocks",
     "known_uncovered_fixtures",
-    "max_ledgered_blocks",
     "prose_failures",
     "prose_key",
     "record_block_bind",
@@ -455,12 +455,13 @@ KNOWN_UNBOUND_BLOCKS: dict[str, str] = {
     ),
 }
 
-#: The name of the env var that raises :func:`max_ledgered_blocks` for one run.
-#: Provided for bisecting an upstream corpus change, not for making a red run
-#: green: the committed default is the number CI enforces.
-MAX_LEDGERED_BLOCKS_ENV = "MAX_LEDGERED_BLOCKS"
+#: The name of the env var that moves :func:`expected_ledgered_blocks` for one
+#: run. Provided for bisecting an upstream corpus change, not for making a red
+#: run green: the committed pin is the number CI enforces.
+EXPECTED_LEDGERED_BLOCKS_ENV = "EXPECTED_LEDGERED_BLOCKS"
 
-#: CEILING on how much of this rung may be excused at all (``#lzledgerceiling``).
+#: EXACT size the :data:`KNOWN_UNBOUND_BLOCKS` ledger must have
+#: (``#lzledgerratchet``, sharpening ``#lzledgerceiling``).
 #:
 #: Every other direction this module checks is a CONSISTENCY check between the
 #: ledger and the run, and consistency is satisfied by any consistent PAIR. The
@@ -476,53 +477,77 @@ MAX_LEDGERED_BLOCKS_ENV = "MAX_LEDGERED_BLOCKS"
 #: here, not reasoned about: dropping the ``instrument(...)`` call from
 #: ``tests/test_reconciliation.py``'s replay of
 #: ``collections/keyed_reconciliation_lis.json``, reading the ``expected`` block
-#: off the raw dict instead, and adding the one matching entry below left
+#: off the raw dict instead, and adding the one matching entry above left
 #: ``make check`` at EXIT=0 with 1017 passed and the equality silent at
 #: "729 site(s) / 620 distinct digest(s) ... (derived from the corpus: 729
 #: site(s) / 620 digest(s))" — both sides, both dimensions, unmoved. The same
 #: hole was proved in lazily-rs (962923a) by dropping one ``bound`` line.
 #:
-#: What closes it is not another measurement but a POLICY: a bound on how much may
-#: be excused. It does not move with the corpus, so it never needs re-pinning the
-#: way ``MIN_DECLARED_BLOCKS`` did — a fixture landing upstream cannot raise it,
-#: and only a deliberate edit here can. The ledger may only SHRINK. Raising this
-#: number is allowed and is meant to be conspicuous: it is a decision to prove
-#: less than the previous commit proved, and it belongs in a commit message.
+#: What closes it is not another measurement but a POLICY, compared against a
+#: COMMITTED CONSTANT rather than against the run. The set equality moves on both
+#: sides under the attack; this number does not move at all, and that independence
+#: is the whole value.
+#:
+#: It is an EQUALITY, and that is the correction ``#lzledgerratchet`` makes to the
+#: ``<=`` this landed as. A ``<=`` bound self-disables: it refuses the
+#: detach-and-excuse pair only while the slack is zero, so the first migration
+#: that shrinks the ledger without lowering the bound buys one free detachment,
+#: the next buys another, and the bound converges on a large unreachable number
+#: that never fires — which is exactly how the hand-retyped declared-block floor
+#: this module retired came to sit 42 blocks behind reality. An equality has no
+#: slack by construction and cannot drift silently, because a stale value FAILS:
+#: a ledger that GREW means an excuse was added, and a ledger that SHRANK means
+#: sites were migrated and this pin was not lowered in the same commit. Both are
+#: things a person must see. A number that fails when it is stale is a ratchet,
+#: not a pin that rots.
+#:
+#: Raising it is legitimate and is meant to be conspicuous — a corpus that gains a
+#: genuinely unreachable fixture is the real case — but it is a decision to prove
+#: less than the previous commit proved, so it belongs in its own commit with a
+#: reason. Lowering it is the reward for a migration and belongs in the same
+#: commit as the bind.
 #:
 #: Checked UNCONDITIONALLY, unlike the derived magnitude. That one is gated on the
 #: run having opened canonical fixtures, because it compares the run against the
 #: corpus and has nothing to say about a checkout with no corpus at all. This is
 #: not a statement about the run: it reads a committed constant in this file, so a
 #: ``pytest -k`` subset and a corpus-less checkout are exactly as able to enforce
-#: it as CI is, and a ledger that grows cannot slip in behind a skipped suite.
-_MAX_LEDGERED_BLOCKS = 25
+#: it as CI is, and a ledger that moves cannot slip in behind a skipped suite.
+_EXPECTED_LEDGERED_BLOCKS = 25
+
+#: How many ledger keys the size-pin failure line names before it stops and
+#: points at ``git diff`` for the rest. The per-entry directions below name every
+#: offending site because each line IS the finding; the size pin cannot tell which
+#: entry moved, so an uncapped dump would bury the one sentence that matters.
+_LEDGER_SITES_SHOWN = 6
 
 
-def max_ledgered_blocks() -> int:
-    """The most :data:`KNOWN_UNBOUND_BLOCKS` entries this rung tolerates.
+def expected_ledgered_blocks() -> int:
+    """Exactly how many :data:`KNOWN_UNBOUND_BLOCKS` entries this rung expects.
 
-    :data:`_MAX_LEDGERED_BLOCKS` unless :data:`MAX_LEDGERED_BLOCKS_ENV` overrides
-    it, read at call time so a self-test can exercise both sides of the ceiling
-    without reloading the module. A non-integer or negative override is rejected
-    rather than silently ignored: an override that does not parse would otherwise
-    read as "no override" and quietly restore the committed ceiling, which is the
-    one outcome the operator setting it cannot detect.
+    :data:`_EXPECTED_LEDGERED_BLOCKS` unless
+    :data:`EXPECTED_LEDGERED_BLOCKS_ENV` overrides it, read at call time so a
+    self-test can exercise both sides of the equality without reloading the
+    module. A non-integer or negative override is rejected rather than silently
+    ignored: an override that does not parse would otherwise read as "no
+    override" and quietly restore the committed pin, which is the one outcome the
+    operator setting it cannot detect.
     """
-    raw = os.environ.get(MAX_LEDGERED_BLOCKS_ENV)
+    raw = os.environ.get(EXPECTED_LEDGERED_BLOCKS_ENV)
     if raw is None or not raw.strip():
-        return _MAX_LEDGERED_BLOCKS
+        return _EXPECTED_LEDGERED_BLOCKS
     try:
         value = int(raw.strip())
     except ValueError as exc:
         raise RuntimeError(
-            f"{MAX_LEDGERED_BLOCKS_ENV}={raw!r} is not an integer. The ceiling on "
-            f"KNOWN_UNBOUND_BLOCKS entries cannot be read, and falling back to the "
-            f"committed default would hide that from whoever set it."
+            f"{EXPECTED_LEDGERED_BLOCKS_ENV}={raw!r} is not an integer. The "
+            f"expected KNOWN_UNBOUND_BLOCKS size cannot be read, and falling back "
+            f"to the committed pin would hide that from whoever set it."
         ) from exc
     if value < 0:
         raise RuntimeError(
-            f"{MAX_LEDGERED_BLOCKS_ENV}={value} is negative. A ceiling below zero "
-            f"cannot be satisfied by any ledger, including an empty one."
+            f"{EXPECTED_LEDGERED_BLOCKS_ENV}={value} is negative. No ledger has a "
+            f"negative size, including an empty one, so this can never be met."
         )
     return value
 
@@ -910,33 +935,63 @@ def block_bind_failures(*, enforce_floor: bool = False) -> list[str]:
     """
     lines: list[str] = []
 
-    # The ceiling (#lzledgerceiling), before anything about this run. Every other
-    # direction below compares the ledger against what the run did, and any
+    # The size pin (#lzledgerratchet), before anything about this run. Every
+    # other direction below compares the ledger against what the run did, and any
     # consistent pair satisfies all of them — including the pair a commit creates
     # when it detaches a bind and writes the matching entry. This is the one check
-    # here that reads only committed bytes, so it holds whatever the run opened.
+    # here that reads only committed bytes, so it holds whatever the run opened,
+    # and it is an EQUALITY so that it carries no slack for the next such pair to
+    # spend.
     try:
-        ceiling = max_ledgered_blocks()
+        expected_ledger = expected_ledgered_blocks()
     except RuntimeError as exc:
-        lines.append(f"cannot read the KNOWN_UNBOUND_BLOCKS ceiling: {exc}")
+        lines.append(f"cannot read the KNOWN_UNBOUND_BLOCKS size pin: {exc}")
         return lines
     ledgered = len(KNOWN_UNBOUND_BLOCKS)
-    if ledgered > ceiling:
-        lines.append(
-            f"KNOWN_UNBOUND_BLOCKS holds {ledgered} entr(y/ies), over the ceiling of "
-            f"{ceiling}. This ledger may only SHRINK. Every other direction this "
-            f"rung checks is the ledger against the run, and a commit that detaches "
-            f"a bind and writes the matching entry satisfies all of them — the two "
-            f"sides agree, at a worse level of coverage, and the derived "
-            f"site/digest magnitudes do not move because a detached block is still "
-            f"DECLARED. So the bound on how much may be excused is the only thing "
-            f"that can refuse it. Bind the block instead. Raising "
-            f"_MAX_LEDGERED_BLOCKS in {Path(__file__).name} is a deliberate "
-            f"decision to prove less than the last commit proved: make it in its "
-            f"own commit and say why. {MAX_LEDGERED_BLOCKS_ENV} overrides it for a "
-            f"single run, for bisecting an upstream corpus change — not for making "
-            f"this line go away."
-        )
+    if ledgered != expected_ledger:
+        # Name the offending sites the way the per-entry directions below do. The
+        # pin cannot know WHICH entry moved, so the ledger is listed and capped:
+        # a wall of 25 keys buries the one line that matters.
+        listed = sorted(KNOWN_UNBOUND_BLOCKS)
+        shown = ", ".join(listed[:_LEDGER_SITES_SHOWN]) or "(empty)"
+        rest = len(listed) - _LEDGER_SITES_SHOWN
+        if rest > 0:
+            shown += f", and {rest} more"
+        where = Path(__file__).name
+        if ledgered > expected_ledger:
+            lines.append(
+                f"KNOWN_UNBOUND_BLOCKS GREW to {ledgered} entr(y/ies) against a pin "
+                f"of {expected_ledger}: an excuse was added. The set equality alone "
+                f"cannot see this, and that is not a gap in how it is written — it "
+                f"compares the ledger against the RUN, and a detached bind's site "
+                f"is still DECLARED, so both sides move together and the derived "
+                f"site/digest magnitudes do not move at all. Only a comparison "
+                f"against a COMMITTED CONSTANT is independent of the run, which is "
+                f"why this line exists. Bind the block instead. Raising "
+                f"_EXPECTED_LEDGERED_BLOCKS in {where} is a deliberate decision to "
+                f"prove less than the last commit proved: make it in its own commit "
+                f"and say why. Ledger: {shown}. "
+                f"{EXPECTED_LEDGERED_BLOCKS_ENV} moves it for a single run, for "
+                f"bisecting an upstream corpus change — not for making this line go "
+                f"away."
+            )
+        else:
+            lines.append(
+                f"KNOWN_UNBOUND_BLOCKS SHRANK to {ledgered} entr(y/ies) and the pin "
+                f"is still {expected_ledger}: LOWER _EXPECTED_LEDGERED_BLOCKS TO "
+                f"{ledgered} IN {where} IN THIS COMMIT. Migrating a site is the good "
+                f"direction and this is not a complaint about it — it is refused "
+                f"because a pin left above the ledger is SLACK, and slack is what "
+                f"re-opens the hole above: with {expected_ledger - ledgered} "
+                f"entr(y/ies) to spare, that many binds can be detached with "
+                f"matching excuses and every direction on this rung still passes. A "
+                f"bound that only refuses growth accumulates that slack once per "
+                f"migration and converges on a number too large to ever fire, which "
+                f"is how the hand-retyped declared-block floor this module retired "
+                f"came to sit 42 blocks behind reality. An equality has no slack to "
+                f"accumulate. Ledger: {shown}; `git diff -- tests/{where}` names the "
+                f"entry that went."
+            )
 
     for site, reason in sorted(KNOWN_UNBOUND_BLOCKS.items()):
         if not reason.strip():

@@ -27,8 +27,9 @@ from conformance_assert import (
     _DECLARED_FIXTURES,
     _DECLARED_SITES,
     _EXPECTED_BLOCKS,
+    _EXPECTED_LEDGERED_BLOCKS,
     _LEDGERS,
-    _MAX_LEDGERED_BLOCKS,
+    EXPECTED_LEDGERED_BLOCKS_ENV,
     KNOWN_UNBOUND_BLOCKS,
     TrackedBlock,
     assert_key,
@@ -43,8 +44,8 @@ from conformance_assert import (
     excuse_scenario,
     expected_declared_blocks,
     expected_declared_sites,
+    expected_ledgered_blocks,
     instrument,
-    max_ledgered_blocks,
     prose_failures,
     prose_key,
     record_declared_blocks,
@@ -969,7 +970,7 @@ def test_a_fixture_the_suite_never_opened_is_not_held_to_scenarios(
 
 
 @pytest.fixture
-def block_ledger():
+def block_ledger(monkeypatch):
     """Snapshot and restore the session-wide bind ledger.
 
     The real runners have already booked ~30 blocks by the time these run, and a
@@ -988,12 +989,16 @@ def block_ledger():
     reset_blocks()
     # The committed ledger is cleared too, for the same reason `reset_blocks`
     # clears the declared and bound sets: a self-test that plants one excuse
-    # should be judged on a ledger holding exactly that excuse. Leaving the real
-    # entries in place also puts every one of these tests one entry over
-    # `max_ledgered_blocks()` the moment the committed ledger sits AT its ceiling
-    # — which it does, by construction (#lzledgerceiling) — so each would report
-    # a ceiling line it never planted.
+    # should be judged on a ledger holding exactly that excuse, not on the real
+    # 25 plus that excuse. Under the exact size pin (#lzledgerratchet) this
+    # matters MORE than it did under a ceiling: the committed ledger sits at the
+    # pin by construction, so leaving it in place would fail every one of these
+    # tests as GROWTH on an entry they never planted — and clearing it alone
+    # would fail them all as SHRINK. So the pin is moved to match the cleared
+    # ledger, and a test that plants N entries raises it to N. Landing it here
+    # rather than in each test keeps the tests about what they plant.
     KNOWN_UNBOUND_BLOCKS.clear()
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "0")
     try:
         yield
     finally:
@@ -1079,7 +1084,11 @@ def test_per_frame_and_per_scenario_blocks_are_inventoried(block_ledger) -> None
     ]
 
 
-def test_an_excuse_suppresses_the_report(block_ledger) -> None:
+def test_an_excuse_suppresses_the_report(block_ledger, monkeypatch) -> None:
+    # One planted excuse, so the size pin is moved to one: `block_ledger`
+    # cleared the committed ledger and pinned it at zero, and this test is
+    # about a different direction than the pin's (#lzledgerratchet).
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
     record_declared_blocks("selftest/unbound.json", _UNBOUND_FIXTURE)
     KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|assertions"] = (
         "the server is unreachable"
@@ -1088,30 +1097,37 @@ def test_an_excuse_suppresses_the_report(block_ledger) -> None:
     assert not block_bind_failures()
 
 
-def test_an_excuse_with_no_reason_is_itself_the_failure(block_ledger) -> None:
+def test_an_excuse_with_no_reason_is_itself_the_failure(
+    block_ledger, monkeypatch
+) -> None:
+    # One planted excuse, so the size pin is moved to one: `block_ledger`
+    # cleared the committed ledger and pinned it at zero, and this test is
+    # about a different direction than the pin's (#lzledgerratchet).
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
     KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|assertions"] = "   "
 
     reported = block_bind_failures()
-    assert reported and "no reason" in reported[0]
+    assert len(reported) == 1, f"expected only the no-reason line, got {reported}"
+    assert "no reason" in reported[0]
 
 
 # ---------------------------------------------------------------------------
-# The ceiling on how much may be excused (#lzledgerceiling)
+# The exact size of the ledger (#lzledgerratchet, sharpening #lzledgerceiling)
 # ---------------------------------------------------------------------------
 
 
 def test_a_detached_bind_with_a_matching_excuse_satisfies_every_other_direction(
     block_ledger, monkeypatch
 ) -> None:
-    """The hole the ceiling exists for, stated as a test.
+    """The hole the size pin exists for, stated as a test.
 
     Every other direction on this rung compares the ledger against the run, and a
     commit that detaches a bind AND writes the matching entry leaves the two
-    sides consistent. Nothing below the ceiling can see it: the block is not
+    sides consistent. Nothing but the pin can see it: the block is not
     unbound-and-unexcused, the excuse is not stale (no runner binds it), and it is
     not rotted (the opened fixture still carries it).
     """
-    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "99")
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
     record_declared_blocks("selftest/unbound.json", _UNBOUND_FIXTURE)
     KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|assertions"] = (
         "detached and excused in the same commit"
@@ -1123,87 +1139,189 @@ def test_a_detached_bind_with_a_matching_excuse_satisfies_every_other_direction(
     )
 
 
-def test_the_ceiling_is_the_only_thing_that_refuses_the_detached_pair(
+def test_the_size_pin_is_the_only_thing_that_refuses_the_detached_pair(
     block_ledger, monkeypatch
 ) -> None:
-    """Same state as above, with the ceiling where a landing commit puts it.
+    """Same state as above, with the pin where the previous commit left it.
 
-    The ledger held zero entries when this test started, so a ceiling of zero is
-    the "may only shrink" policy for that state, and the one entry the detaching
-    commit adds is over it. The report names both numbers and says which way the
-    ledger may move.
+    The ledger held zero entries when this test started, so zero is the pin for
+    that state, and the one entry the detaching commit adds is GROWTH. The report
+    names both numbers, says an excuse was added, and says why the set equality
+    cannot see it.
     """
-    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "0")
     record_declared_blocks("selftest/unbound.json", _UNBOUND_FIXTURE)
     KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|assertions"] = (
         "detached and excused in the same commit"
     )
 
     reported = block_bind_failures()
-    assert len(reported) == 1, f"expected exactly the ceiling line, got {reported}"
-    assert "holds 1 entr" in reported[0]
-    assert "ceiling of 0" in reported[0]
-    assert "may only SHRINK" in reported[0]
+    assert len(reported) == 1, f"expected exactly the size-pin line, got {reported}"
+    assert "GREW to 1 entr" in reported[0]
+    assert "pin of 0" in reported[0]
+    assert "an excuse was added" in reported[0]
+    assert "still DECLARED" in reported[0]
+    assert "selftest/unbound.json|assertions" in reported[0]
 
 
-def test_the_ceiling_holds_a_ledger_at_its_limit(block_ledger, monkeypatch) -> None:
-    """At the ceiling is not over it — landing a ceiling equal to the committed
-    ledger is a no-op, which is what makes it safe to add to a green tree."""
-    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "1")
+def test_a_ledger_exactly_at_the_pin_is_silent(block_ledger, monkeypatch) -> None:
+    """The landing state: pin equal to ledger is a no-op, which is what makes it
+    safe to add to a green tree."""
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
     KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "parked upstream"
 
     assert block_bind_failures() == []
 
 
-def test_the_ceiling_is_enforced_over_a_run_that_inventoried_nothing(
+def test_a_ledger_that_shrank_below_the_pin_is_refused(
+    block_ledger, monkeypatch
+) -> None:
+    """The direction a `<=` ceiling could not see, and the reason for this commit.
+
+    Binding one ledgered site and deleting exactly its entry, leaving the pin
+    alone, is the good direction — and it must still FAIL, because the pin is now
+    one above the ledger and that one is SLACK. Under `len(ledger) > CEILING` this
+    state exited 0, so the next detach-and-excuse pair landed for free. That is
+    the self-disabling property: a bound that only refuses growth gains slack with
+    every migration and converges on a number too large to ever fire.
+    """
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "2")
+    KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "parked upstream"
+
+    assert len(KNOWN_UNBOUND_BLOCKS) <= 2, "precondition: under the OLD `>` ceiling"
+    reported = block_bind_failures()
+    assert len(reported) == 1, f"expected exactly the size-pin line, got {reported}"
+    assert "SHRANK to 1 entr" in reported[0]
+    assert "pin is still 2" in reported[0]
+    assert "LOWER _EXPECTED_LEDGERED_BLOCKS TO 1" in reported[0]
+    assert "IN THIS COMMIT" in reported[0]
+    assert "SLACK" in reported[0]
+
+
+def test_a_shrunk_ledger_with_the_pin_lowered_passes(block_ledger, monkeypatch) -> None:
+    """The same state as the shrink refusal, with the pin lowered in step.
+
+    This is what the migrating commit is asked to do, and it has to be a
+    one-character edit away from green — otherwise the guard taxes the good
+    direction and gets weakened instead of obeyed.
+    """
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
+    KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "parked upstream"
+
+    assert block_bind_failures() == []
+
+
+def test_lowering_the_pin_does_not_buy_a_free_detachment(
+    block_ledger, monkeypatch
+) -> None:
+    """The self-disabling property, gone — stated as the two-step it needs.
+
+    Step one migrates a site and lowers the pin with it, so the tree is green at
+    the new, smaller size. Step two runs the growth attack against THAT state. A
+    `<=` ceiling left at the pre-migration number would have admitted it, because
+    the migration had bought exactly one entry of slack. An equality has none to
+    spend, so the attack is refused in the post-migration state exactly as it was
+    in the pre-migration one.
+    """
+    # Step one: two excuses at a pin of two, one of them migrated away and the
+    # pin lowered in the same breath.
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "2")
+    KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "parked upstream"
+    KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|frames[0].expect"] = (
+        "parked upstream"
+    )
+    assert block_bind_failures() == [], "precondition: green before the migration"
+
+    del KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|frames[0].expect"]
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
+    assert block_bind_failures() == [], "precondition: green after the migration"
+
+    # Step two: the growth attack against the post-migration state. Under `>`
+    # with the pin still at 2 this was silent.
+    record_declared_blocks("selftest/unbound.json", _UNBOUND_FIXTURE)
+    KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|assertions"] = (
+        "detached and excused in the same commit"
+    )
+
+    reported = block_bind_failures()
+    assert len(reported) == 1, f"expected exactly the size-pin line, got {reported}"
+    assert "GREW to 2 entr" in reported[0]
+    assert "pin of 1" in reported[0]
+
+
+def test_the_size_pin_is_enforced_over_a_run_that_inventoried_nothing(
     block_ledger, monkeypatch
 ) -> None:
     """Unlike the derived magnitude, this one reads only committed bytes.
 
     The magnitude rung is gated on the run having opened canonical fixtures,
-    because it compares the run against the corpus. A ledger that GREW is a fact
-    about the repository, so a `pytest -k` subset and a checkout with no
-    lazily-spec sibling enforce it exactly as CI does — otherwise growth could
+    because it compares the run against the corpus. A ledger whose SIZE moved is a
+    fact about the repository, so a `pytest -k` subset and a checkout with no
+    lazily-spec sibling enforce it exactly as CI does — otherwise a movement could
     land behind a skipped suite.
     """
-    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "0")
     KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "parked upstream"
 
     assert not _DECLARED_BLOCKS, "precondition: nothing was inventoried"
     reported = block_bind_failures(enforce_floor=False)
-    assert reported and "ceiling of 0" in reported[0]
+    assert reported and "GREW to 1 entr" in reported[0]
+    assert "pin of 0" in reported[0]
+
+
+def test_the_size_pin_failure_line_caps_the_sites_it_names(
+    block_ledger, monkeypatch
+) -> None:
+    """The per-entry directions name every offending site because each line IS the
+    finding. The size pin cannot tell which entry moved, so it names a few and
+    points at `git diff` — a wall of keys buries the one sentence that matters."""
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "0")
+    for index in range(9):
+        KNOWN_UNBOUND_BLOCKS[f"selftest/never-opened.json|steps[{index}].expect"] = (
+            "parked upstream"
+        )
+
+    reported = block_bind_failures()
+    assert len(reported) == 1, f"expected exactly the size-pin line, got {reported}"
+    assert reported[0].count("selftest/never-opened.json|steps[") == 6
+    assert "and 3 more" in reported[0]
 
 
 @pytest.mark.parametrize("value", ["twenty", "25.5", "-1"])
-def test_a_ceiling_override_that_does_not_parse_is_refused(
+def test_a_size_pin_override_that_does_not_parse_fails_closed(
     block_ledger, monkeypatch, value: str
 ) -> None:
-    """Falling back to the committed default would hide the bad override from the
-    one person who cannot see it — whoever set it."""
-    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", value)
+    """Falling back to the committed pin would hide the bad override from the one
+    person who cannot see it — whoever set it. `-1` is refused for the same
+    reason a malformed value is: no ledger has a negative size, so a negative pin
+    names a state that can never be reached and would report on every run."""
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, value)
 
     with pytest.raises(RuntimeError):
-        max_ledgered_blocks()
+        expected_ledgered_blocks()
     reported = block_bind_failures()
-    assert reported and "cannot read the KNOWN_UNBOUND_BLOCKS ceiling" in reported[0]
+    assert reported and "cannot read the KNOWN_UNBOUND_BLOCKS size pin" in reported[0]
+    assert len(reported) == 1, (
+        "an unreadable pin must fail closed and stop, not fall through to the "
+        "directions that assume it was read"
+    )
 
 
-def test_an_empty_ceiling_override_is_the_committed_default(monkeypatch) -> None:
-    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "  ")
-    assert max_ledgered_blocks() == _MAX_LEDGERED_BLOCKS
-    monkeypatch.delenv("MAX_LEDGERED_BLOCKS")
-    assert max_ledgered_blocks() == _MAX_LEDGERED_BLOCKS
+def test_an_empty_size_pin_override_is_the_committed_pin(monkeypatch) -> None:
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "  ")
+    assert expected_ledgered_blocks() == _EXPECTED_LEDGERED_BLOCKS
+    monkeypatch.delenv(EXPECTED_LEDGERED_BLOCKS_ENV)
+    assert expected_ledgered_blocks() == _EXPECTED_LEDGERED_BLOCKS
 
 
-def test_the_committed_ledger_is_within_the_committed_ceiling() -> None:
+def test_the_committed_ledger_size_is_exactly_the_committed_pin() -> None:
     """The landing condition, read off the committed bytes.
 
-    Not a second pin: it fails only when the ledger is OVER the ceiling, which is
-    the same predicate the session verdict applies. It is here so the failure
-    arrives as one named test during development rather than only as the
-    end-of-session report.
+    Not a second pin: it is the same predicate the session verdict applies, in
+    both directions. It is here so the failure arrives as one named test during
+    development rather than only as the end-of-session report — and so that a
+    commit which migrates a site and forgets to lower the pin is told which file
+    to edit by a test name rather than by a stderr wall.
     """
-    assert len(KNOWN_UNBOUND_BLOCKS) <= _MAX_LEDGERED_BLOCKS
+    assert len(KNOWN_UNBOUND_BLOCKS) == _EXPECTED_LEDGERED_BLOCKS
 
 
 def test_the_floor_fails_when_the_inventory_collapses(block_ledger) -> None:
@@ -1352,9 +1470,15 @@ def test_a_nested_expect_no_runner_binds_is_reported(block_ledger) -> None:
     assert "bound by no runner" in reported[0]
 
 
-def test_an_excuse_for_a_block_that_IS_bound_fails_as_stale(block_ledger) -> None:
+def test_an_excuse_for_a_block_that_IS_bound_fails_as_stale(
+    block_ledger, monkeypatch
+) -> None:
     """Both directions. A one-directional allowlist only ever grows, and an
     excuse nobody can be forced to delete exempts the block forever."""
+    # One planted excuse, so the size pin is moved to one: `block_ledger`
+    # cleared the committed ledger and pinned it at zero, and this test is
+    # about a different direction than the pin's (#lzledgerratchet).
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
     record_declared_blocks("selftest/unbound.json", _UNBOUND_FIXTURE)
     KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|assertions"] = "parked upstream"
     assert not block_bind_failures(), "precondition: the excuse suppresses it"
@@ -1370,8 +1494,12 @@ def test_an_excuse_for_a_block_that_IS_bound_fails_as_stale(block_ledger) -> Non
 
 
 def test_an_excuse_naming_a_block_the_fixture_lost_fails_as_rotted(
-    block_ledger,
+    block_ledger, monkeypatch
 ) -> None:
+    # One planted excuse, so the size pin is moved to one: `block_ledger`
+    # cleared the committed ledger and pinned it at zero, and this test is
+    # about a different direction than the pin's (#lzledgerratchet).
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
     record_declared_blocks("selftest/unbound.json", _UNBOUND_FIXTURE)
     KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|frames[9].expect"] = "moved upstream"
 
@@ -1380,9 +1508,13 @@ def test_an_excuse_naming_a_block_the_fixture_lost_fails_as_rotted(
 
 
 def test_an_excuse_for_a_fixture_this_run_never_opened_is_out_of_scope(
-    block_ledger,
+    block_ledger, monkeypatch
 ) -> None:
     """`pytest -k` opens a subset; every other excuse is out of scope, not wrong."""
+    # One planted excuse, so the size pin is moved to one: `block_ledger`
+    # cleared the committed ledger and pinned it at zero, and this test is
+    # about a different direction than the pin's (#lzledgerratchet).
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "1")
     KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "not opened here"
 
     assert not block_bind_failures()

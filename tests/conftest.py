@@ -30,7 +30,7 @@ from conformance_assert import (
     declared_site_count,
     expected_declared_blocks,
     expected_declared_sites,
-    max_ledgered_blocks,
+    expected_ledgered_blocks,
     prose_failures,
     record_declared_blocks,
     scenario_failures,
@@ -207,7 +207,10 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untype
             "  / instrument(...) and assert its keys, or declare it in",
             "  KNOWN_UNBOUND_BLOCKS with a reason. A reason is mandatory, and the",
             "  entry is checked both ways: an excuse for a block a runner DOES",
-            "  bind fails as stale (#lzunboundblockguard).",
+            "  bind fails as stale (#lzunboundblockguard). The ledger's SIZE is",
+            "  pinned to an exact number as well, because every other direction",
+            "  compares it against the run and a detached bind excused in the same",
+            "  commit keeps both sides consistent (#lzledgerratchet).",
             "",
         ]
         report += [f"  {line}" for line in unbound]
@@ -289,8 +292,12 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untype
             f"{declared_block_count()} distinct digest(s) inventoried from opened "
             f"fixtures (derived from the corpus: {expected_declared_sites()} site(s) / "
             f"{expected_declared_blocks()} digest(s)); "
-            f"{len(KNOWN_UNBOUND_BLOCKS)}/{max_ledgered_blocks()} of the "
-            f"KNOWN_UNBOUND_BLOCKS ceiling in use\n"
+            f"KNOWN_UNBOUND_BLOCKS excuses "
+            f"{len(KNOWN_UNBOUND_BLOCKS)} block(s), EXACTLY the pinned "
+            f"_EXPECTED_LEDGERED_BLOCKS={expected_ledgered_blocks()} — an equality "
+            f"and not a ceiling, so there is no slack for a detached bind to "
+            f"spend, and a migration has to lower the pin in its own commit "
+            f"(#lzledgerratchet)\n"
         )
     if (
         failures or prose_bad or scenario_bad or unbound or vacuous

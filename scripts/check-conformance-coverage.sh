@@ -200,8 +200,10 @@ fi
 # would be silent and `covered` would be 0 with nothing wrong reported. That is a
 # ceiling on how much may be excused, spelled as a floor on what must remain — it
 # is policy, it does not move with the corpus, and it never needs re-pinning.
-# The block-level ledger carries the same kind of bound as
-# `_MAX_LEDGERED_BLOCKS` in tests/conformance_assert.py.
+# The block-level ledger carries the same kind of policy in
+# `_EXPECTED_LEDGERED_BLOCKS` in tests/conformance_assert.py — pinned there as an
+# exact size rather than a bound, because a bound that only refuses growth gains
+# slack with every migration and stops firing (#lzledgerratchet).
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2
   echo "       Every check above is vacuously green over an empty population:" >&2
