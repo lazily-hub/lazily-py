@@ -26,6 +26,7 @@ from conformance_assert import (
     _DECLARED_BLOCKS,
     _DECLARED_FIXTURES,
     _DECLARED_SITES,
+    _EXPECTED_BLOCKS,
     _LEDGERS,
     KNOWN_UNBOUND_BLOCKS,
     TrackedBlock,
@@ -34,8 +35,13 @@ from conformance_assert import (
     assert_key_with,
     block_bind_failures,
     consumption_failures,
+    declared_block_count,
+    declared_site_count,
+    default_corpus_dir,
     excuse_key,
     excuse_scenario,
+    expected_declared_blocks,
+    expected_declared_sites,
     instrument,
     prose_failures,
     prose_key,
@@ -1080,12 +1086,99 @@ def test_an_excuse_with_no_reason_is_itself_the_failure(block_ledger) -> None:
 
 
 def test_the_floor_fails_when_the_inventory_collapses(block_ledger) -> None:
-    """Zero declared blocks means zero unbound blocks — OK over nothing."""
+    """Zero declared blocks means zero unbound blocks — OK over nothing.
+
+    Both dimensions have to report it: a collapsed inventory is zero sites AND
+    zero digests, and a rung that only pinned one of them would report half of
+    the collapse.
+    """
     assert not block_bind_failures(enforce_floor=False)
 
     reported = block_bind_failures(enforce_floor=True)
     assert reported, "an empty inventory passed the floor"
-    assert "distinct assertion block(s) were inventoried" in reported[0]
+    joined = "\n".join(reported)
+    assert "assertion block SITE(s) were inventoried" in joined
+    assert "distinct assertion block(s) were inventoried" in joined
+
+
+_TWIN_FIXTURE = json.dumps(
+    {
+        "steps": [
+            {"op": "read", "expect": {"outcome": "pending", "deadline": 10}},
+            {"op": "read", "expect": {"outcome": "pending", "deadline": 10}},
+        ]
+    }
+)
+
+
+def test_the_site_count_sees_a_deleted_block_whose_digest_recurs(
+    block_ledger,
+) -> None:
+    """#lzblocksitepin: the digest count cannot see a lost block that recurs.
+
+    Digests dedupe by content, so two sites carrying the same shape book ONE
+    digest. Delete either site and the digest count does not move — the exact
+    hole proved in a sibling binding by deleting ``stdlib/timer.json``'s
+    ``scenarios[0].steps[0].expect`` (this fixture's shape) and watching its
+    digest-only equality stay green. The site count is the dimension that sees
+    it, and this test asserts the digest equality stays SILENT so it is the site
+    count doing the work and not a coincidence.
+    """
+    record_declared_blocks("selftest/twin.json", _TWIN_FIXTURE)
+    assert declared_site_count() == 2
+    assert declared_block_count() == 1, "precondition: the two sites share a digest"
+    tracked(
+        {"outcome": "pending", "deadline": 10},
+        fixture="selftest/twin.json",
+        block="steps[0].expect",
+    )
+
+    # Plant the derived expectation for this two-site / one-digest corpus. The
+    # real derivation reads the canonical corpus (deliberately — see
+    # `_derive_expected`), so the cache entry is what a self-test can address.
+    key = str(default_corpus_dir().resolve())
+    saved = _EXPECTED_BLOCKS.get(key)
+    _EXPECTED_BLOCKS[key] = (2, 1)
+    try:
+        assert not block_bind_failures(enforce_floor=True), (
+            "control: the unperturbed inventory agrees in both dimensions"
+        )
+
+        # The perturbation: one site deleted, its digest still carried by the twin.
+        digest = _DECLARED_SITES.pop("selftest/twin.json|steps[1].expect")
+        _DECLARED_BLOCKS[digest].discard("selftest/twin.json|steps[1].expect")
+        assert declared_block_count() == 1, "the digest count is unmoved by the delete"
+
+        reported = block_bind_failures(enforce_floor=True)
+        joined = "\n".join(reported)
+        assert (
+            "1 assertion block SITE(s) were inventoried, expected exactly 2" in joined
+        )
+        assert "distinct assertion block(s) were inventoried" not in joined, (
+            "the digest equality must stay silent — otherwise this proves nothing "
+            "about the site dimension"
+        )
+    finally:
+        if saved is None:
+            _EXPECTED_BLOCKS.pop(key, None)
+        else:
+            _EXPECTED_BLOCKS[key] = saved
+
+
+def test_the_canonical_corpus_really_carries_recurring_block_shapes() -> None:
+    """The premise of the site dimension, asserted rather than assumed.
+
+    If every block in the corpus were unique by content the two numbers would
+    coincide and the site equality would be redundant. They do not coincide: the
+    corpus carries strictly more sites than distinct digests, which is precisely
+    how many blocks could be deleted with a digest-only guard unmoved.
+    """
+    sites = expected_declared_sites()
+    digests = expected_declared_blocks()
+    assert sites > digests, (
+        f"{sites} site(s) / {digests} digest(s): no recurring shapes, so this "
+        f"assertion needs re-reading rather than deleting"
+    )
 
 
 # ---------------------------------------------------------------------------

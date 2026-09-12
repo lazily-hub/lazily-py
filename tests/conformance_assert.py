@@ -261,11 +261,13 @@ __all__ = [
     "corpus_path",
     "corpus_subdir",
     "declared_block_count",
+    "declared_site_count",
     "default_corpus_dir",
     "discharged_prose",
     "excuse_key",
     "excuse_scenario",
     "expected_declared_blocks",
+    "expected_declared_sites",
     "instrument",
     "iter_declared_blocks",
     "known_uncovered_fixtures",
@@ -552,15 +554,34 @@ def known_uncovered_fixtures() -> frozenset[str]:
 #: Derived expectations, keyed by RESOLVED corpus root: a probe that repoints
 #: ``LAZILY_SPEC_CONFORMANCE_DIR`` at a scratch copy must re-derive rather than
 #: answer from the canonical corpus it is no longer reading.
-_EXPECTED_BLOCKS: dict[str, int] = {}
+#:
+#: TWO dimensions per root, produced by ONE walk: the distinct block SITES the
+#: corpus carries, and the distinct block CONTENT DIGESTS those sites say.
+#:
+#: The digest count alone is one dimension short, and demonstrably so
+#: (``#lzblocksitepin``). Digests deduplicate by content, so a block whose shape
+#: recurs anywhere else in the corpus can be deleted outright and the digest
+#: count does not move: the equality stays green over a corpus that LOST a block.
+#: That is not hypothetical — deleting ``stdlib/timer.json``'s
+#: ``scenarios[0].steps[0].expect``, the recurring shape
+#: ``{"outcome": "pending", "deadline": 10}``, left a sibling binding's
+#: digest-only equality GREEN. A site is ``"<fixture>|<where>"`` and is unique
+#: per site, so the site count moves whenever the corpus gains or loses a block
+#: whatever that block says; the digest count moves whenever the corpus changes
+#: what its blocks say without moving any site. Neither dimension subsumes the
+#: other, so both are derived here and both are compared for EQUALITY.
+_EXPECTED_BLOCKS: dict[str, tuple[int, int]] = {}
 
 
-def expected_declared_blocks() -> int:
-    """Distinct assertion blocks the fixtures this binding opens really carry.
+def _derive_expected() -> tuple[int, int]:
+    """``(sites, digests)`` the fixtures this binding opens really carry.
 
     Derived from the CANONICAL corpus minus :func:`known_uncovered_fixtures`,
-    walked with :func:`iter_declared_blocks`. See the comment above for why this
-    is derived rather than typed, and why it is compared for EQUALITY.
+    walked with :func:`iter_declared_blocks` — the SAME function the loader-side
+    inventory walks, so the two sides cannot disagree about what counts as a
+    block, and one walk feeds both numbers. See the comment above for why this is
+    derived rather than typed, why it is compared for EQUALITY, and why one
+    number was not enough.
 
     This is the one seam in this module that reads :func:`default_corpus_dir`
     instead of :func:`corpus_dir`, and the reason is the same one that makes the
@@ -570,7 +591,13 @@ def expected_declared_blocks() -> int:
     inventory and agree with itself, which is the vacuous green the whole rung
     exists to reject. The expectation is what the CANONICAL corpus owes; the
     inventory is what the run really booked; the comparison is only worth making
-    while those two come from different places.
+    while those two come from different places. That asymmetry is also what makes
+    the probe possible: doctoring the scratch copy moves the INVENTORY alone, and
+    the canonical expectation the doctored run is judged against does not budge.
+
+    Either number deriving as ZERO is a hard failure. Zero compares equal to an
+    inventory of zero, which is the vacuous green this rung exists to reject,
+    reached from the expectation side instead of the inventory side.
     """
     root = default_corpus_dir().resolve()
     key = str(root)
@@ -581,11 +608,12 @@ def expected_declared_blocks() -> int:
         raise RuntimeError(
             f"cannot derive the assertion-block expectation: the canonical corpus "
             f"is not at {root}. Clone the lazily-spec sibling. Pointing "
-            f"{CORPUS_DIR_ENV} somewhere else does not substitute for it — this "
-            f"number is what the run is judged AGAINST, not what it replayed."
+            f"{CORPUS_DIR_ENV} somewhere else does not substitute for it — these "
+            f"numbers are what the run is judged AGAINST, not what it replayed."
         )
     excused = known_uncovered_fixtures()
     digests: set[str] = set()
+    sites: set[str] = set()
     for path in sorted(root.rglob("*.json")):
         rel = path.relative_to(root).as_posix()
         if rel in excused:
@@ -607,13 +635,43 @@ def expected_declared_blocks() -> int:
             ) from exc
         if not isinstance(doc, dict):
             continue
-        for _where, block in iter_declared_blocks(doc):
+        for where, block in iter_declared_blocks(doc):
             digest = block_digest(block)
+            # The admission rule ``record_declared_blocks`` applies, applied here
+            # too: a block with no digest is booked on NEITHER side, so the two
+            # sides stay comparable in both dimensions.
             if digest:
                 digests.add(digest)
-    total = len(digests)
+                sites.add(f"{rel}|{where}")
+    if not sites or not digests:
+        raise RuntimeError(
+            f"the assertion-block expectation derived as {len(sites)} site(s) / "
+            f"{len(digests)} digest(s) from the canonical corpus at {root} minus "
+            f"the KNOWN_UNCOVERED ledger. Zero of either is not a corpus with "
+            f"nothing to check: zero compares EQUAL to an inventory of zero, which "
+            f"is exactly the vacuous green this rung exists to reject, reached from "
+            f"the expectation side. Either the corpus is empty or unreadable, the "
+            f"ledger now excuses every fixture, or the walk has stopped matching "
+            f"the fixtures it walks."
+        )
+    total = (len(sites), len(digests))
     _EXPECTED_BLOCKS[key] = total
     return total
+
+
+def expected_declared_sites() -> int:
+    """Distinct assertion block SITES the fixtures this binding opens carry.
+
+    ``"<fixture>|<where>"`` per site, so this counts what the corpus CARRIES and
+    is unmoved by two sites sharing one content digest.
+    """
+    return _derive_expected()[0]
+
+
+def expected_declared_blocks() -> int:
+    """Distinct assertion block CONTENT DIGESTS the fixtures this binding opens
+    carry. Counts what the corpus SAYS, deduplicated."""
+    return _derive_expected()[1]
 
 
 #: digest -> {"fixture|where"} for every block an opened fixture carried.
@@ -741,8 +799,18 @@ def record_block_bind(data: Mapping[str, Any]) -> None:
 
 
 def declared_block_count() -> int:
-    """How many distinct blocks this run inventoried (the floor's input)."""
+    """How many distinct block DIGESTS this run inventoried."""
     return len(_DECLARED_BLOCKS)
+
+
+def declared_site_count() -> int:
+    """How many distinct block SITES this run inventoried.
+
+    :data:`_DECLARED_SITES` is keyed by ``"<fixture>|<where>"``, one entry per
+    site, so its length is the site dimension of the same inventory
+    :func:`declared_block_count` reports the digest dimension of.
+    """
+    return len(_DECLARED_SITES)
 
 
 def reset_blocks() -> None:
@@ -820,13 +888,44 @@ def block_bind_failures(*, enforce_floor: bool = False) -> list[str]:
         # runs into noise, so the gate is left alone and only the comparison is
         # sharpened: `>=` cannot see slack, and slack is what rotted the pin.
         try:
-            expected = expected_declared_blocks()
+            expected_sites, expected = _derive_expected()
         except RuntimeError as exc:
             # Missing evidence, reported the same way a gap is. Deriving is the
             # only way this rung knows a magnitude at all, so "could not derive"
             # must not read as "nothing to compare".
             lines.append(f"cannot derive the expected block count: {exc}")
             return lines
+        # The SITE dimension (#lzblocksitepin). Distinct digests dedupe by
+        # content, so a deleted block whose shape recurs elsewhere leaves that
+        # count untouched and the equality below green over a corpus that lost a
+        # block. Sites do not dedupe: one entry per "<fixture>|<where>", derived
+        # by the same single walk, so losing a block is always visible in exactly
+        # one of the two numbers.
+        sites = len(_DECLARED_SITES)
+        if sites != expected_sites:
+            short = expected_sites - sites
+            direction = (
+                f"{short} FEWER than the canonical corpus owes"
+                if short > 0
+                else f"{-short} MORE than the canonical corpus owes"
+            )
+            lines.append(
+                f"{sites} assertion block SITE(s) were inventoried, expected exactly "
+                f"{expected_sites} — {direction}. A site is one "
+                f"'<fixture>|<where>', so this dimension counts what the corpus "
+                f"CARRIES rather than what it distinctly SAYS: a block whose content "
+                f"digest recurs elsewhere can be deleted with the digest count "
+                f"unmoved, and this is the number that sees it. The expectation is "
+                f"derived from the canonical corpus at {default_corpus_dir()} minus "
+                f"the KNOWN_UNCOVERED ledger in "
+                f"scripts/check-conformance-coverage.sh, by the same walk the "
+                f"inventory uses. Same two plain causes as the digest count below: "
+                f"either the CORPUS MOVED — re-pull the lazily-spec sibling, and say "
+                f"so in KNOWN_UNCOVERED if this binding now opens a different set; "
+                f"running against a doctored or older copy via {CORPUS_DIR_ENV} shows "
+                f"up here, which is the point — or the LOADER-SIDE INVENTORY "
+                f"DETACHED. There is no number to re-pin."
+            )
         if declared != expected:
             short = expected - declared
             direction = (

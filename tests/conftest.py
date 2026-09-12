@@ -26,7 +26,9 @@ from conformance_assert import (
     consumption_failures,
     corpus_dir,
     declared_block_count,
+    declared_site_count,
     expected_declared_blocks,
+    expected_declared_sites,
     prose_failures,
     record_declared_blocks,
     scenario_failures,
@@ -281,9 +283,10 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untype
         # line any more; it is here so a reader can see the two agree, and see
         # which side moved when they do not.
         sys.stderr.write(
-            f"assertion-block inventory OK: {declared_block_count()} distinct block(s) "
-            f"inventoried from opened fixtures "
-            f"(derived from the corpus: {expected_declared_blocks()})\n"
+            f"assertion-block inventory OK: {declared_site_count()} site(s) / "
+            f"{declared_block_count()} distinct digest(s) inventoried from opened "
+            f"fixtures (derived from the corpus: {expected_declared_sites()} site(s) / "
+            f"{expected_declared_blocks()} digest(s))\n"
         )
     if (
         failures or prose_bad or scenario_bad or unbound or vacuous
