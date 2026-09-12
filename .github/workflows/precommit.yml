@@ -12,6 +12,24 @@ jobs:
     strategy:
       matrix:
         python-version: [ '3.12', '3.13', '3.14' ]
+    # One conformance run id per job, shared by every step below
+    # (#lzstalemanifest). The steps are separate processes, so the id cannot be
+    # generated inside one of them and still mean anything to the others — it has
+    # to be job-scoped, which is what `make check` gets from a `:=` variable and
+    # `poe precommit` gets from its `uses`.
+    #
+    # The "Test" step stamps it as line 1 of build/conformance-fixtures-loaded.txt
+    # and the coverage-guard step refuses a manifest carrying any other id. That
+    # matters here even though the runner starts clean: the ORDER of these steps
+    # is the only thing that used to make the guard's "these bytes were really
+    # read" true, and nothing checked it. Move the guard above the test step, or
+    # let the test step fail while the guard still runs, and the claim silently
+    # becomes about whatever wrote that file last.
+    #
+    # `run_attempt` is in the value because a re-run of a failed job keeps the
+    # same `run_id`, and the whole point is a value no other invocation shares.
+    env:
+      LAZILY_CONFORMANCE_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}-py${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 

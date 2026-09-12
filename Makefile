@@ -1,5 +1,32 @@
 .PHONY: init build test lint lint-fix format-check format-fix type-check clean publish-test publish bench bench-scale compile conformance-coverage assertion-ordering-check ci-reach
 
+# ---- One run id per make invocation (#lzstalemanifest) ----
+#
+# `scripts/check-conformance-coverage.sh` is the ONE guard in this binding whose
+# evidence is written by a DIFFERENT process than the one that reads it: pytest
+# records `build/conformance-fixtures-loaded.txt`, the script reads it back. Every
+# other rung (assertion-block bind, unconsumed key, read-but-unasserted key,
+# unreplayed scenario) runs inside `pytest_sessionfinish`, in the same process
+# that opened the fixtures, so a stale file is unreachable for those.
+#
+# Before this, that split guard had no freshness check at all, and the manifest
+# outlives any single invocation: `make conformance-coverage` on its own — or a
+# `poe test -k something` that APPENDS a handful of reads onto a full previous
+# run's list — was accepted as evidence that "these bytes were really read" by
+# THIS run. Demonstrated, not argued: with a 145-line manifest left on disk from
+# an earlier run and no pytest invoked at all, the guard printed
+# "conformance coverage OK: 145/156 ... these bytes were really read" and exited 0.
+#
+# So: one id per invocation, generated ONCE here, exported to every step. The
+# `test` target's first command stamps it as the manifest's first line and the
+# coverage guard refuses any manifest not carrying THIS id.
+#
+# `:=`, not `=`. A recursively-expanded variable would re-run `$(shell ...)` at
+# every reference, so the truncate step and the guard would stamp and demand
+# DIFFERENT ids — a fail-closed outcome, but a baffling one.
+LAZILY_CONFORMANCE_RUN_ID := make-$(shell date -u +%Y%m%dT%H%M%S)-$(shell od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
+export LAZILY_CONFORMANCE_RUN_ID
+
 # Install development dependencies and package in editable mode
 init: PY_VERSION = $(shell [ -f .python-version ] && \
 	cat .python-version || \

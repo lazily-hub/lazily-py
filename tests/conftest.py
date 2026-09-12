@@ -38,6 +38,14 @@ from conformance_assert import (
 
 
 _MANIFEST = os.environ.get("LAZILY_CONFORMANCE_MANIFEST")
+#: The invocation this run belongs to (#lzstalemanifest). Generated once per
+#: `make check` / `poe precommit` and exported to every step; stamped as the
+#: manifest's first line so the coverage guard — the one rung whose evidence
+#: crosses a process boundary — can refuse an earlier run's file.
+_RUN_ID = os.environ.get("LAZILY_CONFORMANCE_RUN_ID")
+#: Fixed prefix of the stamp line. Shared spelling with
+#: `scripts/check-conformance-coverage.sh` and the `conformance_manifest` task.
+_RUN_ID_PREFIX = "# lazily-run-id "
 
 
 def _corpus_roots() -> tuple[str, ...]:
@@ -138,13 +146,55 @@ Path.read_text = _read_text  # type: ignore[method-assign]
 Path.open = _open  # type: ignore[method-assign]
 
 
+def _manifest_run_id() -> str | None:
+    """The run id stamped on the manifest's first line, if it carries one."""
+    if not _MANIFEST:
+        return None
+    try:
+        with open(_MANIFEST, encoding="utf-8") as handle:
+            first = handle.readline()
+    except OSError:
+        return None
+    if not first.startswith(_RUN_ID_PREFIX):
+        return None
+    return first[len(_RUN_ID_PREFIX) :].strip() or None
+
+
 def _write_manifest() -> None:
-    """Append (not truncate) — pytest-xdist and reruns each contribute reads."""
+    """Append (not truncate) — pytest-xdist and reruns each contribute reads.
+
+    Appending is right WITHIN an invocation and wrong ACROSS one: the file
+    outlives any single run, so appending onto an earlier run's list produces a
+    union that reads as this run's coverage (#lzstalemanifest). The truncate step
+    (`conformance_manifest` in pyproject.toml) stamps `# lazily-run-id <id>` as
+    line 1 before the suite starts, and this appends only while that stamp names
+    the run we belong to.
+
+    When it names a DIFFERENT run — a `pytest`/`poe test` invoked on its own,
+    skipping the truncate step — the file is not our evidence and appending to it
+    would manufacture exactly the union above. So we REWRITE it with our own
+    stamp: whatever the manifest ends up saying, its id is the id of the run that
+    recorded the paths in it, which is the property the guard verifies. Under
+    xdist that branch would let the last worker to finish win, losing the others'
+    reads; it is unreachable in an ordered invocation, where the stamp always
+    matches and every worker appends.
+
+    With no run id in the environment this behaves exactly as it always did — a
+    bare ``pytest tests/`` stays unaffected, as the module docstring promises —
+    and a leftover foreign stamp then survives into a file the guard will refuse
+    on id mismatch, which is the correct outcome from the guard's side.
+    """
     if not _MANIFEST or not _opened:
         return
+    body = "\n".join(sorted(_opened)) + "\n"
     try:
+        if _RUN_ID and _manifest_run_id() != _RUN_ID:
+            with open(_MANIFEST, "w", encoding="utf-8") as handle:
+                handle.write(f"{_RUN_ID_PREFIX}{_RUN_ID}\n")
+                handle.write(body)
+            return
         with open(_MANIFEST, "a", encoding="utf-8") as handle:
-            handle.write("\n".join(sorted(_opened)) + "\n")
+            handle.write(body)
     except OSError:
         # A manifest we cannot write shows up downstream as missing evidence,
         # which is correct. Never fail the suite over bookkeeping.

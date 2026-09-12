@@ -16,6 +16,12 @@
 # were read"; it means the suite ran without the recorder attached, and passing in
 # that state is the vacuous green this guard exists to prevent.
 #
+# A manifest from ANOTHER invocation fails for the same reason (#lzstalemanifest).
+# This is the one rung in this binding whose evidence crosses a process boundary —
+# pytest writes it, this script reads it — and the file outlives any single run, so
+# the run id stamped on line 1 has to match the invocation running this guard. See
+# the freshness block below for what was measured before that check existed.
+#
 # The same reasoning is why this script ends with a positive-evidence FLOOR
 # (#lzvacuousrun). Every check between here and there is a statement about the
 # fixtures the run opened, and every one of them is trivially satisfied when that
@@ -96,7 +102,90 @@ if [ ! -s "$MANIFEST" ]; then
   echo "      absence." >&2
   exit 1
 fi
-OPENED="$(sort -u "$MANIFEST")"
+
+# ---- Freshness: is this manifest THIS invocation's evidence? (#lzstalemanifest)
+#
+# Everything below — and every line of the OK message — is a claim about what
+# THIS run opened. The manifest is the only input to that claim, and it is
+# written by a DIFFERENT process (pytest) than the one reading it, in a file that
+# outlives any single invocation. Without the check below, running this script on
+# its own read a manifest left behind by an earlier run and reported "these bytes
+# were really read" about bytes this invocation never touched. Measured, not
+# supposed: against a 145-line manifest from an earlier run, with no pytest
+# invoked at all, it printed "conformance coverage OK: 145/156" and exited 0.
+#
+# The routes that reach it are not build caching — pytest caches no execution —
+# but they are ordinary:
+#
+#   * `make conformance-coverage` / `poe conformance_coverage` alone, after any
+#     earlier run left a manifest in build/.
+#   * `poe test -k something`, which has the recorder attached and APPENDS: a
+#     partial run's reads land on top of a full run's list, and the union reads
+#     as complete coverage.
+#   * a `make check` whose pytest step dies, followed by the guard run by hand.
+#
+# So the manifest must carry the id of the invocation that produced it. The test
+# step stamps `# lazily-run-id <id>` as line 1 (see `conformance_manifest` in
+# pyproject.toml and `_write_manifest` in tests/conftest.py); this compares it to
+# the id in the environment and refuses on any mismatch, naming both.
+#
+# An UNSET id refuses rather than skips. A guard that accepts unstamped evidence
+# whenever the variable is missing is the same hole with one extra step, since
+# the variable is missing in precisely the hand-invoked case that exposed it.
+# `LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE=1` is the one named way out, for
+# reading a manifest by hand; it must never appear in a Makefile target or a CI
+# step, and there is no unstamped path in either today.
+RUN_ID="${LAZILY_CONFORMANCE_RUN_ID:-}"
+if [ -z "$RUN_ID" ]; then
+  if [ -z "${LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE:-}" ]; then
+    echo "FAIL: LAZILY_CONFORMANCE_RUN_ID is unset, so this guard cannot tell whether" >&2
+    echo "      $MANIFEST is THIS invocation's evidence or a leftover from an" >&2
+    echo "      earlier run (#lzstalemanifest). Every check below, and the OK line" >&2
+    echo "      itself, is a claim about the fixtures THIS run opened." >&2
+    echo "      Run 'make conformance-coverage' or 'poe precommit', which generate" >&2
+    echo "      an id and stamp it into the manifest. To inspect an unstamped" >&2
+    echo "      manifest by hand, set LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE=1" >&2
+    echo "      and understand that the result proves nothing about any run." >&2
+    exit 1
+  fi
+  echo "WARNING: reading $MANIFEST with no run id — LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE" >&2
+  echo "         is set, so freshness is NOT checked and this verdict is about" >&2
+  echo "         whatever run last wrote that file (#lzstalemanifest)." >&2
+else
+  STAMP_PREFIX="# lazily-run-id "
+  FIRST_LINE="$(head -n 1 "$MANIFEST")"
+  case "$FIRST_LINE" in
+  "$STAMP_PREFIX"*) FOUND_ID="${FIRST_LINE#"$STAMP_PREFIX"}" ;;
+  *) FOUND_ID="" ;;
+  esac
+  if [ -z "$FOUND_ID" ]; then
+    echo "FAIL: $MANIFEST carries no run-id stamp on its first line." >&2
+    echo "      Wanted a first line reading '${STAMP_PREFIX}$RUN_ID'; found:" >&2
+    echo "        $FIRST_LINE" >&2
+    echo "      An unstamped manifest predates the freshness protocol, or was" >&2
+    echo "      written by something that bypassed the truncate step — either way" >&2
+    echo "      it is not evidence about this run (#lzstalemanifest). Run the suite:" >&2
+    echo "        make test    (or: uv run poe conformance_manifest && uv run poe test)" >&2
+    exit 1
+  fi
+  if [ "$FOUND_ID" != "$RUN_ID" ]; then
+    echo "FAIL: $MANIFEST is a DIFFERENT run's evidence (#lzstalemanifest)." >&2
+    echo "        file:  $MANIFEST" >&2
+    echo "        found: $FOUND_ID" >&2
+    echo "        want:  $RUN_ID" >&2
+    echo "      The manifest outlives an invocation and the recorder appends, so a" >&2
+    echo "      guard that trusts it credits this run with fixtures an earlier one" >&2
+    echo "      opened. Re-run the suite in the same invocation as this guard:" >&2
+    echo "        make check      (truncates, stamps, replays, then checks)" >&2
+    exit 1
+  fi
+fi
+
+# `sed`, not `grep -v`: the stamp line is dropped from the opened set, and a
+# manifest holding ONLY the stamp (pytest recorded nothing) must reach the
+# positive-evidence floor at the bottom with its own message rather than dying
+# here on `grep`'s no-match exit status under `set -e`.
+OPENED="$(sed '/^# lazily-run-id /d' "$MANIFEST" | sort -u)"
 
 missing=0
 total=0

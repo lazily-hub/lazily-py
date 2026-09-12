@@ -110,23 +110,14 @@ init = "uv sync --all-groups"
 # `test` carries them. Rung 1 (the runtime fixture manifest / coverage guard) is a
 # separate script and used to run only from `make check` on a developer's machine —
 # a guard nobody's CI executes is a guard that does not exist. `conformance_manifest`
-# truncates and exports the manifest the recorder appends to, exactly as the
-# Makefile did locally; `conformance_coverage` reads it back.
+# truncates the manifest the recorder appends to and STAMPS it with the run id, so
+# `conformance_coverage` — which reads it back out of a different process — can
+# tell this invocation's evidence from an earlier run's (#lzstalemanifest).
 # `interop_peer` joins the list for the same reason the coverage guard did
 # (#lzinteroppeerci): `make check` ran the cross-binding wire-compatibility peer
 # and no binding's CI ran it anywhere. Nine bindings have to agree on a byte
 # layout, and a gate that only ever executes on a laptop is how they quietly
 # stop agreeing.
-precommit = [
-    "ty",
-    "ruff_format_check",
-    "ruff_check",
-    "run_readme",
-    "conformance_manifest",
-    "test",
-    "conformance_coverage",
-    "interop_peer",
-]
 interop_peer = "python -m lazily.interop_peer --self-check"
 # The lint/format GATES (#lzruffautofixvacuity). Non-repairing on purpose: a
 # linter that rewrites the tree it is judging exits 0 no matter what it found,
@@ -141,12 +132,65 @@ ruff_format_fix = "ruff format"
 run_readme = "python -m tests.run_readme"
 ty = "ty check src"
 
-# Truncate before the run. The recorder APPENDS (pytest-xdist and reruns each
+# `precommit` is a sequence with a `uses`, not a bare array, for exactly one
+# reason: the conformance run id (#lzstalemanifest).
+#
+# The id has to be generated ONCE per invocation and shared by the three steps
+# that touch the split evidence file — `conformance_manifest` stamps it, `test`
+# records under it, `conformance_coverage` demands it. poe resolves a `uses`
+# dependency once and injects its stdout into the env of the task that declares
+# it, and a sequence passes that env down to every subtask, so one `uses` here
+# gives all three the same value. Per-subtask `uses` would give each a DIFFERENT
+# id and fail closed on every run.
+#
+# `conformance_run_id` passes an inherited id through unchanged, so `make check`
+# (which generates its own and exports it) keeps one id across the whole
+# invocation even if a step reaches poe through this sequence.
+[tool.poe.tasks.precommit]
+uses = { LAZILY_CONFORMANCE_RUN_ID = "conformance_run_id" }
+sequence = [
+    "ty",
+    "ruff_format_check",
+    "ruff_check",
+    "run_readme",
+    "conformance_manifest",
+    "test",
+    "conformance_coverage",
+    "interop_peer",
+]
+
+# Emit the id for THIS invocation, honouring one already in the environment.
+# Not a guard and not evidence — just the generator, so that `poe precommit`
+# stands on its own without `make`.
+[tool.poe.tasks.conformance_run_id]
+shell = '''
+printf '%s\n' "${LAZILY_CONFORMANCE_RUN_ID:-poe-$(date -u +%Y%m%dT%H%M%S)-$$}"
+'''
+
+# Truncate before the run, and STAMP the run id as the first line
+# (#lzstalemanifest). The recorder APPENDS (pytest-xdist and reruns each
 # contribute reads), so a manifest left over from an earlier invocation would
 # credit this run with fixtures it never opened — a stale green in the one file
-# the coverage guard treats as evidence.
+# the coverage guard treats as evidence. Truncating closes that only while the
+# three steps run IN ORDER inside one invocation; it does nothing for a guard
+# invoked on its own afterwards, which is what the stamp is for. The guard reads
+# line 1 and refuses any id that is not the current invocation's.
+#
+# Refusing an unset id here rather than inventing one is deliberate: this task is
+# the thing that decides what the evidence CLAIMS, so a fallback id minted here
+# would be a claim about a run nobody identified.
 [tool.poe.tasks.conformance_manifest]
-shell = "mkdir -p build && : > build/conformance-fixtures-loaded.txt"
+shell = '''
+if [ -z "${LAZILY_CONFORMANCE_RUN_ID:-}" ]; then
+  echo "FAIL: LAZILY_CONFORMANCE_RUN_ID is unset, so the fixture manifest cannot be" >&2
+  echo "      stamped and the coverage guard has no way to tell this run's evidence" >&2
+  echo "      from an earlier run's (#lzstalemanifest). Run this through 'make test'" >&2
+  echo "      or 'poe precommit', both of which generate one." >&2
+  exit 1
+fi
+mkdir -p build
+printf '# lazily-run-id %s\n' "$LAZILY_CONFORMANCE_RUN_ID" > build/conformance-fixtures-loaded.txt
+'''
 
 [tool.poe.tasks.test]
 cmd = "pytest tests/ -v"
