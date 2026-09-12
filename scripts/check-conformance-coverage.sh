@@ -95,6 +95,12 @@ collect_sources() {
   done
 }
 
+# Absent, or zero bytes. This is NOT the emptiness check any more
+# (#lzstampsatisfiesnonempty): since the run id is stamped at TRUNCATE time,
+# before the suite starts, the smallest file this protocol can leave behind is a
+# stamp line and nothing else — non-empty, ~50 bytes, recording zero reads. `-s`
+# passed on it. The records floor below the freshness block is `-s` restated
+# against RECORDS, and it is the one that sees that state.
 if [ ! -s "$MANIFEST" ]; then
   echo "FAIL: no conformance manifest at $MANIFEST." >&2
   echo "      Run the suite with LAZILY_CONFORMANCE_MANIFEST set so the recorder" >&2
@@ -124,68 +130,117 @@ fi
 #     as complete coverage.
 #   * a `make check` whose pytest step dies, followed by the guard run by hand.
 #
-# So the manifest must carry the id of the invocation that produced it. The test
-# step stamps `# lazily-run-id <id>` as line 1 (see `conformance_manifest` in
-# pyproject.toml and `_write_manifest` in tests/conftest.py); this compares it to
-# the id in the environment and refuses on any mismatch, naming both.
+# So the manifest must carry the id of the invocation that produced it. The
+# TRUNCATE step stamps `# lazily-run-id <id>` as line 1 — `conformance_manifest`
+# in pyproject.toml, which runs BEFORE pytest; `_write_manifest` in
+# tests/conftest.py re-stamps only when it finds a foreign id. This compares the
+# stamp to the id in the environment and refuses on any mismatch, naming both.
+#
+# Because the stamp lands before the suite does, "stamped" and "carries
+# evidence" are independent: see the records floor below
+# (#lzstampsatisfiesnonempty), which is the check that a stamp alone no longer
+# satisfies.
 #
 # An UNSET id refuses rather than skips. A guard that accepts unstamped evidence
 # whenever the variable is missing is the same hole with one extra step, since
 # the variable is missing in precisely the hand-invoked case that exposed it.
-# `LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE=1` is the one named way out, for
-# reading a manifest by hand; it must never appear in a Makefile target or a CI
-# step, and there is no unstamped path in either today.
+#
+# There is NO opt-out flag. There was: `LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE=1`
+# skipped the whole freshness block and printed a warning, which is a boolean a
+# person can set once in a shell profile or a config and never see again — and
+# whose entire meaning is "do not check the thing this block exists to check".
+# lazily-js's shape is better and is adopted here: the escape hatch for reading a
+# manifest by hand is to ADOPT the id the manifest is stamped with, named
+# explicitly on the command line (see the message below). That cannot be set
+# blindly — a bare `=1` buys nothing, you have to read the id off the file — it
+# still verifies that a stamp is present and that the verdict is about the run
+# you named, and it leaves the operator's claim in their shell history.
 RUN_ID="${LAZILY_CONFORMANCE_RUN_ID:-}"
 if [ -z "$RUN_ID" ]; then
-  if [ -z "${LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE:-}" ]; then
-    echo "FAIL: LAZILY_CONFORMANCE_RUN_ID is unset, so this guard cannot tell whether" >&2
-    echo "      $MANIFEST is THIS invocation's evidence or a leftover from an" >&2
-    echo "      earlier run (#lzstalemanifest). Every check below, and the OK line" >&2
-    echo "      itself, is a claim about the fixtures THIS run opened." >&2
-    echo "      Run 'make conformance-coverage' or 'poe precommit', which generate" >&2
-    echo "      an id and stamp it into the manifest. To inspect an unstamped" >&2
-    echo "      manifest by hand, set LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE=1" >&2
-    echo "      and understand that the result proves nothing about any run." >&2
-    exit 1
-  fi
-  echo "WARNING: reading $MANIFEST with no run id — LAZILY_CONFORMANCE_ALLOW_UNSTAMPED_EVIDENCE" >&2
-  echo "         is set, so freshness is NOT checked and this verdict is about" >&2
-  echo "         whatever run last wrote that file (#lzstalemanifest)." >&2
-else
-  STAMP_PREFIX="# lazily-run-id "
-  FIRST_LINE="$(head -n 1 "$MANIFEST")"
-  case "$FIRST_LINE" in
-  "$STAMP_PREFIX"*) FOUND_ID="${FIRST_LINE#"$STAMP_PREFIX"}" ;;
-  *) FOUND_ID="" ;;
-  esac
-  if [ -z "$FOUND_ID" ]; then
-    echo "FAIL: $MANIFEST carries no run-id stamp on its first line." >&2
-    echo "      Wanted a first line reading '${STAMP_PREFIX}$RUN_ID'; found:" >&2
-    echo "        $FIRST_LINE" >&2
-    echo "      An unstamped manifest predates the freshness protocol, or was" >&2
-    echo "      written by something that bypassed the truncate step — either way" >&2
-    echo "      it is not evidence about this run (#lzstalemanifest). Run the suite:" >&2
-    echo "        make test    (or: uv run poe conformance_manifest && uv run poe test)" >&2
-    exit 1
-  fi
-  if [ "$FOUND_ID" != "$RUN_ID" ]; then
-    echo "FAIL: $MANIFEST is a DIFFERENT run's evidence (#lzstalemanifest)." >&2
-    echo "        file:  $MANIFEST" >&2
-    echo "        found: $FOUND_ID" >&2
-    echo "        want:  $RUN_ID" >&2
-    echo "      The manifest outlives an invocation and the recorder appends, so a" >&2
-    echo "      guard that trusts it credits this run with fixtures an earlier one" >&2
-    echo "      opened. Re-run the suite in the same invocation as this guard:" >&2
-    echo "        make check      (truncates, stamps, replays, then checks)" >&2
-    exit 1
-  fi
+  echo "FAIL: LAZILY_CONFORMANCE_RUN_ID is unset, so this guard cannot tell whether" >&2
+  echo "      $MANIFEST is THIS invocation's evidence or a leftover from an" >&2
+  echo "      earlier run (#lzstalemanifest). Every check below, and the OK line" >&2
+  echo "      itself, is a claim about the fixtures THIS run opened." >&2
+  echo "      Run 'make conformance-coverage' or 'poe precommit', which generate" >&2
+  echo "      an id and stamp it into the manifest. To inspect an existing" >&2
+  echo "      manifest by hand, adopt the id it is stamped with — the id is the" >&2
+  echo "      last field of its first line — and say so out loud:" >&2
+  echo "        LAZILY_CONFORMANCE_RUN_ID=\"\$(head -n 1 $MANIFEST | awk '{print \$NF}')\" \\" >&2
+  echo "          $0" >&2
+  exit 1
+fi
+STAMP_PREFIX="# lazily-run-id "
+FIRST_LINE="$(head -n 1 "$MANIFEST")"
+case "$FIRST_LINE" in
+"$STAMP_PREFIX"*) FOUND_ID="${FIRST_LINE#"$STAMP_PREFIX"}" ;;
+*) FOUND_ID="" ;;
+esac
+if [ -z "$FOUND_ID" ]; then
+  echo "FAIL: $MANIFEST carries no run-id stamp on its first line." >&2
+  echo "      Wanted a first line reading '${STAMP_PREFIX}$RUN_ID'; found:" >&2
+  echo "        $FIRST_LINE" >&2
+  echo "      An unstamped manifest predates the freshness protocol, or was" >&2
+  echo "      written by something that bypassed the truncate step — either way" >&2
+  echo "      it is not evidence about this run (#lzstalemanifest). Run the suite:" >&2
+  echo "        make test    (or: uv run poe conformance_manifest && uv run poe test)" >&2
+  exit 1
+fi
+if [ "$FOUND_ID" != "$RUN_ID" ]; then
+  echo "FAIL: $MANIFEST is a DIFFERENT run's evidence (#lzstalemanifest)." >&2
+  echo "        file:  $MANIFEST" >&2
+  echo "        found: $FOUND_ID" >&2
+  echo "        want:  $RUN_ID" >&2
+  echo "      The manifest outlives an invocation and the recorder appends, so a" >&2
+  echo "      guard that trusts it credits this run with fixtures an earlier one" >&2
+  echo "      opened. Re-run the suite in the same invocation as this guard:" >&2
+  echo "        make check      (truncates, stamps, replays, then checks)" >&2
+  exit 1
 fi
 
 # `sed`, not `grep -v`: the stamp line is dropped from the opened set, and a
 # manifest holding ONLY the stamp (pytest recorded nothing) must reach the
-# positive-evidence floor at the bottom with its own message rather than dying
-# here on `grep`'s no-match exit status under `set -e`.
+# records floor immediately below with its own message rather than dying here on
+# `grep`'s no-match exit status under `set -e`.
 OPENED="$(sed '/^# lazily-run-id /d' "$MANIFEST" | sort -u)"
+
+# ---- Records floor: stamped, and recording nothing (#lzstampsatisfiesnonempty)
+#
+# The stamp is written at TRUNCATE time by `conformance_manifest`, before pytest
+# starts, so "stamped" and "carries evidence" came apart the moment the run-id
+# protocol landed. A `make check` whose pytest step dies after the truncate step
+# — or a `poe test` that runs with the recorder detached — leaves a file that is
+# non-empty, carries THIS invocation's id, and names zero fixtures. Both checks
+# that used to catch an evidence-free manifest are satisfied by it: `-s` above
+# because a stamp is bytes, and the freshness block because the id is the right
+# one.
+#
+# It is not that the guard then passed — it did not; the per-fixture loop below
+# reported all 145 unexcused canonical fixtures as "NOT opened" and exited 1. But
+# that is a coverage verdict standing in for an evidence verdict, and it reads as
+# 145 regressions rather than as one detached recorder. The set-shaped diagnostic
+# is also only correct by the shape of the corpus: it is the loop below that
+# happens to have 145 unexcused fixtures to complain about, and every line of it
+# is a statement about the opened set being empty — which is the condition, said
+# 145 times and mislabelled.
+#
+# So name the condition once, here, before anything reasons about coverage. This
+# is distinct from the `covered -eq 0` floor at the bottom, which fires when the
+# manifest HAS records that are all attributed away (a KNOWN_UNCOVERED list that
+# excuses the whole corpus, or attribution pointed at the wrong root).
+if [ -z "$OPENED" ]; then
+  echo "FAIL: $MANIFEST carries this run's id and NO records" >&2
+  echo "        file:  $MANIFEST" >&2
+  echo "        found: the run-id stamp and nothing else" >&2
+  echo "        want:  one corpus-relative fixture path per line below the stamp" >&2
+  echo "      The stamp is written when the manifest is TRUNCATED, before the suite" >&2
+  echo "      runs, so this is what a pytest that never started — or died before" >&2
+  echo "      pytest_sessionfinish, or ran with the recorder detached — leaves" >&2
+  echo "      behind (#lzstampsatisfiesnonempty). A stamp is bytes, not evidence:" >&2
+  echo "      that is why this is checked against RECORDS and not with 'test -s'." >&2
+  echo "      Re-run the suite and this guard in one invocation:" >&2
+  echo "        make check" >&2
+  exit 1
+fi
 
 missing=0
 total=0
