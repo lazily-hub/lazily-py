@@ -22,6 +22,7 @@ from pathlib import Path
 
 from conformance_assert import (
     CORPUS_DIR_ENV,
+    KNOWN_UNBOUND_BLOCKS,
     block_bind_failures,
     consumption_failures,
     corpus_dir,
@@ -29,6 +30,7 @@ from conformance_assert import (
     declared_site_count,
     expected_declared_blocks,
     expected_declared_sites,
+    max_ledgered_blocks,
     prose_failures,
     record_declared_blocks,
     scenario_failures,
@@ -286,7 +288,9 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untype
             f"assertion-block inventory OK: {declared_site_count()} site(s) / "
             f"{declared_block_count()} distinct digest(s) inventoried from opened "
             f"fixtures (derived from the corpus: {expected_declared_sites()} site(s) / "
-            f"{expected_declared_blocks()} digest(s))\n"
+            f"{expected_declared_blocks()} digest(s)); "
+            f"{len(KNOWN_UNBOUND_BLOCKS)}/{max_ledgered_blocks()} of the "
+            f"KNOWN_UNBOUND_BLOCKS ceiling in use\n"
         )
     if (
         failures or prose_bad or scenario_bad or unbound or vacuous

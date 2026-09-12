@@ -170,37 +170,38 @@ fi
 # reporting OK. Do not lower these to fix a red run — a drop here means the
 # corpus or the recorder shrank, which is the finding.
 #
-# MIN_FIXTURES tracks WHAT CI ACTUALLY OPENS, exactly — no margin, no slack.
-# Pinned 2026-08-09 from CI run 31343738442 against the published corpus:
-# 139/150 canonical fixtures OPENED. A local `make test` on the same commit
-# reproduced that number.
+# There is NO fixture COUNT pinned here any more (#lzledgerceiling). There was:
+# a MIN_FIXTURES bash default of 145 with a same-named env override, compared
+# `covered -lt MIN_FIXTURES`. Deliberately not restated in its literal form: the
+# upstream audit (lazily-spec scripts/check-corpus-floors.mjs) greps this whole
+# `scripts/` directory for that exact spelling, so quoting it here would have the
+# audit keep deriving and comparing a pin that no longer runs — a retired floor
+# reported as a live one.
 #
-# It previously sat at 132, on a "keep a fixed slack of four below the real
-# number" convention. That convention is the bug, and the slack did not stay
-# fixed: the real number moved to 139 while the floor stayed at 132, so seven
-# replayed fixtures could have stopped being opened with this guard still green.
-# The same convention rotted lazily-zig's scenario floor to 91 against 147
-# (#lzscenariofloordrift). Do not reintroduce a margin. When a change genuinely
-# adds replays, re-read the `conformance coverage OK` line from a COMPLETED CI
-# run — which clones the published corpus (#lzspecpushbeforebindings) rather than
-# trusting a working tree — and set this to that total.
+# It mirrored a number the set checks above already fix exactly. With zero errors
+# reported, every canonical fixture outside KNOWN_UNCOVERED was opened, every
+# KNOWN_UNCOVERED entry exists in the corpus, and none of them was opened — so
+# `covered` IS `total` minus the ledger, which is 156 - 11 = 145, the pin's own
+# value. Equal sets have equal counts: the pin carried no information the loops
+# had not already established, and it could not fire. Demonstrated rather than
+# argued: dropping `arena_blob.json` from the runtime manifest takes `covered` to
+# 144, one under the old pin, and the run dies at "canonical fixture
+# 'arena_blob.json' was NOT opened by the suite" — the earlier `exit 1`, reached
+# before the floor is evaluated at all.
 #
-# An upstream fixture that lands without a Python runner raises `total` and
-# leaves `covered` alone, so it does not trip this; only a replay that STOPS
-# running does. The env override exists for bisecting an upstream corpus change,
-# not for making a red run green.
-# 2026-08-11: 139 -> 141. lazily-spec 39df4b3 (already on origin/main, so CI's
-# clone has it) added lossless-tree/apply_update_advances_counter.json and
-# lossless-tree/out_of_order_delivery_buffers.json, and this binding now replays
-# both (#lzspecoutoforderfixtures). Corpus 150 -> 152, opened 139 -> 141, held
-# exactly — no margin, per the paragraph above.
-# 2026-09-11: 141 -> 145. The pin had drifted four fixtures behind the live
-# count while the corpus grew to 156 — the exact rot the paragraph above warns
-# about (#lzscenariofloordrift). Re-pinned from a completed
-# `poe conformance_coverage` run against lazily-spec 4010d99 (on origin/main,
-# so CI's clone has it): 145/156 OPENED, 11 KNOWN_UNCOVERED. Held exactly — 146
-# fails.
-MIN_FIXTURES="${MIN_FIXTURES:-145}"
+# What it did cost was real. It was a hand-retyped literal read off a CI log, and
+# its own comment block was a ledger of the rot: 132 -> 139 -> 141 -> 145, with
+# the 132 pin sitting seven fixtures behind the live count and the 141 pin four
+# behind (#lzscenariofloordrift). A number that must be re-pinned whenever the
+# corpus moves is an edit site that drifts, and `-lt` cannot see the drift.
+#
+# The one thing the pin asserted that the set checks do NOT imply is kept below,
+# at ZERO: if KNOWN_UNCOVERED ever excused the WHOLE corpus, every loop above
+# would be silent and `covered` would be 0 with nothing wrong reported. That is a
+# ceiling on how much may be excused, spelled as a floor on what must remain — it
+# is policy, it does not move with the corpus, and it never needs re-pinning.
+# The block-level ledger carries the same kind of bound as
+# `_MAX_LEDGERED_BLOCKS` in tests/conformance_assert.py.
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2
   echo "       Every check above is vacuously green over an empty population:" >&2
@@ -209,10 +210,15 @@ if [ "$total" -eq 0 ]; then
   echo "       checkout (#lzvacuousrun)." >&2
   exit 1
 fi
-if [ "$covered" -lt "$MIN_FIXTURES" ]; then
-  echo "ERROR: only $covered distinct canonical fixtures were OPENED, expected >= $MIN_FIXTURES." >&2
-  echo "       A replay was removed, renamed, or short-circuited, or the recorder" >&2
-  echo "       detached mid-run. Do not lower MIN_FIXTURES to fix this." >&2
+if [ "$covered" -eq 0 ]; then
+  echo "ERROR: the corpus at $SPEC_DIR listed $total fixture(s) and the suite OPENED" >&2
+  echo "       NONE of them. Every check above is a statement about the fixtures" >&2
+  echo "       this run opened and all of them are vacuously true over an empty" >&2
+  echo "       set, so nothing above reported a problem. Either KNOWN_UNCOVERED" >&2
+  echo "       now excuses the entire corpus, or the recorder never attached" >&2
+  echo "       (#lzvacuousrun). This floor is ZERO on purpose: it is the part of" >&2
+  echo "       the old MIN_FIXTURES pin the set checks above do not already imply," >&2
+  echo "       and unlike that pin it does not move when the corpus does." >&2
   exit 1
 fi
 

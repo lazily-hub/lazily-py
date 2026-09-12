@@ -28,6 +28,7 @@ from conformance_assert import (
     _DECLARED_SITES,
     _EXPECTED_BLOCKS,
     _LEDGERS,
+    _MAX_LEDGERED_BLOCKS,
     KNOWN_UNBOUND_BLOCKS,
     TrackedBlock,
     assert_key,
@@ -43,6 +44,7 @@ from conformance_assert import (
     expected_declared_blocks,
     expected_declared_sites,
     instrument,
+    max_ledgered_blocks,
     prose_failures,
     prose_key,
     record_declared_blocks,
@@ -984,6 +986,14 @@ def block_ledger():
     # exactly as the other self-tests do with `reset(fixture=...)`.
     saved_fixtures = {fixture for fixture, _ in _LEDGERS}
     reset_blocks()
+    # The committed ledger is cleared too, for the same reason `reset_blocks`
+    # clears the declared and bound sets: a self-test that plants one excuse
+    # should be judged on a ledger holding exactly that excuse. Leaving the real
+    # entries in place also puts every one of these tests one entry over
+    # `max_ledgered_blocks()` the moment the committed ledger sits AT its ceiling
+    # — which it does, by construction (#lzledgerceiling) — so each would report
+    # a ceiling line it never planted.
+    KNOWN_UNBOUND_BLOCKS.clear()
     try:
         yield
     finally:
@@ -1083,6 +1093,117 @@ def test_an_excuse_with_no_reason_is_itself_the_failure(block_ledger) -> None:
 
     reported = block_bind_failures()
     assert reported and "no reason" in reported[0]
+
+
+# ---------------------------------------------------------------------------
+# The ceiling on how much may be excused (#lzledgerceiling)
+# ---------------------------------------------------------------------------
+
+
+def test_a_detached_bind_with_a_matching_excuse_satisfies_every_other_direction(
+    block_ledger, monkeypatch
+) -> None:
+    """The hole the ceiling exists for, stated as a test.
+
+    Every other direction on this rung compares the ledger against the run, and a
+    commit that detaches a bind AND writes the matching entry leaves the two
+    sides consistent. Nothing below the ceiling can see it: the block is not
+    unbound-and-unexcused, the excuse is not stale (no runner binds it), and it is
+    not rotted (the opened fixture still carries it).
+    """
+    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "99")
+    record_declared_blocks("selftest/unbound.json", _UNBOUND_FIXTURE)
+    KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|assertions"] = (
+        "detached and excused in the same commit"
+    )
+
+    assert block_bind_failures() == [], (
+        "the consistency directions were expected to be satisfied by the "
+        "detached/excused PAIR — that is the whole finding"
+    )
+
+
+def test_the_ceiling_is_the_only_thing_that_refuses_the_detached_pair(
+    block_ledger, monkeypatch
+) -> None:
+    """Same state as above, with the ceiling where a landing commit puts it.
+
+    The ledger held zero entries when this test started, so a ceiling of zero is
+    the "may only shrink" policy for that state, and the one entry the detaching
+    commit adds is over it. The report names both numbers and says which way the
+    ledger may move.
+    """
+    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "0")
+    record_declared_blocks("selftest/unbound.json", _UNBOUND_FIXTURE)
+    KNOWN_UNBOUND_BLOCKS["selftest/unbound.json|assertions"] = (
+        "detached and excused in the same commit"
+    )
+
+    reported = block_bind_failures()
+    assert len(reported) == 1, f"expected exactly the ceiling line, got {reported}"
+    assert "holds 1 entr" in reported[0]
+    assert "ceiling of 0" in reported[0]
+    assert "may only SHRINK" in reported[0]
+
+
+def test_the_ceiling_holds_a_ledger_at_its_limit(block_ledger, monkeypatch) -> None:
+    """At the ceiling is not over it — landing a ceiling equal to the committed
+    ledger is a no-op, which is what makes it safe to add to a green tree."""
+    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "1")
+    KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "parked upstream"
+
+    assert block_bind_failures() == []
+
+
+def test_the_ceiling_is_enforced_over_a_run_that_inventoried_nothing(
+    block_ledger, monkeypatch
+) -> None:
+    """Unlike the derived magnitude, this one reads only committed bytes.
+
+    The magnitude rung is gated on the run having opened canonical fixtures,
+    because it compares the run against the corpus. A ledger that GREW is a fact
+    about the repository, so a `pytest -k` subset and a checkout with no
+    lazily-spec sibling enforce it exactly as CI does — otherwise growth could
+    land behind a skipped suite.
+    """
+    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "0")
+    KNOWN_UNBOUND_BLOCKS["selftest/never-opened.json|assertions"] = "parked upstream"
+
+    assert not _DECLARED_BLOCKS, "precondition: nothing was inventoried"
+    reported = block_bind_failures(enforce_floor=False)
+    assert reported and "ceiling of 0" in reported[0]
+
+
+@pytest.mark.parametrize("value", ["twenty", "25.5", "-1"])
+def test_a_ceiling_override_that_does_not_parse_is_refused(
+    block_ledger, monkeypatch, value: str
+) -> None:
+    """Falling back to the committed default would hide the bad override from the
+    one person who cannot see it — whoever set it."""
+    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", value)
+
+    with pytest.raises(RuntimeError):
+        max_ledgered_blocks()
+    reported = block_bind_failures()
+    assert reported and "cannot read the KNOWN_UNBOUND_BLOCKS ceiling" in reported[0]
+
+
+def test_an_empty_ceiling_override_is_the_committed_default(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_LEDGERED_BLOCKS", "  ")
+    assert max_ledgered_blocks() == _MAX_LEDGERED_BLOCKS
+    monkeypatch.delenv("MAX_LEDGERED_BLOCKS")
+    assert max_ledgered_blocks() == _MAX_LEDGERED_BLOCKS
+
+
+def test_the_committed_ledger_is_within_the_committed_ceiling() -> None:
+    """The landing condition, read off the committed bytes.
+
+    Not a second pin: it fails only when the ledger is OVER the ceiling, which is
+    the same predicate the session verdict applies. It is here so the failure
+    arrives as one named test during development rather than only as the
+    end-of-session report.
+    """
+    assert len(KNOWN_UNBOUND_BLOCKS) <= _MAX_LEDGERED_BLOCKS
 
 
 def test_the_floor_fails_when_the_inventory_collapses(block_ledger) -> None:

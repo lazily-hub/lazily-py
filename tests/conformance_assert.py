@@ -243,6 +243,8 @@ from typing import Any
 __all__ = [
     "BLOCK_KEYS",
     "CORPUS_DIR_ENV",
+    "KNOWN_UNBOUND_BLOCKS",
+    "MAX_LEDGERED_BLOCKS_ENV",
     "PROSE_DECLARATION_KEY",
     "PROSE_KEYS",
     "SCENARIO_EXCUSES",
@@ -271,6 +273,7 @@ __all__ = [
     "instrument",
     "iter_declared_blocks",
     "known_uncovered_fixtures",
+    "max_ledgered_blocks",
     "prose_failures",
     "prose_key",
     "record_block_bind",
@@ -451,6 +454,78 @@ KNOWN_UNBOUND_BLOCKS: dict[str, str] = {
         _MERGE_CELL_UNBOUND
     ),
 }
+
+#: The name of the env var that raises :func:`max_ledgered_blocks` for one run.
+#: Provided for bisecting an upstream corpus change, not for making a red run
+#: green: the committed default is the number CI enforces.
+MAX_LEDGERED_BLOCKS_ENV = "MAX_LEDGERED_BLOCKS"
+
+#: CEILING on how much of this rung may be excused at all (``#lzledgerceiling``).
+#:
+#: Every other direction this module checks is a CONSISTENCY check between the
+#: ledger and the run, and consistency is satisfied by any consistent PAIR. The
+#: stale direction fails an entry whose block a runner binds; the rotted direction
+#: fails an entry naming a block no opened fixture carries; the unbound direction
+#: fails a block that is neither bound nor ledgered. A commit that detaches a bind
+#: and writes the matching entry violates none of them — the two sides agree, at a
+#: worse level of coverage.
+#:
+#: The magnitude rung above does not see it either, and that is not a gap in how
+#: it is written: :func:`_derive_expected` counts what the corpus DECLARES, and a
+#: detached block is still declared. Both dimensions hold exactly. Demonstrated
+#: here, not reasoned about: dropping the ``instrument(...)`` call from
+#: ``tests/test_reconciliation.py``'s replay of
+#: ``collections/keyed_reconciliation_lis.json``, reading the ``expected`` block
+#: off the raw dict instead, and adding the one matching entry below left
+#: ``make check`` at EXIT=0 with 1017 passed and the equality silent at
+#: "729 site(s) / 620 distinct digest(s) ... (derived from the corpus: 729
+#: site(s) / 620 digest(s))" — both sides, both dimensions, unmoved. The same
+#: hole was proved in lazily-rs (962923a) by dropping one ``bound`` line.
+#:
+#: What closes it is not another measurement but a POLICY: a bound on how much may
+#: be excused. It does not move with the corpus, so it never needs re-pinning the
+#: way ``MIN_DECLARED_BLOCKS`` did — a fixture landing upstream cannot raise it,
+#: and only a deliberate edit here can. The ledger may only SHRINK. Raising this
+#: number is allowed and is meant to be conspicuous: it is a decision to prove
+#: less than the previous commit proved, and it belongs in a commit message.
+#:
+#: Checked UNCONDITIONALLY, unlike the derived magnitude. That one is gated on the
+#: run having opened canonical fixtures, because it compares the run against the
+#: corpus and has nothing to say about a checkout with no corpus at all. This is
+#: not a statement about the run: it reads a committed constant in this file, so a
+#: ``pytest -k`` subset and a corpus-less checkout are exactly as able to enforce
+#: it as CI is, and a ledger that grows cannot slip in behind a skipped suite.
+_MAX_LEDGERED_BLOCKS = 25
+
+
+def max_ledgered_blocks() -> int:
+    """The most :data:`KNOWN_UNBOUND_BLOCKS` entries this rung tolerates.
+
+    :data:`_MAX_LEDGERED_BLOCKS` unless :data:`MAX_LEDGERED_BLOCKS_ENV` overrides
+    it, read at call time so a self-test can exercise both sides of the ceiling
+    without reloading the module. A non-integer or negative override is rejected
+    rather than silently ignored: an override that does not parse would otherwise
+    read as "no override" and quietly restore the committed ceiling, which is the
+    one outcome the operator setting it cannot detect.
+    """
+    raw = os.environ.get(MAX_LEDGERED_BLOCKS_ENV)
+    if raw is None or not raw.strip():
+        return _MAX_LEDGERED_BLOCKS
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{MAX_LEDGERED_BLOCKS_ENV}={raw!r} is not an integer. The ceiling on "
+            f"KNOWN_UNBOUND_BLOCKS entries cannot be read, and falling back to the "
+            f"committed default would hide that from whoever set it."
+        ) from exc
+    if value < 0:
+        raise RuntimeError(
+            f"{MAX_LEDGERED_BLOCKS_ENV}={value} is negative. A ceiling below zero "
+            f"cannot be satisfied by any ledger, including an empty one."
+        )
+    return value
+
 
 #: Positive-evidence magnitude (``#lzvacuousrun`` / ``#lzblockfloorpin``). Zero
 #: declared blocks means zero unbound blocks, which reports OK having compared
@@ -834,6 +909,34 @@ def block_bind_failures(*, enforce_floor: bool = False) -> list[str]:
     unbound blocks — the vacuous green this rung would otherwise inherit.
     """
     lines: list[str] = []
+
+    # The ceiling (#lzledgerceiling), before anything about this run. Every other
+    # direction below compares the ledger against what the run did, and any
+    # consistent pair satisfies all of them — including the pair a commit creates
+    # when it detaches a bind and writes the matching entry. This is the one check
+    # here that reads only committed bytes, so it holds whatever the run opened.
+    try:
+        ceiling = max_ledgered_blocks()
+    except RuntimeError as exc:
+        lines.append(f"cannot read the KNOWN_UNBOUND_BLOCKS ceiling: {exc}")
+        return lines
+    ledgered = len(KNOWN_UNBOUND_BLOCKS)
+    if ledgered > ceiling:
+        lines.append(
+            f"KNOWN_UNBOUND_BLOCKS holds {ledgered} entr(y/ies), over the ceiling of "
+            f"{ceiling}. This ledger may only SHRINK. Every other direction this "
+            f"rung checks is the ledger against the run, and a commit that detaches "
+            f"a bind and writes the matching entry satisfies all of them — the two "
+            f"sides agree, at a worse level of coverage, and the derived "
+            f"site/digest magnitudes do not move because a detached block is still "
+            f"DECLARED. So the bound on how much may be excused is the only thing "
+            f"that can refuse it. Bind the block instead. Raising "
+            f"_MAX_LEDGERED_BLOCKS in {Path(__file__).name} is a deliberate "
+            f"decision to prove less than the last commit proved: make it in its "
+            f"own commit and say why. {MAX_LEDGERED_BLOCKS_ENV} overrides it for a "
+            f"single run, for bisecting an upstream corpus change — not for making "
+            f"this line go away."
+        )
 
     for site, reason in sorted(KNOWN_UNBOUND_BLOCKS.items()):
         if not reason.strip():
