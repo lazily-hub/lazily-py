@@ -528,28 +528,42 @@ def expected_ledgered_blocks() -> int:
     :data:`_EXPECTED_LEDGERED_BLOCKS` unless
     :data:`EXPECTED_LEDGERED_BLOCKS_ENV` overrides it, read at call time so a
     self-test can exercise both sides of the equality without reloading the
-    module. A non-integer or negative override is rejected rather than silently
-    ignored: an override that does not parse would otherwise read as "no
-    override" and quietly restore the committed pin, which is the one outcome the
-    operator setting it cannot detect.
+    module. An override that does not read as a count is rejected rather than
+    silently ignored: it would otherwise read as "no override" and quietly
+    restore the committed pin, which is the one outcome the operator setting it
+    cannot detect.
+
+    ONE parse for the whole family (``#lzpinparsestrict``): a NON-EMPTY run of
+    bare ASCII digits ``0``-``9``, and nothing else, checked BEFORE any parse
+    runs. Deliberately stricter than both :func:`int` and :meth:`str.isdigit`,
+    because each of those silently accepts a number nobody wrote: ``int("1_0")``
+    is 10 (PEP 515 separators), ``int(" 7 ")`` is 7, and ``"\u0663".isdigit()``
+    is true for the Arabic-Indic three. Refused: whitespace around or inside, a
+    leading ``+`` or ``-``, separators, a radix prefix, a float or an exponent,
+    and any non-ASCII digit. A negative falls out of the same check — no ledger
+    has a negative size, including an empty one, so it can never be met. Leading
+    zeros are fine and ``0`` stays valid; five bindings in this family pin at
+    zero.
+
+    An UNSET variable takes :data:`_EXPECTED_LEDGERED_BLOCKS`. An EXPLICITLY
+    EMPTY one is a REJECTION, not a fall-through to it. That distinction is the
+    whole point of the rule: ``export EXPECTED_LEDGERED_BLOCKS=`` and a typo that
+    expanded to nothing are indistinguishable from an unset variable to anyone
+    reading a green run, and whoever exported it is the one person who cannot see
+    that it was ignored.
     """
     raw = os.environ.get(EXPECTED_LEDGERED_BLOCKS_ENV)
-    if raw is None or not raw.strip():
+    if raw is None:
         return _EXPECTED_LEDGERED_BLOCKS
-    try:
-        value = int(raw.strip())
-    except ValueError as exc:
+    if not raw or raw.strip("0123456789"):
         raise RuntimeError(
-            f"{EXPECTED_LEDGERED_BLOCKS_ENV}={raw!r} is not an integer. The "
-            f"expected KNOWN_UNBOUND_BLOCKS size cannot be read, and falling back "
-            f"to the committed pin would hide that from whoever set it."
-        ) from exc
-    if value < 0:
-        raise RuntimeError(
-            f"{EXPECTED_LEDGERED_BLOCKS_ENV}={value} is negative. No ledger has a "
-            f"negative size, including an empty one, so this can never be met."
+            f"{EXPECTED_LEDGERED_BLOCKS_ENV}={raw!r} is not a non-negative "
+            f"integer in bare ASCII digits (#lzpinparsestrict). The expected "
+            f"KNOWN_UNBOUND_BLOCKS size cannot be read, and falling back to the "
+            f"committed pin — for an empty value as much as a malformed one — "
+            f"would hide that from whoever set it."
         )
-    return value
+    return int(raw)
 
 
 #: Positive-evidence magnitude (``#lzvacuousrun`` / ``#lzblockfloorpin``). Zero

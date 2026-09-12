@@ -1285,31 +1285,90 @@ def test_the_size_pin_failure_line_caps_the_sites_it_names(
     assert "and 3 more" in reported[0]
 
 
-@pytest.mark.parametrize("value", ["twenty", "25.5", "-1"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "twenty",
+        "25.5",
+        "-1",
+        "",
+        " ",
+        "1_0",
+        " 7 ",
+        "+1",
+        "1.0",
+        "0x19",
+        "\u0663",
+    ],
+)
 def test_a_size_pin_override_that_does_not_parse_fails_closed(
     block_ledger, monkeypatch, value: str
 ) -> None:
     """Falling back to the committed pin would hide the bad override from the one
-    person who cannot see it — whoever set it. `-1` is refused for the same
-    reason a malformed value is: no ledger has a negative size, so a negative pin
-    names a state that can never be reached and would report on every run."""
+    person who cannot see it — whoever set it.
+
+    The whole rejection set, because a bare `int()` accepts three of these and
+    `.isdigit()` accepts a fourth (`#lzpinparsestrict`). `1_0` is 10 to `int()`
+    under PEP 515, `" 7 "` is 7 because `int()` strips, and `int("\u0663")` is 3
+    because `int()` takes any Unicode decimal digit — each of those is a pin
+    NOBODY WROTE, silently enforced, which is the same unexaminable green the
+    ledger equality itself exists to refuse. `-1` is refused for the same reason
+    a malformed value is: no ledger has a negative size, so a negative pin names
+    a state that can never be reached and would report on every run.
+
+    An EXPLICITLY EMPTY value is in this set rather than in the default case
+    below. `export EXPECTED_LEDGERED_BLOCKS=` and a typo that expanded to nothing
+    are indistinguishable from an unset variable to anyone reading a green run,
+    so the empty string is a rejection that says so.
+    """
     monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, value)
 
     with pytest.raises(RuntimeError):
         expected_ledgered_blocks()
     reported = block_bind_failures()
     assert reported and "cannot read the KNOWN_UNBOUND_BLOCKS size pin" in reported[0]
+    assert repr(value) in reported[0], (
+        "the refusal must NAME the offending value; a reader who cannot see what "
+        "was rejected cannot tell a typo from a policy change"
+    )
     assert len(reported) == 1, (
         "an unreadable pin must fail closed and stop, not fall through to the "
         "directions that assume it was read"
     )
 
 
-def test_an_empty_size_pin_override_is_the_committed_pin(monkeypatch) -> None:
-    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, "  ")
+@pytest.mark.parametrize("value", ["25", "025", "0"])
+def test_a_well_formed_size_pin_override_parses(monkeypatch, value: str) -> None:
+    """Leading zeros are fine and `0` is valid — five bindings in this family pin
+    at zero, so a rule that refused `0` would be unusable there."""
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, value)
+    assert expected_ledgered_blocks() == int(value)
+
+
+def test_only_an_UNSET_size_pin_override_is_the_committed_pin(monkeypatch) -> None:
+    monkeypatch.delenv(EXPECTED_LEDGERED_BLOCKS_ENV, raising=False)
     assert expected_ledgered_blocks() == _EXPECTED_LEDGERED_BLOCKS
-    monkeypatch.delenv(EXPECTED_LEDGERED_BLOCKS_ENV)
-    assert expected_ledgered_blocks() == _EXPECTED_LEDGERED_BLOCKS
+
+
+def test_a_well_formed_but_wrong_size_pin_fails_on_the_EQUALITY_not_the_parse(
+    block_ledger, monkeypatch
+) -> None:
+    """The two failures must stay distinguishable.
+
+    A pin that cannot be READ and a pin that was read and DISAGREES with the
+    ledger call for opposite responses — fix the export, versus bind the block or
+    re-pin the line — so a reader has to be able to tell them apart from the
+    message alone. Validating before parsing is what keeps that true.
+    """
+    monkeypatch.setenv(EXPECTED_LEDGERED_BLOCKS_ENV, str(_EXPECTED_LEDGERED_BLOCKS + 1))
+
+    assert expected_ledgered_blocks() == _EXPECTED_LEDGERED_BLOCKS + 1
+    reported = block_bind_failures()
+    assert reported, "a pin above the ledger must be refused"
+    assert "cannot read the KNOWN_UNBOUND_BLOCKS size pin" not in reported[0], (
+        "a well-formed pin that disagrees is an EQUALITY failure, not a parse failure"
+    )
+    assert "SHRANK" in reported[0]
 
 
 def test_the_committed_ledger_size_is_exactly_the_committed_pin() -> None:
