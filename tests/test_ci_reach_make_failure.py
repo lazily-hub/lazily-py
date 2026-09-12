@@ -32,6 +32,7 @@ safe — the repo's own Makefile is never written.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -67,10 +68,12 @@ def _scratch_tree(tmp_path: Path) -> Path:
     return root
 
 
-def _run_guard(tree: Path) -> subprocess.CompletedProcess[str]:
+def _run_guard(tree: Path, **env_overrides: str) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ, **env_overrides)
     return subprocess.run(
         ["bash", str(tree / "scripts" / "check-ci-reach.sh")],
         cwd=tree,
+        env=env,
         capture_output=True,
         text=True,
     )
@@ -178,4 +181,84 @@ def test_the_failure_is_not_reported_as_a_missing_gate(tree: Path) -> None:
     )
     assert "check-ci-reach: OK" not in result.stdout, (
         f"the guard reached its OK verdict line anyway.\n{combined}"
+    )
+
+
+#: A name nothing can resolve, fed to the guard through its own `MAKE` override
+#: rather than by editing PATH: `command -v` and the invocation both read
+#: `MAKE_BIN`, so this exercises the same branch a make-less machine would.
+_ABSENT_MAKE = "definitely-not-make-and-never-will-be"
+
+
+def test_a_missing_make_is_named_as_a_missing_make(tree: Path) -> None:
+    """A missing interpreter is a different finding from one that ran and failed.
+
+    Measured before the `command -v` check existed, with `make` unresolvable:
+    the dry-run gate printed ``make said:`` followed by bash's own
+    ``command not found`` — a quote attributed to a process that never started —
+    and before that gate existed at all, `dry_run` swallowed the 127 for every
+    target and the run died at the vacuity floor saying `check` has no
+    prerequisite target carrying a gate, which names the Makefile when the cause
+    is the PATH.
+    """
+    result = _run_guard(tree, MAKE=_ABSENT_MAKE)
+
+    assert result.returncode != 0, (
+        f"the guard produced a verdict with no `make` to produce it from.\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "on PATH" in result.stderr, (
+        f"the guard failed without saying that the TOOL is missing, so the "
+        f"reader is sent to the Makefile or the workflow instead of to their "
+        f"PATH.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "command not found" not in result.stderr, (
+        f"bash's own `command not found` reached the operator, which means the "
+        f"absent tool was discovered by USING it rather than by the guard. That "
+        f"is the shape where the guard sits below its first use and is dead "
+        f"code.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    combined = result.stdout + result.stderr
+    assert "no gate" not in combined, (
+        f"targets were classified from a make that never ran.\n{combined}"
+    )
+    assert "check-ci-reach: OK" not in result.stdout, (
+        f"the guard reached its OK verdict line anyway.\n{combined}"
+    )
+
+
+def test_the_availability_guard_precedes_the_first_make_invocation() -> None:
+    """Source order, asserted directly: guard above use, or the guard is dead.
+
+    This is a placement property, not a behavioural one, and it cannot be
+    reached by running the script — a guard moved below its first use simply
+    stops being the thing that reports, and the test above would then fail for
+    a reason that reads like a message-wording change. Pin the order itself.
+    """
+    lines = CI_REACH_SCRIPT.read_text(encoding="utf-8").splitlines()
+    executable = [
+        (number, line)
+        for number, line in enumerate(lines, start=1)
+        if not line.lstrip().startswith("#")
+    ]
+    guards = [n for n, line in executable if 'command -v "$MAKE_BIN"' in line]
+    uses = [n for n, line in executable if '"$MAKE_BIN" -n' in line]
+
+    assert len(guards) == 1, (
+        f'expected exactly one `command -v "$MAKE_BIN"` availability guard on '
+        f"an executable line of {CI_REACH_SCRIPT}; found {guards}. A count of "
+        f"zero does not mean make is guaranteed present — it means this test can "
+        f"no longer see the guard, and an ordering assertion over a guard it "
+        f"cannot see is vacuously true."
+    )
+    assert uses, (
+        f'found no `"$MAKE_BIN" -n` invocation in {CI_REACH_SCRIPT}, so either '
+        f"the script stopped consuming make or this pattern went stale. Either "
+        f"way the ordering below is asserted over nothing."
+    )
+    assert guards[0] < min(uses), (
+        f"the make-availability guard is on line {guards[0]}, BELOW the first "
+        f"invocation on line {min(uses)}. A tool-availability guard below its "
+        f"own first use is dead code: the missing tool surfaces as bash's "
+        f"`command not found` with neither the guard's name nor its remedy."
     )

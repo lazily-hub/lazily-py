@@ -230,12 +230,36 @@ is_makefile_target() {
 # No temp file: a second `trap ... EXIT` would REPLACE the one the anchor files
 # install further down, so make's diagnostic is captured into a variable.
 # `2>&1 >/dev/null` in that order keeps stderr and discards the recipe dump.
+# `command -v` FIRST, above every use. A tool-availability guard below its own
+# first use is dead code, and both spellings of this one were measured with
+# `make` off PATH (`MAKE=definitely-not-make`):
+#
+#   * before the gate below existed, `dry_run` swallowed the 127 for EVERY
+#     target and the run reached the vacuity floor — "'check' has no
+#     prerequisite target carrying a gate — nothing was verified", exit 1. Fail
+#     closed, but it names the Makefile when the cause is the PATH.
+#   * with the gate below but no check here, it printed "make said:" followed by
+#     bash's own `definitely-not-make: command not found` — a quote attributed
+#     to a process that never started.
+#
+# A missing interpreter and an interpreter that ran and found nothing are
+# different findings; they must not share a diagnostic. This one carries its own
+# name and its own remedy.
+if ! command -v "$MAKE_BIN" >/dev/null 2>&1; then
+	echo "check-ci-reach: no '$MAKE_BIN' on PATH, so every verdict below would be derived" >&2
+	echo "                from a program that never ran. This guard IS a make consumer —" >&2
+	echo "                it dry-runs '$ROOT_TARGET' to read each recipe back out of make." >&2
+	echo "                Install make, or name yours:" >&2
+	echo "                  MAKE=/path/to/make $0" >&2
+	exit 1
+fi
+
 make_dry_err=""
 if ! make_dry_err="$("$MAKE_BIN" -n "$ROOT_TARGET" 2>&1 >/dev/null)"; then
 	echo "check-ci-reach: '$MAKE_BIN -n $ROOT_TARGET' FAILED, so every recipe below would" >&2
 	echo "                read as empty and every target would be reported as carrying no" >&2
 	echo "                gate — a broken Makefile announced as OK (#lzgrepcpipefail)." >&2
-	echo "                make said:" >&2
+	echo "                $MAKE_BIN said:" >&2
 	printf '%s\n' "$make_dry_err" | sed 's/^/                  /' >&2
 	exit 1
 fi
