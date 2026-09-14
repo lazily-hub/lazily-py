@@ -46,6 +46,17 @@
 #   side rather than the closure: which STEP runs each gate. It brings a rung of
 #   its own, the anchor-collision check, for the one case step-scoping cannot see.
 #
+#   Four more, added under #verifyworkflowactually, are about neither the closure
+#   nor the steps but about ACTIVATION — whether the workflow and the job run at
+#   all. Everything above them is a claim about what CI would run IF it ran, and
+#   `ci-reach.conf`'s "runs on every push" was a COMMENT holding the whole audit
+#   up: with it untrue, every pin above stays green while no gate runs on any
+#   push. `EXPECTED_TRIGGERS`, `EXPECTED_TRIGGER_FILTERS`, `EXPECTED_GATE_JOBS`
+#   and `EXPECTED_GATE_JOB_GUARDS` pin that layer as exact values in both
+#   directions. Read their declarations for the measurements; read the table below
+#   for which of them is load-bearing for what, including the one that is the sole
+#   catcher of nothing.
+#
 #   Each of these was measured on this Makefile at exit 0 before the pin it
 #   answers existed; the cases are recorded above each one. They divide cleanly,
 #   and the division is worth keeping straight when reading a failure:
@@ -56,7 +67,18 @@
 #     the GATE-STEP pin        each member's gate is still run by the CI step
 #                              claimed to run it
 #     the COLLISION rung       no pinned step runs a SECOND member's gate
+#     the TRIGGER pin          the workflow's `on:` keys are the pinned ones
+#     the TRIGGER-FILTER pin   and so are the filters under each of them
+#     the GATE-JOB pin         the gate steps are in the pinned job(s)
+#     the JOB-GUARD pin        and that job's `if:` / `continue-on-error:` values
+#                              are the pinned ones
 #     the VACUITY floor        the audit did not evaluate nothing
+#
+#   TEN MECHANISMS, and the last four are #verifyworkflowactually. They are
+#   ACTIVATION pins: everything above them is about what CI would run IF it ran,
+#   and until they existed nothing here had an opinion about whether it runs. Each
+#   one's measured coverage — including the one that catches nothing on its own —
+#   is in the table below; do not infer it from the descriptions.
 #
 #   None of them says the set is CORRECT.
 #
@@ -95,8 +117,31 @@
 #     a pinned step carrying `if:` or       GATE-STEP's guard rung, and only
 #     `continue-on-error: true`             because the step map gave this guard
 #                                          a handle on the step at all
-#     the JOB or the TRIGGER never          NOTHING. UNPROTECTED. See WHAT IT
-#     running                               DOES NOT PROVE.
+#     `on:` reduced to `workflow_dispatch` TRIGGERS and TRIGGER-FILTER, each
+#                                          sufficient ALONE — dropping `push`
+#                                          drops its `branches:` row with it.
+#                                          Measured: revert either and it is
+#                                          still refused; revert both and it
+#                                          exits 0.
+#     a trigger ADDED (`pull_request:`, no TRIGGERS only, and it is the only
+#     filters of its own)                  fault that isolates it. It is also
+#                                          the edit that would close the pull-
+#                                          request gap below: it reds this guard
+#                                          on purpose, so widening the trigger
+#                                          set is a reviewable edit and not a
+#                                          silent one.
+#     `branches: ["**"]` narrowed, or a    TRIGGER-FILTER only.
+#     `paths:` filter introduced
+#     job-level `if: false`, a never-true  JOB-GUARD only. All three are the
+#     job-level `if:`, or job-level        same row moving from `<absent>` to a
+#     `continue-on-error: true`            value.
+#     a gate step moved to another job, or JOB-GUARD alone is sufficient, and
+#     the gate job renamed                 GATE-JOB alone is too. Measured:
+#                                          revert either and both attacks are
+#                                          still refused; revert BOTH and they
+#                                          exit 0. So GATE-JOB is the sole
+#                                          catcher of NOTHING — see the third
+#                                          conclusion below for why it is kept.
 #     a recipe repointed at a SIBLING       NOTHING. Residual, one step wide
 #     command in its OWN pinned step        here. See WHAT IT DOES NOT PROVE.
 #     a member's reach MODE flipping        GATE-STEP, both directions, because
@@ -114,13 +159,27 @@
 #                                          member's step drops it back into the
 #                                          domain unpinned.
 #
-#   TWO CONCLUSIONS WORTH MORE THAN THE IMPLEMENTATION.
+#   THREE CONCLUSIONS WORTH MORE THAN THE IMPLEMENTATION.
 #
 #   1. The GATE-STEP pin and the COLLISION rung are two PROPERTIES, not two
 #      spellings of one. They overlap on the member-to-member repoint and each has
 #      a case the other cannot see, both measured above. Keep both.
 #
-#   2. The VACUITY floor is now restated TWICE, and last cycle's note that the
+#   2. The GATE-JOB pin is the SECOND rung in this file whose only remaining
+#      property is failing closed when its partner is deleted — the vacuity
+#      floor's shape exactly, and the second time this design has produced it.
+#      Measured, in one table, rather than argued from the descriptions: reverting
+#      GATE-JOB alone leaves all nine activation attacks refused, so it is the
+#      sole catcher of none of them; reverting JOB-GUARD alone leaves the two
+#      job-MOVE attacks refused, which is GATE-JOB catching them; reverting both
+#      turns those two green. It is kept for that, and because its row is the one
+#      a reader can read as "the set of jobs that gate this repo", where the
+#      JOB-GUARD rows are two per job and read as a value table. It is NOT a
+#      second spelling of JOB-GUARD's property, and it is not load-bearing for any
+#      fault on its own; both halves of that are said out loud here so the next
+#      reader does not have to re-measure to find out which.
+#
+#   3. The VACUITY floor is now restated TWICE, and last cycle's note that the
 #      classification pin subsumes its trigger understated it. Its only remaining
 #      property is surviving both pins being deleted. It was also PRE-EMPTING
 #      them — its early `exit 1` printed "nothing was verified" and suppressed the
@@ -215,20 +274,27 @@
 #   sibling guards (conformance-coverage, assertion-keys, scenario-coverage) are
 #   what prove a run examined anything.
 #
-#   THAT THE JOB, OR THE WORKFLOW, EVER RUNS. This is the gap underneath
-#   everything above, and lazily-js measured it: a pinned step can exist, be
-#   unique, be unconditional and run the gate, inside a job that never runs.
-#   Job-level `if: false`, job-level `continue-on-error: true`, and `on:` reduced
-#   to `workflow_dispatch` are all green here, verified rather than assumed
-#   (tests/test_ci_reach_step_pin.py asserts all three, so closing any of them
-#   fails loudly instead of leaving a test that quietly asserted the hole).
-#   scripts/ci-reach.conf's claim that precommit.yml "runs on every push to every
-#   branch and on every PR head" is a COMMENT, and it is the unverified premise
-#   the whole audit rests on. The STEP-level halves ARE closed — a pinned step
-#   carrying `if:` or `continue-on-error: true` is refused — and they were closable
-#   only because the step map gave this guard a handle on the step. The job and
-#   trigger levels need a handle nothing here has; filed separately rather than
-#   half-built.
+#   THAT THE GATE SET RUNS ON A PULL REQUEST. The job and trigger levels ARE
+#   closed now (#verifyworkflowactually) — the four activation pins above hold the
+#   `on:` keys, their filters, the gate job and its guards to exact values, and
+#   each of lazily-js's three states exits 1 naming what changed. What that closes
+#   is DRIFT, not correctness, and measuring it turned up the one thing here that
+#   is not a drift problem:
+#
+#   precommit.yml has NO `pull_request:` trigger. It is the only counted workflow
+#   in the family without one — the other eight bindings are `push` +
+#   `pull_request`. Push with `branches: ["**"]` covers a SAME-REPO pull request,
+#   because the push to the head branch is itself a run and GitHub files that
+#   run's checks under the PR's head sha; measured on all four merged PRs in this
+#   repo, each of which carries three green `precommit (3.1x)` checks. It does NOT
+#   cover a FORK pull request, whose push happens in the fork, nor the
+#   `refs/pull/N/merge` commit that `pull_request` would test — so a PR green on
+#   its head and broken against an updated base is caught only after the merge
+#   lands on main. Today that is latent (0 forks, no branch protection, every PR
+#   so far same-repo and from the owner) and it is REPORTED rather than fixed:
+#   changing `on:` is a behaviour change, not this guard's to make. The trigger
+#   pin means it cannot change unnoticed in either direction — adding
+#   `pull_request:` reds this guard until the pin moves with it.
 #
 #   THAT A GATE CANNOT BE REPOINTED WITHIN ITS OWN PINNED STEP. Scoping narrows
 #   the haystack to one step, and a step carrying more than one anchor still
@@ -520,6 +586,183 @@ gate_step_index_of() {
 	done
 	return 1
 }
+
+# WHETHER THE WORKFLOW AND THE JOB RUN AT ALL, pinned (#verifyworkflowactually).
+#
+# This is the gap every pin above rested on. lazily-js measured it: a pinned gate
+# step can exist, be unique, be unconditional and run the gate — inside a job or a
+# workflow that never runs. All three of these left this guard at exit 0, with
+# output byte-identical to a healthy tree:
+#
+#   job-level `if: false`                 the job is skipped; the steps are perfect
+#   job-level `continue-on-error: true`   the job's failure stops failing the run
+#   `on:` reduced to `workflow_dispatch`  nothing runs unless someone clicks it
+#
+# And scripts/ci-reach.conf's claim that precommit.yml "runs on every push to
+# every branch" was a COMMENT — the one premise the whole audit rested on that
+# nothing checked.
+#
+# VALUES, NOT ABSENCES. The tempting rule is "no job-level continue-on-error, no
+# `if:`", and it is wrong: lazily-zig has a legitimate job-level
+# `continue-on-error: ${{ matrix.zig == 'master' }}` for its advisory master leg,
+# and an absence rule would false-red a correct config. So the four pins below are
+# set-equalities over exact values, in both directions, which is the same
+# fails-when-stale property as every other pin in this file. Absent is spelled
+# `<absent>` rather than left as a missing row, so absent -> present is a CHANGED
+# value with a name rather than a row a reader has to notice is gone.
+#
+#   EXPECTED_TRIGGERS          the exact top-level `on:` keys, per counted workflow
+#   EXPECTED_TRIGGER_FILTERS   the exact sub-keys under each trigger and their
+#                              values — `branches:`, `paths:`, `tags:`, `types:`,
+#                              `branches-ignore:`, anything
+#   EXPECTED_GATE_JOBS         the exact jobs holding the pinned gate steps
+#   EXPECTED_GATE_JOB_GUARDS   per gate job, the exact `if:` and
+#                              `continue-on-error:` values
+#
+# WHAT EACH ONE CATCHES, measured on this workflow before it existed — every row
+# below was exit 0 with byte-identical output first:
+#
+#   `on:` -> workflow_dispatch only        TRIGGERS: the `push` row goes missing
+#   `branches: ["**"]` -> `["main"]`       TRIGGER_FILTERS: value changed
+#   a `paths:` filter introduced           TRIGGER_FILTERS: a surplus row. NO
+#                                          BINDING HAS ONE TODAY, which is the
+#                                          point — a `paths:` filter excluding
+#                                          `Makefile` means a gate-retiring edit
+#                                          does not even trigger the workflow that
+#                                          would have caught it.
+#   a gate step moved to another job       GATE_JOBS: the old job goes missing and
+#                                          the new one is surplus (and the guard
+#                                          rows move with it, so this edit is named
+#                                          twice — both findings are true and
+#                                          neither is suppressed)
+#   job-level `if: false`                  GATE_JOB_GUARDS: `if=<absent>` ->
+#                                          `if=false`
+#   job-level `continue-on-error: true`    GATE_JOB_GUARDS: same, for that key
+#
+# THE MATRIX QUESTION, since it is the same defect one level down. This gate job
+# runs under `strategy.matrix.python-version: ['3.12', '3.13', '3.14']` and NO leg
+# is advisory — there is no job-level `continue-on-error` at all — so all three
+# legs are blocking. A leg cannot be made advisory without a job-level
+# `continue-on-error`, and GATE_JOB_GUARDS names that in the absent -> present
+# direction, so "the only blocking leg was removed" is closed here as a
+# consequence of the guard pin rather than by a matrix pin. What is NOT closed is
+# NARROWING the matrix to one interpreter: that loses coverage without de-gating,
+# and no pin here sees it. It is pinned as a standing test instead
+# (tests/test_ci_reach_activation_pin.py), which is where this file's other
+# measured-but-not-guarded facts live.
+#
+# WHAT THESE FOUR STILL DO NOT PROVE, and it is the one finding this work
+# produced rather than closed: that the gate set runs on a PULL REQUEST. This is
+# the family's only counted workflow with no `pull_request` trigger — see
+# scripts/ci-reach.conf, which now states what is true instead of what was
+# assumed. The trigger set is pinned, so it cannot change unnoticed; it is not
+# CORRECTED, because changing `on:` is a behaviour change and not this guard's to
+# make.
+#
+# Sorted, one row per fact, verified below rather than asked for in a comment.
+# `<workflow>` then whitespace then the rest, the same shape EXPECTED_GATE_STEPS
+# and `excuse:` use.
+EXPECTED_TRIGGERS=(
+	".github/workflows/precommit.yml  push"
+	".github/workflows/precommit.yml  workflow_dispatch"
+)
+
+# `<none>` as the ONLY entry means "this workflow has no trigger filters at all",
+# which is a legitimate state elsewhere in the family (`on: [push, pull_request]`)
+# and is spelled explicitly so that an EMPTY array stays what it is everywhere
+# else here: a pin somebody deleted.
+EXPECTED_TRIGGER_FILTERS=(
+	".github/workflows/precommit.yml  push  branches=**"
+)
+
+EXPECTED_GATE_JOBS=(
+	".github/workflows/precommit.yml  precommit"
+)
+
+EXPECTED_GATE_JOB_GUARDS=(
+	".github/workflows/precommit.yml  precommit  continue-on-error=<absent>"
+	".github/workflows/precommit.yml  precommit  if=<absent>"
+)
+
+# Canonicalize a pin array or a discovered row set to `<f1> TAB <f2> [TAB <rest>]`
+# so a hand-aligned array and a scraped row compare as the same fact. `want` is
+# the field count: 2 for the two-field pins, 3 for the ones carrying a `key=value`.
+# `rest` keeps its internal single spaces, and a row with too few fields is
+# reported as BADPIN rather than silently truncated to a shorter, matchable one.
+canon_rows() {
+	awk -v want="$1" '
+		{
+			line = $0
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+			if (line == "") next
+			n = split(line, t, /[[:space:]]+/)
+			if (n < want) { print "BADPIN\t" line; next }
+			if (want == 2) {
+				if (n != 2) { print "BADPIN\t" line; next }
+				print t[1] "\t" t[2]
+				next
+			}
+			rest = t[3]
+			for (i = 4; i <= n; i++) rest = rest " " t[i]
+			print t[1] "\t" t[2] "\t" rest
+		}
+	'
+}
+
+# Every activation pin, refused the moment it is unreadable or empty. An empty one
+# is refused by name for the KNOWN_UNCOVERED reason: a count of zero does not mean
+# there is nothing to pin, it means nobody pinned anything — and here it would
+# announce itself as OK in the only direction that matters, by reporting every
+# discovered trigger as unpinned.
+act_pin_problems=0
+for act_pin_spec in \
+	"EXPECTED_TRIGGERS 2" \
+	"EXPECTED_TRIGGER_FILTERS 3" \
+	"EXPECTED_GATE_JOBS 2" \
+	"EXPECTED_GATE_JOB_GUARDS 3"; do
+	act_pin_name="${act_pin_spec%% *}"
+	act_pin_want="${act_pin_spec##* }"
+	eval "act_pin_entries=(\"\${${act_pin_name}[@]+\"\${${act_pin_name}[@]}\"}\")"
+	if [ "${#act_pin_entries[@]}" -eq 0 ]; then
+		echo "check-ci-reach: $act_pin_name is empty, so this guard pins nothing about" >&2
+		echo "                whether the audited workflow or its gate job runs at all —" >&2
+		echo "                which is the state where 'on: workflow_dispatch' and a" >&2
+		echo "                job-level 'if: false' are both green (#verifyworkflowactually)." >&2
+		echo "                If the fact it pinned genuinely went away, say so in a row:" >&2
+		echo "                a lone '<none>' for the filter pin, not an empty array." >&2
+		act_pin_problems=$((act_pin_problems + 1))
+		continue
+	fi
+	if [ "$act_pin_name" = "EXPECTED_TRIGGER_FILTERS" ] &&
+		[ "${#act_pin_entries[@]}" -eq 1 ] &&
+		[ "${act_pin_entries[0]}" = "<none>" ]; then
+		continue
+	fi
+	act_pin_c="$(printf '%s\n' "${act_pin_entries[@]}" | canon_rows "$act_pin_want")"
+	if printf '%s\n' "$act_pin_c" | grep -q '^BADPIN	'; then
+		echo "check-ci-reach: $act_pin_name entr(ies) this guard cannot parse:" >&2
+		printf '%s\n' "$act_pin_c" | sed -n 's/^BADPIN\t/  - /p' >&2
+		echo "                A row with fewer than $act_pin_want fields pins a shorter fact" >&2
+		echo "                than it reads as, and the set-equality below would compare it" >&2
+		echo "                against nothing (#verifyworkflowactually)." >&2
+		act_pin_problems=$((act_pin_problems + 1))
+		continue
+	fi
+	act_pin_sorted="$(printf '%s\n' "$act_pin_c" | LC_ALL=C sort -u)"
+	if [ "$act_pin_sorted" != "$(printf '%s\n' "$act_pin_c")" ]; then
+		echo "check-ci-reach: $act_pin_name is not in canonical form — sort it and remove" >&2
+		echo "                duplicates. A duplicate is how a hand-merge keeps a row it" >&2
+		echo "                meant to replace, and unsorted rows turn a one-line diff of" >&2
+		echo "                this pin into a puzzle. Canonical form is:" >&2
+		printf '%s\n' "$act_pin_sorted" | sed 's/\t/  /g; s/^/                  /' >&2
+		act_pin_problems=$((act_pin_problems + 1))
+		continue
+	fi
+done
+
+if [ "$act_pin_problems" -gt 0 ]; then
+	exit 1
+fi
 
 # An empty pin would make the set-equality check below vacuous in the only
 # direction that matters, and it would announce itself as OK: an empty pin can
@@ -1020,6 +1263,220 @@ ci_step_commands() {
 	' "$@"
 }
 
+# The top-level `on:` block of each counted workflow, as rows
+# (#verifyworkflowactually):
+#
+#   trigger  <workflow>  <trigger>                    one per `on:` key
+#   filter   <workflow>  <trigger>  <subkey>=<v1,v2>  one per sub-key under one
+#
+# Three `on:` spellings are read — `on: push`, `on: [push, pull_request]`, and the
+# block mapping this repo uses — and anything else emits an UNPARSED row, which
+# the caller treats as a hard failure. That direction matters more than the
+# coverage: a scraper that silently produced no triggers for a shape it did not
+# understand would report the pinned set as entirely missing, which reads like a
+# deleted `on:` block, or — worse, if the pin were ever emptied — like agreement.
+#
+# Sub-key values are collected from an inline flow list, a bare scalar, or block
+# sequence items, and a nested MAPPING under a sub-key (`workflow_dispatch:
+# inputs:`) becomes the literal `<mapping>` so it has to be pinned by hand rather
+# than flattened into something that looks like a filter value.
+#
+# Trailing `#` comments are stripped only from lines carrying no quote character,
+# so `branches: ["**"]  # every branch` is left intact rather than truncated at a
+# `#` that might have been inside the string.
+wf_activation() {
+	awk '
+		function flushvals() {
+			if (trig != "" && sub_k != "") {
+				key = wf SUBSEP trig SUBSEP sub_k
+				V[key] = vals
+			}
+			sub_k = ""; vals = ""
+		}
+		function addval(v) {
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+			if (v ~ /^".*"$/ || v ~ /^'"'"'.*'"'"'$/) v = substr(v, 2, length(v) - 2)
+			if (v == "") return
+			vals = (vals == "" ? v : vals "," v)
+		}
+		function addflow(s,   n, i, parts) {
+			sub(/^\[/, "", s); sub(/\][[:space:]]*$/, "", s)
+			n = split(s, parts, /,/)
+			for (i = 1; i <= n; i++) addval(parts[i])
+		}
+		function newtrig(t) {
+			flushvals()
+			trig = t
+			T[wf SUBSEP trig] = 1
+			trig_sub_indent = -1
+		}
+		FNR == 1 {
+			flushvals()
+			wf = FILENAME
+			seen_on[wf] = 0
+			inon = 0; trig = ""; trig_indent = -1; trig_sub_indent = -1; vals = ""; sub_k = ""
+		}
+		/^[[:space:]]*#/ { next }
+		/^[[:space:]]*$/ { next }
+		{
+			line = $0
+			indent = match(line, /[^ ]/) - 1
+			body = line
+			sub(/^[[:space:]]+/, "", body)
+			sub(/[[:space:]]+$/, "", body)
+			# Trailing comments are stripped ONLY on lines carrying no quote, so
+			# a `branches: ["**"]  # note` is left alone rather than truncated at
+			# a `#` that might be inside a string.
+			if (body !~ /["'"'"']/) sub(/[[:space:]]+#.*$/, "", body)
+		}
+		indent == 0 {
+			flushvals()
+			trig = ""; trig_indent = -1; trig_sub_indent = -1
+			key = body
+			sub(/:.*$/, "", key)
+			gsub(/^["'"'"']|["'"'"']$/, "", key)
+			if (key != "on") { inon = 0; next }
+			inon = 1
+			seen_on[wf] = 1
+			rest = body
+			sub(/^[^:]*:[[:space:]]*/, "", rest)
+			if (rest == "") next
+			# `on: push` and `on: [push, pull_request]`, the two one-line forms.
+			if (rest ~ /^\[/) {
+				n = split(rest, p, /,/)
+				sub(/^\[/, "", p[1]); sub(/\][[:space:]]*$/, "", p[n])
+				for (i = 1; i <= n; i++) {
+					v = p[i]
+					gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+					gsub(/^["'"'"']|["'"'"']$/, "", v)
+					if (v != "") T[wf SUBSEP v] = 1
+				}
+			} else {
+				gsub(/^["'"'"']|["'"'"']$/, "", rest)
+				T[wf SUBSEP rest] = 1
+			}
+			inon = 0
+			next
+		}
+		!inon { next }
+		{
+			if (trig_indent < 0) trig_indent = indent
+			if (indent < trig_indent) { inon = 0; next }
+			if (indent == trig_indent) {
+				if (body !~ /^[A-Za-z_][A-Za-z0-9_-]*:/) {
+					printf("UNPARSED\t%s\t%s\n", wf, body)
+					next
+				}
+				t = body
+				sub(/:.*$/, "", t)
+				newtrig(t)
+				rest = body
+				sub(/^[^:]*:[[:space:]]*/, "", rest)
+				if (rest != "") printf("UNPARSED\t%s\t%s\n", wf, body)
+				next
+			}
+			# Deeper than the trigger key: a filter sub-key, its inline value, or
+			# a block-sequence item belonging to the sub-key above it.
+			if (trig_sub_indent < 0) trig_sub_indent = indent
+			if (body ~ /^-([[:space:]]|$)/) {
+				if (sub_k == "") {
+					printf("UNPARSED\t%s\t%s\n", wf, body)
+					next
+				}
+				v = body
+				sub(/^-[[:space:]]*/, "", v)
+				addval(v)
+				next
+			}
+			if (body !~ /^[A-Za-z_][A-Za-z0-9_-]*:/) {
+				printf("UNPARSED\t%s\t%s\n", wf, body)
+				next
+			}
+			if (indent > trig_sub_indent) {
+				# A nested MAPPING under a filter sub-key. Not modelled as a value
+				# list; recorded as <mapping> so it has to be pinned by hand.
+				vals = "<mapping>"
+				next
+			}
+			flushvals()
+			sub_k = body
+			sub(/:.*$/, "", sub_k)
+			rest = body
+			sub(/^[^:]*:[[:space:]]*/, "", rest)
+			if (rest ~ /^\[/) { addflow(rest); flushvals(); next }
+			if (rest != "") { addval(rest); flushvals(); next }
+			next
+		}
+		END {
+			flushvals()
+			for (k in T) {
+				split(k, a, SUBSEP)
+				printf("trigger\t%s\t%s\n", a[1], a[2])
+			}
+			for (k in V) {
+				split(k, a, SUBSEP)
+				printf("filter\t%s\t%s\t%s=%s\n", a[1], a[2], a[3], V[k])
+			}
+			for (f in seen_on) if (seen_on[f] == 0) printf("NOON\t%s\n", f)
+		}
+	' "$@"
+}
+
+# Job-level `if:` and `continue-on-error:`, as `<workflow> <job> <key> <value>`
+# (#verifyworkflowactually).
+#
+# JOB-level, not step-level, and the difference is the whole point: the step map
+# above already refuses a pinned STEP carrying either, and a job-level one is
+# invisible to it while having exactly the same effect on every step inside. The
+# separation is by indentation — the first key indent inside each job is LEARNED
+# rather than assumed to be four spaces, and step keys sit deeper — so a step's
+# own `if: always()` is not mistaken for the job's.
+#
+# The VALUE is carried verbatim, because the pin is a value and not an absence:
+# lazily-zig's advisory master leg is a legitimate job-level
+# `continue-on-error: ${{ matrix.zig == 'master' }}`, and a rule that refused any
+# job-level guard would false-red it.
+wf_job_guards() {
+	awk '
+		FNR == 1 { wf = FILENAME; injobs = 0; job = ""; job_indent = -1; jobkey_indent = -1 }
+		/^[[:space:]]*#/ { next }
+		/^[[:space:]]*$/ { next }
+		{
+			indent = match($0, /[^ ]/) - 1
+			body = $0
+			sub(/^[[:space:]]+/, "", body)
+			sub(/[[:space:]]+$/, "", body)
+		}
+		indent == 0 {
+			injobs = (body ~ /^jobs:[[:space:]]*$/)
+			job = ""; job_indent = -1; jobkey_indent = -1
+			next
+		}
+		!injobs { next }
+		{
+			if (job_indent < 0 && body ~ /^[A-Za-z0-9_.-]+:[[:space:]]*$/) job_indent = indent
+			if (indent == job_indent && body ~ /^[A-Za-z0-9_.-]+:[[:space:]]*$/) {
+				job = body
+				sub(/:[[:space:]]*$/, "", job)
+				jobkey_indent = -1
+				next
+			}
+			if (job == "") next
+			if (indent <= job_indent) next
+			if (jobkey_indent < 0) jobkey_indent = indent
+			if (indent != jobkey_indent) next
+			if (body ~ /^if:/) {
+				v = body; sub(/^if:[[:space:]]*/, "", v)
+				printf("%s\t%s\tif\t%s\n", wf, job, v)
+			}
+			if (body ~ /^continue-on-error:/) {
+				v = body; sub(/^continue-on-error:[[:space:]]*/, "", v)
+				printf("%s\t%s\tcontinue-on-error\t%s\n", wf, job, v)
+			}
+		}
+	' "$@"
+}
+
 # ------------------------------------------------------------------- normalizing
 
 # Reduce command text to anchors, one per line, each a space-separated token list.
@@ -1357,7 +1814,8 @@ ci_raw="$(mktemp)"
 ci_anchor="$(mktemp)"
 ci_step_anchor="$(mktemp)"
 gate_anchors_file="$(mktemp)"
-trap 'rm -f "$ci_steps" "$ci_raw" "$ci_anchor" "$ci_step_anchor" "$gate_anchors_file"' EXIT
+jg_found_file="$(mktemp)"
+trap 'rm -f "$ci_steps" "$ci_raw" "$ci_anchor" "$ci_step_anchor" "$gate_anchors_file" "$jg_found_file"' EXIT
 ci_step_commands "${workflows[@]}" >"$ci_steps"
 
 # The flat command stream is DERIVED from the labelled one, not scraped again.
@@ -1492,9 +1950,11 @@ fi
 # lazily-js measured the level above this one: a pinned step can exist, be
 # unique, be unconditional and run the gate, in a JOB or a WORKFLOW that never
 # runs — job-level `if: false`, job-level `continue-on-error: true`, and `on:`
-# reduced to `workflow_dispatch` all stay green, because nothing here has a
-# handle on the job or the trigger. That is filed as its own item and is NOT
-# closed; see WHAT IT DOES NOT PROVE.
+# reduced to `workflow_dispatch` all stayed green, because nothing here had a
+# handle on the job or the trigger. That level is closed by the four activation
+# pins (#verifyworkflowactually); this rung is still the STEP-level half, and the
+# two do not substitute for each other — a step-level `if:` is invisible to a job
+# pin and a job-level one is invisible to this rung.
 #
 # The STEP-level halves are closed, and only because the step map gave this guard
 # a handle on the step at all. `continue-on-error: true` turns the gate's failure
@@ -1911,6 +2371,314 @@ if [ -n "$gs_collisions" ]; then
 	status=1
 fi
 
+# ACTIVATION: does the workflow run, and does the gate job run
+# (#verifyworkflowactually).
+#
+# Four set-equalities, reported HERE rather than before the verdicts above for the
+# same reason the vacuity floor moved last: a failure here does not invalidate a
+# single reach verdict — the steps are exactly where they were — and pre-empting
+# the reach report would hide which gates are in which step while telling the
+# reader the workflow does not run. Both halves of the picture print.
+act_rows="$(wf_activation "${workflows[@]}")"
+act_bad="$(printf '%s\n' "$act_rows" | awk -F'\t' '$1 == "UNPARSED" || $1 == "NOON"')"
+if [ -n "$act_bad" ]; then
+	echo >&2
+	echo "check-ci-reach: this guard could not read the 'on:' block of a counted" >&2
+	echo "                workflow:" >&2
+	printf '%s\n' "$act_bad" | sed 's/\t/  /g; s/^/  - /' >&2
+	echo "                A NOON row means no top-level 'on:' key was found at all; an" >&2
+	echo "                UNPARSED row is a shape the three supported spellings do not" >&2
+	echo "                cover. Either way the trigger pin below would be comparing" >&2
+	echo "                against nothing, so it is refused rather than reported as a" >&2
+	echo "                missing trigger (#verifyworkflowactually)." >&2
+	status=1
+fi
+
+act_report() {
+	# `<pinned but not found>` / `<found but not pinned>` for one pin, with the
+	# rows printed in the pin's own spelling so a reader can paste the fix.
+	local label="$1" missing="$2" surplus="$3" why="$4"
+	echo >&2
+	if [ -n "$missing" ]; then
+		echo "check-ci-reach: pinned in $label, but NOT how the workflow reads now:" >&2
+		printf '%s\n' "$missing" | sed 's/\t/  /g; s/^/  - /' >&2
+	fi
+	if [ -n "$surplus" ]; then
+		echo "check-ci-reach: in the workflow now, and NOT pinned in $label:" >&2
+		printf '%s\n' "$surplus" | sed 's/\t/  /g; s/^/  - /' >&2
+	fi
+	# WHY once, after both directions. A changed value is a missing row AND a
+	# surplus row, and printing the same paragraph twice reads like two findings.
+	printf '%s\n' "$why" | sed 's/^/                /' >&2
+}
+
+act_diff() {
+	# Set-equality between a canonicalized pin and a canonicalized discovery.
+	# Both sides go through `canon_rows`, so a hand-aligned array row and a
+	# scraped row are the same fact; comparing the raw strings would make the
+	# array's alignment load-bearing.
+	local pin="$1" found="$2"
+	act_missing="$(LC_ALL=C comm -23 <(printf '%s\n' "$pin") <(printf '%s\n' "$found"))"
+	act_surplus="$(LC_ALL=C comm -13 <(printf '%s\n' "$pin") <(printf '%s\n' "$found"))"
+}
+
+trig_found="$(printf '%s\n' "$act_rows" |
+	awk -F'\t' '$1 == "trigger" { print $2 "\t" $3 }' | canon_rows 2 | LC_ALL=C sort -u)"
+trig_pin="$(printf '%s\n' "${EXPECTED_TRIGGERS[@]}" | canon_rows 2 | LC_ALL=C sort -u)"
+act_diff "$trig_pin" "$trig_found"
+if [ -n "$act_missing" ] || [ -n "$act_surplus" ]; then
+	act_report "EXPECTED_TRIGGERS" "$act_missing" "$act_surplus" \
+		"A trigger that left is a trigger the gates no longer run on — 'on:' reduced
+to 'workflow_dispatch' is the shape lazily-js measured at exit 0, with every
+gate perfectly pinned to a step nothing ever executes. A trigger that arrived
+changes when the whole gate set runs. Neither is this guard's to decide: move
+the pin in the same commit as the workflow, or revert the workflow
+(#verifyworkflowactually)."
+	status=1
+fi
+
+filt_ws="$(printf '%s\n' "$act_rows" | awk -F'\t' '$1 == "filter" && $4 ~ /[[:space:]]/ { print $2 "\t" $3 "\t" $4 }')"
+if [ -n "$filt_ws" ]; then
+	echo >&2
+	echo "check-ci-reach: trigger filter value(s) containing whitespace:" >&2
+	printf '%s\n' "$filt_ws" | sed 's/\t/  /g; s/^/  - /' >&2
+	echo "                EXPECTED_TRIGGER_FILTERS is whitespace-separated, so such a" >&2
+	echo "                value cannot be pinned exactly and would compare equal to a" >&2
+	echo "                different one (#verifyworkflowactually)." >&2
+	status=1
+fi
+
+filt_found="$(printf '%s\n' "$act_rows" |
+	awk -F'\t' '$1 == "filter" { print $2 "\t" $3 "\t" $4 }' | canon_rows 3 | LC_ALL=C sort -u)"
+if [ "${#EXPECTED_TRIGGER_FILTERS[@]}" -eq 1 ] && [ "${EXPECTED_TRIGGER_FILTERS[0]}" = "<none>" ]; then
+	filt_pin=""
+else
+	filt_pin="$(printf '%s\n' "${EXPECTED_TRIGGER_FILTERS[@]}" | canon_rows 3 | LC_ALL=C sort -u)"
+fi
+act_diff "$filt_pin" "$filt_found"
+if [ -n "$act_missing" ] || [ -n "$act_surplus" ]; then
+	act_report "EXPECTED_TRIGGER_FILTERS" "$act_missing" "$act_surplus" \
+		"A filter decides which pushes and which PRs actually start the run, so this
+is the trigger pin at finer grain: 'branches: [\"**\"]' narrowed to '[\"main\"]'
+stops gating every branch, and an introduced 'paths:' filter is the one that
+matters most — NO binding in this family has one today, and a 'paths:' filter
+that excludes the Makefile means a gate-retiring edit does not even trigger
+the workflow that would have caught it (#verifyworkflowactually)."
+	status=1
+fi
+
+gj_found="$(for gj_i in "${!gate_step_targets[@]}"; do
+	printf '%s\t%s\n' "${gate_step_wfs[$gj_i]}" "${gate_step_jobs[$gj_i]}"
+done | canon_rows 2 | LC_ALL=C sort -u)"
+gj_pin="$(printf '%s\n' "${EXPECTED_GATE_JOBS[@]}" | canon_rows 2 | LC_ALL=C sort -u)"
+act_diff "$gj_pin" "$gj_found"
+if [ -n "$act_missing" ] || [ -n "$act_surplus" ]; then
+	act_report "EXPECTED_GATE_JOBS" "$act_missing" "$act_surplus" \
+		"These are the jobs holding the pinned gate steps. A gate step that moved to
+another job keeps its name, stays unique, stays unconditional and still runs
+the gate — every rung above is satisfied — while the job it landed in may be
+skipped, advisory, or gated on a condition of its own. The move is named here
+and its job guards are named below; both findings describe the same edit
+(#verifyworkflowactually)."
+	status=1
+fi
+
+jg_rows="$(wf_job_guards "${workflows[@]}")"
+jg_found=""
+while IFS="$(printf '\t')" read -r jg_wf jg_job; do
+	[ -n "$jg_wf" ] && [ -n "$jg_job" ] || continue
+	for jg_key in continue-on-error if; do
+		jg_v="$(awk -F'\t' -v w="$jg_wf" -v j="$jg_job" -v k="$jg_key" \
+			'$1 == w && $2 == j && $3 == k { print $4; exit }' <<<"$jg_rows")"
+		# `<absent>` rather than a missing row, so absent -> present is a CHANGED
+		# value with a name rather than a row a reader has to notice is gone.
+		[ -n "$jg_v" ] || jg_v="<absent>"
+		printf '%s\t%s\t%s=%s\n' "$jg_wf" "$jg_job" "$jg_key" "$jg_v"
+	done
+done <<<"$gj_found" >"$jg_found_file"
+jg_found="$(canon_rows 3 <"$jg_found_file" | LC_ALL=C sort -u)"
+jg_pin="$(printf '%s\n' "${EXPECTED_GATE_JOB_GUARDS[@]}" | canon_rows 3 | LC_ALL=C sort -u)"
+act_diff "$jg_pin" "$jg_found"
+if [ -n "$act_missing" ] || [ -n "$act_surplus" ]; then
+	act_report "EXPECTED_GATE_JOB_GUARDS" "$act_missing" "$act_surplus" \
+		"Job-level, not step-level: the step map already refuses a pinned STEP that
+carries 'if:' or 'continue-on-error: true', and the job-level versions are
+invisible to it while having the same effect on every step inside. 'if: false'
+skips the job; 'continue-on-error: true' turns its failure into a pass. The
+pin is a VALUE in both directions, not an absence — lazily-zig's advisory
+master leg is a legitimate job-level 'continue-on-error' keyed on a matrix
+value, so a rule refusing any guard at all would false-red a correct config
+(#verifyworkflowactually)."
+	status=1
+fi
+
+# THE ACTIVATION FLOOR: the rung a PIN EDIT CANNOT CLEAR
+# (#verifyworkflowactually).
+#
+# lazily-go named the hole in the four pins above, and it is the family's oldest
+# lesson wearing a new hat. Every one of them is fails-when-stale, which catches
+# DRIFT — the workflow moving while the pin stays put. It does not catch a
+# LAUNDERED edit: reduce `on:` to `workflow_dispatch` and rewrite
+# EXPECTED_TRIGGERS to match, in the same commit, and all four pins agree with
+# each other about a workflow that never runs. The pin makes that edit visible in
+# a diff; it does not make it fail.
+#
+# AND THE EDIT IS SELF-CONCEALING, which is why this has to be a `make check`
+# gate rather than a CI-only one. GitHub reads a workflow's trigger set from the
+# commit being evaluated, so the commit that reduces the triggers is judged under
+# the REDUCED set: no run starts, nothing objects, and the pull request shows no
+# failing check because it shows no check at all. CI cannot catch the edit that
+# switches CI off. `make check` — and a reviewer — are what is left.
+#
+# So: absolute requirements, not pinned values. Two of them, and both had to be
+# derived from what THIS repo claims rather than copied from the binding that
+# proposed them. go's floor is "push AND pull_request", which is true of its own
+# `ci.yml` and of seven others and would RED precommit.yml, whose triggers are
+# `push` + `workflow_dispatch`. A floor that encodes another binding's
+# configuration is not a floor, it is a copied assumption — so this one asserts
+# what scripts/ci-reach.conf actually claims:
+#
+#   1. EVERY COUNTED WORKFLOW GATES ORDINARY WORK. It must trigger on `push` or
+#      `pull_request`; neither may carry a `paths:` or `paths-ignore:` filter; and
+#      where `push` is the only one of the two — precommit.yml's case — its
+#      `branches:` must cover every branch, because that is the ONLY thing making
+#      the conf's claim about PR heads true. A `push`-only workflow narrowed to
+#      `main`, or restricted to `tags:`, gates no branch and therefore no pull
+#      request. This is a floor every binding in the family passes today, and it
+#      does not require `pull_request` of anybody — see WHAT IT DOES NOT PROVE
+#      for the fork-PR gap it leaves precisely because it does not.
+#
+#   2. NO BARE NEVER-TRUE LITERAL ON A GATE JOB. `if: false` and
+#      `continue-on-error: true`, spelled exactly, are refused outright. This
+#      false-reds nothing: lazily-zig's advisory leg is an EXPRESSION
+#      (`${{ matrix.zig == 'master' }}`), not the literal `true`, so the one
+#      legitimate job-level guard in the family is untouched. A never-true
+#      EXPRESSION — `if: github.event_name == 'schedule'` — is NOT caught here and
+#      remains the job-guard pin's case alone; the two rungs are complementary and
+#      the table above says which catches which.
+#
+# The floor prints AFTER the pins on purpose. The pins say what changed, which is
+# the actionable half; the floor says the state is inadmissible however the pins
+# read. A laundered edit gets only the floor's finding, and that is the case it
+# exists for.
+floor_gating=""
+floor_problems=0
+for act_wf in "${workflows[@]}"; do
+	act_wf_trigs="$(printf '%s\n' "$act_rows" |
+		awk -F'\t' -v w="$act_wf" '$1 == "trigger" && $2 == w { print $3 }' | LC_ALL=C sort -u)"
+	act_gating="$(printf '%s\n' "$act_wf_trigs" | grep -xE 'push|pull_request' || true)"
+	if [ -z "$act_gating" ]; then
+		echo >&2
+		echo "check-ci-reach: '$act_wf' is counted as CI reach and triggers on neither" >&2
+		echo "                'push' nor 'pull_request':" >&2
+		printf '%s\n' "$act_wf_trigs" | sed '/^$/d; s/^/  - /' >&2
+		echo "                Then it runs only when somebody starts it by hand or on a" >&2
+		echo "                schedule, and every gate this guard reports as reached is" >&2
+		echo "                reached by a workflow that ordinary work never triggers." >&2
+		echo "                This is a FLOOR, not a pin: rewriting EXPECTED_TRIGGERS to" >&2
+		echo "                agree does not clear it, because the reduction is" >&2
+		echo "                self-concealing — GitHub reads the trigger set from the" >&2
+		echo "                commit it is evaluating, so the commit that switches CI off" >&2
+		echo "                is judged under the reduced set and no run objects" >&2
+		echo "                (#verifyworkflowactually)." >&2
+		floor_problems=$((floor_problems + 1))
+		continue
+	fi
+	floor_gating="$floor_gating$act_wf	$(printf '%s' "$act_gating" | paste -sd, -)"$'\n'
+	for act_t in $act_gating; do
+		for act_bad_filter in paths paths-ignore; do
+			act_fv="$(printf '%s\n' "$act_rows" | awk -F'\t' \
+				-v w="$act_wf" -v t="$act_t" -v k="$act_bad_filter" \
+				'$1 == "filter" && $2 == w && $3 == t && index($4, k "=") == 1 { print $4; exit }')"
+			[ -n "$act_fv" ] || continue
+			echo >&2
+			echo "check-ci-reach: '$act_wf''s '$act_t' trigger is narrowed by a path filter:" >&2
+			echo "                  $act_fv" >&2
+			echo "                A path filter means MOST commits do not start this" >&2
+			echo "                workflow, so 'reached by CI' becomes 'reached on the" >&2
+			echo "                commits that happen to touch those paths'. The case that" >&2
+			echo "                matters: a filter excluding the Makefile means a" >&2
+			echo "                gate-retiring edit does not even trigger the workflow" >&2
+			echo "                that would have caught it. Refused as a FLOOR — no pin" >&2
+			echo "                edit clears it. Split the packaging work into its own" >&2
+			echo "                uncounted workflow instead, the way wheels.yml already" >&2
+			echo "                is (#verifyworkflowactually)." >&2
+			floor_problems=$((floor_problems + 1))
+		done
+	done
+	# `push` as the ONLY gating trigger has to cover every branch, because a
+	# same-repo pull request is then gated by the push to its head branch and by
+	# nothing else.
+	if [ "$(printf '%s' "$act_gating" | tr '\n' ' ')" = "push " ]; then
+		act_br="$(printf '%s\n' "$act_rows" | awk -F'\t' -v w="$act_wf" \
+			'$1 == "filter" && $2 == w && $3 == "push" && index($4, "branches=") == 1 { print substr($4, 10); exit }')"
+		act_bri="$(printf '%s\n' "$act_rows" | awk -F'\t' -v w="$act_wf" \
+			'$1 == "filter" && $2 == w && $3 == "push" && index($4, "branches-ignore=") == 1 { print $4; exit }')"
+		act_tags="$(printf '%s\n' "$act_rows" | awk -F'\t' -v w="$act_wf" \
+			'$1 == "filter" && $2 == w && $3 == "push" && index($4, "tags=") == 1 { print $4; exit }')"
+		act_all_branches=0
+		case ",$act_br," in
+		*",**,"*) act_all_branches=1 ;;
+		esac
+		if [ -z "$act_br" ] && [ -z "$act_tags" ]; then
+			# No branch and no tag filter at all: every push, which is broader
+			# still.
+			act_all_branches=1
+		fi
+		if [ -n "$act_bri" ]; then
+			act_all_branches=0
+		fi
+		if [ "$act_all_branches" -ne 1 ]; then
+			echo >&2
+			echo "check-ci-reach: '$act_wf' gates on 'push' alone, and that push does not" >&2
+			echo "                cover every branch:" >&2
+			echo "                  branches=${act_br:-<absent>}  ${act_bri:-}  ${act_tags:-}" >&2
+			echo "                With no 'pull_request:' trigger, the push to a pull" >&2
+			echo "                request's head branch is the ONLY thing that gates that" >&2
+			echo "                PR — which is exactly the claim scripts/ci-reach.conf" >&2
+			echo "                makes and this floor enforces. Narrowed to a branch list," >&2
+			echo "                or restricted to tags, it gates no branch and therefore" >&2
+			echo "                no PR, while every verdict above stays green. Refused as" >&2
+			echo "                a FLOOR: no pin edit clears it. Either restore the" >&2
+			echo "                all-branches push or add a 'pull_request:' trigger" >&2
+			echo "                (#verifyworkflowactually)." >&2
+			floor_problems=$((floor_problems + 1))
+		fi
+	fi
+done
+
+while IFS="$(printf '\t')" read -r jg_wf jg_job; do
+	[ -n "$jg_wf" ] && [ -n "$jg_job" ] || continue
+	for jg_pair in "if:false" "continue-on-error:true"; do
+		jg_key="${jg_pair%%:*}"
+		jg_never="${jg_pair##*:}"
+		jg_v="$(awk -F'\t' -v w="$jg_wf" -v j="$jg_job" -v k="$jg_key" \
+			'$1 == w && $2 == j && $3 == k { print $4; exit }' <<<"$jg_rows")"
+		jg_v="$(printf '%s' "$jg_v" | tr -d "\"'" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+		[ "$jg_v" = "$jg_never" ] || continue
+		echo >&2
+		echo "check-ci-reach: the gate job '$jg_job' in '$jg_wf' carries the bare literal" >&2
+		echo "                  $jg_key: $jg_never" >&2
+		if [ "$jg_key" = "if" ]; then
+			echo "                so the job is skipped and not one of its steps runs," >&2
+		else
+			echo "                so the job's failure stops failing the build," >&2
+		fi
+		echo "                while every gate step inside it stays pinned, unique and" >&2
+		echo "                unconditional. Refused as a FLOOR rather than pinned as a" >&2
+		echo "                value: a pin can be rewritten to agree in the same commit." >&2
+		echo "                This refuses only the BARE LITERAL, so lazily-zig's advisory" >&2
+		echo "                matrix leg — an expression, not 'true' — is untouched, and a" >&2
+		echo "                never-true EXPRESSION here is still the job-guard pin's case" >&2
+		echo "                (#verifyworkflowactually)." >&2
+		floor_problems=$((floor_problems + 1))
+	done
+done <<<"$gj_found"
+
+if [ "$floor_problems" -gt 0 ]; then
+	status=1
+fi
+
 if [ "$unreached_count" -gt 0 ]; then
 	echo >&2
 	echo "check-ci-reach: $unreached_count target(s) run by 'make $ROOT_TARGET' that the CI" >&2
@@ -1959,5 +2727,9 @@ fi
 if [ "$status" -eq 0 ]; then
 	echo "check-ci-reach: OK — ${#gate_step_targets[@]} gate(s) reached INSIDE the CI step pinned for each"
 	echo "check-ci-reach: OK — $reached target(s) reached by CI, $excused_ok excused, $nogate_count carrying no gate"
+	echo "check-ci-reach: OK — ${#EXPECTED_TRIGGERS[@]} trigger(s), ${#EXPECTED_TRIGGER_FILTERS[@]} trigger filter(s) and ${#EXPECTED_GATE_JOBS[@]} gate job(s) pinned to exact values"
+	printf '%s' "$floor_gating" | sed '/^$/d' | while IFS="$(printf '\t')" read -r f_wf f_trigs; do
+		echo "check-ci-reach: OK — $f_wf gates on $f_trigs — unfiltered by path, every branch"
+	done
 fi
 exit "$status"

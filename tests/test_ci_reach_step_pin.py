@@ -26,8 +26,13 @@ matters here. It asserts the *consequence* for every pinned gate, which is the
 only form of this check that would have caught rs: an assertion over the mapping
 alone is satisfied by a mapping whose members are all laundered by other steps.
 
-What the pin does NOT close, stated rather than implied: a recipe weakened INSIDE
-its own pinned step. Anchors match as subsequences and extra CI-side tokens are
+What the pin does NOT close, stated rather than implied. The JOB and TRIGGER
+levels underneath it are closed elsewhere — by the four activation pins
+(#verifyworkflowactually), whose matrix and falsification live in
+``tests/test_ci_reach_activation_pin.py``; this file keeps only the assertion
+that the two levels stay SEPARATE, because a step-level ``if:`` is invisible to a
+job pin and a job-level one is invisible to the step rung. What is still open
+here is a recipe weakened INSIDE its own pinned step. Anchors match as subsequences and extra CI-side tokens are
 allowed by design, so dropping ``--no-fix`` from ``lint``'s recipe still matches
 the ``Lint (make lint)`` step. Only a per-recipe-content pin would close that,
 and that one is declined — its churn is recipe-rate, which is how a guard becomes
@@ -748,7 +753,7 @@ def test_the_collision_case_is_invisible_to_step_scoping_alone(tree: Path) -> No
     path = tree / "scripts" / "check-ci-reach.sh"
     source = path.read_text(encoding="utf-8")
     start = source.index('gs_collisions=""')
-    end = source.index('if [ "$unreached_count" -gt 0 ]; then')
+    end = source.index("# ACTIVATION: does the workflow run", start)
     assert start < end, "the collision rung is not where this test expects it."
     _write_changed(path, source[:start] + source[end:])
     assert "also run ANOTHER gate" not in path.read_text(encoding="utf-8"), (
@@ -1060,19 +1065,27 @@ def test_a_conditional_or_failure_discarding_pinned_step_is_refused(
     )
 
 
-def test_the_job_and_trigger_levels_are_not_protected(tree: Path) -> None:
-    """The residual js named, asserted as OPEN rather than left to be discovered.
+def test_the_job_and_trigger_levels_are_closed_but_not_by_this_rung(
+    tree: Path,
+) -> None:
+    """The residual js named is CLOSED, and this file is not what closes it.
 
-    `scripts/ci-reach.conf` asserts that precommit.yml "runs on every push to
-    every branch and on every PR head" in a COMMENT, and that is the unverified
-    claim everything else here rests on. Nothing in this guard has a handle on
-    the job or the trigger, so a pinned step that exists, is unique, is
-    unconditional and runs the gate is still green inside a job that never runs.
+    This test used to assert the hole was OPEN — deliberately, so the gap was a
+    measured fact with a name — and it said that closing the hole later should
+    fail here loudly rather than leave a test that quietly asserted it. That is
+    what happened: the four activation pins
+    (``EXPECTED_TRIGGERS``/``_TRIGGER_FILTERS``/``_GATE_JOBS``/``_GATE_JOB_GUARDS``,
+    #verifyworkflowactually) now refuse all three states, and
+    ``tests/test_ci_reach_activation_pin.py`` owns the full matrix and the
+    per-rung falsification.
 
-    This test PASSES on the open state on purpose. It exists so the gap is a
-    measured fact with a name rather than an assumption, and so that closing it
-    later fails here loudly instead of leaving a test that quietly asserted the
-    hole.
+    What remains here is the SEPARATION, which is this file's business. The
+    step-level rung and the job-level pins are not substitutes: a step's own
+    ``if:`` is invisible to a job pin, and a job-level one is invisible to the
+    step rung. So each of the three states is asserted to be refused *by the
+    activation pins* and NOT by the step-guard rung — if the step rung ever
+    started catching them, the two would be conflated and a reader chasing a
+    failure would be sent to the wrong half of the guard.
     """
     _healthy(tree)
     path = tree / WORKFLOW
@@ -1082,34 +1095,52 @@ def test_the_job_and_trigger_levels_are_not_protected(tree: Path) -> None:
         f"expected one `{job_line.strip()}` job key; found {original.count(job_line)}."
     )
 
-    for label, injected in (
-        ("job-level if: false", f"{job_line}    if: false\n"),
+    cases: list[tuple[str, str, str]] = [
+        (
+            "job-level if: false",
+            original.replace(job_line, f"{job_line}    if: false\n", 1),
+            "EXPECTED_GATE_JOB_GUARDS",
+        ),
         (
             "job-level continue-on-error: true",
-            f"{job_line}    continue-on-error: true\n",
+            original.replace(job_line, f"{job_line}    continue-on-error: true\n", 1),
+            "EXPECTED_GATE_JOB_GUARDS",
         ),
-    ):
-        _write_changed(path, original.replace(job_line, injected, 1))
-        result = _run_guard(tree)
-        assert result.returncode == 0, (
-            f"{label} was REFUSED. That is an improvement, not a failure — but "
-            f"this test and the guard's WHAT IT DOES NOT PROVE section both "
-            f"claim the job level is open, and one of them is now wrong. Update "
-            f"them together.\n{result.stdout}{result.stderr}"
-        )
-
+    ]
     trigger = 'on:\n  push:\n    branches:\n      - "**"\n  workflow_dispatch:\n'
     assert original.count(trigger) == 1, (
         f"expected one `on:` block of the pinned shape; found "
         f"{original.count(trigger)}."
     )
-    _write_changed(path, original.replace(trigger, "on:\n  workflow_dispatch:\n", 1))
-    dispatch_only = _run_guard(tree)
-    assert dispatch_only.returncode == 0, (
-        f"reducing the trigger to workflow_dispatch was REFUSED, so the trigger "
-        f"level is protected after all and the documented residual is stale.\n"
-        f"{dispatch_only.stdout}{dispatch_only.stderr}"
+    cases.append(
+        (
+            "`on:` reduced to workflow_dispatch",
+            original.replace(trigger, "on:\n  workflow_dispatch:\n", 1),
+            "EXPECTED_TRIGGERS",
+        )
     )
+
+    for label, mutated, pin in cases:
+        _write_changed(path, mutated)
+        result = _run_guard(tree)
+        assert result.returncode == 1, (
+            f"{label} was ACCEPTED. The activation pins are supposed to refuse "
+            f"it, and this file's WHAT IT DOES NOT PROVE section no longer lists "
+            f"the job and trigger levels as open.\n{result.stdout}{result.stderr}"
+        )
+        assert pin in result.stderr, (
+            f"{label} was refused, but `{pin}` is not in the diagnostic — so "
+            f"something else caught it and the accounting in "
+            f"scripts/check-ci-reach.sh names the wrong rung.\n{result.stderr}"
+        )
+        assert "the CI step pinned for" not in result.stderr, (
+            f"{label} was refused by the STEP-guard rung, which conflates two "
+            f"levels that must stay separate: a step-level `if:` is invisible to "
+            f"a job pin and a job-level one is invisible to the step rung. A "
+            f"reader chasing this failure would be sent to the wrong half of the "
+            f"guard.\n{result.stderr}"
+        )
+        path.write_text(original, encoding="utf-8")
 
 
 def test_the_intra_step_residual_is_one_step_wide(tree: Path) -> None:
