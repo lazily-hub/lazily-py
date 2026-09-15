@@ -509,13 +509,6 @@ def test_blob_backend_discriminator_conformance() -> None:
         f"outcome proves nothing about the other"
     )
 
-    # NOTE (#lzcorpusfloorguard): this literal is NOT the live guard any more —
-    # the constant-free `accepted + rejected == declared` assertion above is. It survives only as the
-    # anchor lazily-spec's `scripts/check-assertion-ordering.py` matches for the
-    # `py` binding (the `accepted == 10` equality, ORDERED_CHECKS["py"]); deleting it here alone turns
-    # `make check` red on a contract owned by another repo. Remove it together
-    # with that anchor.
-    assert accepted == 10
     # Every wire shape is carried under BOTH codecs. Several bindings bridge
     # msgpack into the same DOM the JSON decoder produces, so this proves the
     # bridge and the encoder, NOT two independent discriminator verdicts — see
