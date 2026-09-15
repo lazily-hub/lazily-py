@@ -910,13 +910,10 @@ def iter_declared_blocks(doc: Any) -> Iterator[tuple[str, Mapping[str, Any]]]:
     directly under a tracked key and gets no site of its own. The canonical
     corpus carries no such shape.
 
-    A block is emitted and NOT descended into, which is what ``instrument`` does
-    (it wraps the block and stops). Descending would inventory a fixture's
-    ``expect`` nested inside its own ``assertions`` as a second, separately
-    bindable site that no runner can bind without unwrapping the tracker. An
-    emitted array ELEMENT is not descended into for the same reason — a runner
-    reaching a tracked key nested inside one would be holding a ``TrackedBlock``,
-    and the nested site would be declared and unbindable.
+    The walk descends INTO a block as well as past it, matching lazily-spec's
+    corpus inventory. ``instrument`` recursively prepares the block before
+    wrapping it, so a tracked key nested inside either an object-valued block or
+    an emitted array element remains a separately bindable ``TrackedBlock``.
     """
 
     def walk(node: Any, path: str) -> Iterator[tuple[str, Mapping[str, Any]]]:
@@ -925,6 +922,7 @@ def iter_declared_blocks(doc: Any) -> Iterator[tuple[str, Mapping[str, Any]]]:
                 child = f"{path}.{key}" if path else key
                 if key in BLOCK_KEYS and isinstance(value, dict):
                     yield child, value
+                    yield from walk(value, child)
                     continue
                 if key in BLOCK_KEYS and isinstance(value, list):
                     # TRUE indexes, and no ``name`` preference: the label has to
@@ -934,11 +932,11 @@ def iter_declared_blocks(doc: Any) -> Iterator[tuple[str, Mapping[str, Any]]]:
                         label = f"{child}[{index}]"
                         if isinstance(element, dict):
                             yield label, element
-                        else:
-                            # A scalar or nested array is no site, but anything
-                            # tracked BELOW it is still reached, exactly as
-                            # before the widening.
-                            yield from walk(element, label)
+                        # A scalar or nested array is no site, but anything
+                        # tracked BELOW it is still reached. An emitted object
+                        # is walked too: the spec descends into blocks, and the
+                        # recursively instrumented tracker can bind the result.
+                        yield from walk(element, label)
                     continue
                 yield from walk(value, child)
         elif isinstance(node, list):
@@ -1288,6 +1286,7 @@ class TrackedBlock(Mapping[str, Any]):
         fixture: str,
         block: str,
         prose: tuple[str, ...] = (),
+        digest_source: Mapping[str, Any] | None = None,
     ) -> None:
         self._data = dict(data)
         self.fixture = fixture
@@ -1297,7 +1296,10 @@ class TrackedBlock(Mapping[str, Any]):
         # runner already bound, so a block nothing binds reports nothing at all —
         # its keys are not unread, nothing reads them. Content keying is what
         # stops the ledger inheriting the inconsistent labels runners choose.
-        record_block_bind(self._data)
+        # ``data`` can contain nested ``TrackedBlock`` views after recursive
+        # instrumentation. Bind identity still comes from the fixture's plain
+        # JSON object so its digest matches the declaring-side inventory.
+        record_block_bind(digest_source if digest_source is not None else self._data)
         ledger = _LEDGERS.setdefault((fixture, block), _Ledger(fixture, block))
         ledger.keys.update(self._data)
         # #lzsubblockkeyset: an object-valued key owns a key set one level down,
@@ -2264,6 +2266,11 @@ def instrument(
     cannot produce a green run. A runner keeps indexing the list exactly as
     before — ``step["expect"][0]`` is now a tracked view of that frame rather
     than a bare ``dict``, so every key of it must be consumed and asserted.
+
+    Blocks are recursively instrumented BEFORE their outer view is constructed.
+    Thus a tracked key inside an emitted object or array element remains its own
+    bindable view, while ``digest_source`` preserves the outer block's identity
+    as the original plain JSON object.
     """
 
     def walk(node: Any, path: str) -> Any:
@@ -2273,7 +2280,11 @@ def instrument(
                 child = f"{path}.{key}" if path else key
                 if key in block_keys and isinstance(value, dict):
                     out[key] = TrackedBlock(
-                        value, fixture=name, block=child, prose=prose
+                        walk(value, child),
+                        fixture=name,
+                        block=child,
+                        prose=prose,
+                        digest_source=value,
                     )
                 elif key in block_keys and isinstance(value, list):
                     # TRUE indexes and no ``name`` preference, matching
@@ -2281,10 +2292,11 @@ def instrument(
                     # element is not a block and is walked as it always was.
                     out[key] = [
                         TrackedBlock(
-                            element,
+                            walk(element, f"{child}[{index}]"),
                             fixture=name,
                             block=f"{child}[{index}]",
                             prose=prose,
+                            digest_source=element,
                         )
                         if isinstance(element, dict)
                         else walk(element, f"{child}[{index}]")
