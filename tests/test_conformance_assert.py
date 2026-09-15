@@ -892,6 +892,21 @@ def test_a_skipped_scenario_is_reported(tmp_path: Path) -> None:
     reset(fixture=_SELFTEST)
 
 
+def test_scenario_floor_counts_runtime_replays_and_fails_at_n_plus_one(
+    tmp_path: Path,
+) -> None:
+    record_scenario(_SELFTEST, {"name": "replayed"})
+    failures, _ = scenario_failures(
+        [_SELFTEST],
+        corpus=_corpus(tmp_path, [{"name": "replayed"}]),
+        minimum=2,
+    )
+    assert any("scenario replay population was 1" in line for line in failures)
+    assert any("MIN_SCENARIOS=2" in line for line in failures)
+
+    reset(fixture=_SELFTEST)
+
+
 def test_an_unidentified_corpus_scenario_is_a_failure(tmp_path: Path) -> None:
     """Not a notice (#lzspecscenarioids). It used to be, and that is the bug.
 

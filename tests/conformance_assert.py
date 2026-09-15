@@ -2850,6 +2850,8 @@ def _disk_scenarios(path: Path) -> tuple[list[str], list[str]] | None:
 def scenario_failures(
     opened: Iterable[str],
     corpus: Path | None = None,
+    *,
+    minimum: int | None = None,
 ) -> tuple[list[str], list[str]]:
     """``(failures, notices)`` for per-scenario replay accounting.
 
@@ -2863,6 +2865,7 @@ def scenario_failures(
     root = corpus if corpus is not None else corpus_dir()
     failures: list[str] = []
     notices: list[str] = []
+    replayed_total = 0
 
     checked = sorted(set(opened) | set(_SCENARIO_EXCUSES))
     for fixture in checked:
@@ -2886,6 +2889,7 @@ def scenario_failures(
             continue
         ids, unidentified = found
         replayed = _REPLAYED.get(fixture, set())
+        replayed_total += len(set(ids) & replayed)
 
         rotted = sorted(set(excused) - set(ids))
         if rotted:
@@ -2916,6 +2920,13 @@ def scenario_failures(
                 f"rebinds on a corpus reorder. Give them stable ids upstream in "
                 f"lazily-spec (#lzspecscenarioids)"
             )
+
+    if minimum is not None and replayed_total < minimum:
+        failures.append(
+            f"scenario replay population was {replayed_total}; expected at least "
+            f"MIN_SCENARIOS={minimum}. The runtime replay ledger shrank; do not "
+            "lower the floor to repair this run (#lzscenariofloormissing)"
+        )
 
     return failures, notices
 
