@@ -19,6 +19,7 @@ import contextlib
 import os
 import sys
 from pathlib import Path
+from runpy import run_path
 
 from conformance_assert import (
     CORPUS_DIR_ENV,
@@ -34,6 +35,15 @@ from conformance_assert import (
     prose_failures,
     record_declared_blocks,
     scenario_failures,
+)
+
+
+# Keep the auditable floor in scripts/, where lazily-spec discovers all binding
+# floors, while loading that same value into pytest's in-process scenario gate.
+MIN_SCENARIOS = int(
+    run_path(str(Path(__file__).resolve().parents[1] / "scripts/scenario_floor.py"))[
+        "MIN_SCENARIOS"
+    ]
 )
 
 
@@ -305,7 +315,13 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untype
         report += [f"  {line}" for line in prose_bad]
         report.append("")
 
-    scenario_bad, scenario_notes = scenario_failures(_opened)
+    scenario_bad, scenario_notes = scenario_failures(
+        _opened,
+        # A bare/targeted pytest run intentionally carries no cross-suite
+        # evidence contract. `poe test`, `make test`, and CI set the manifest and
+        # therefore arm the positive population floor.
+        minimum=MIN_SCENARIOS if _MANIFEST else None,
+    )
     if scenario_notes:
         report += ["", "CONFORMANCE SCENARIO LEDGER NOTICES (#lzscenariocoverage)", ""]
         report += [f"  {line}" for line in scenario_notes]

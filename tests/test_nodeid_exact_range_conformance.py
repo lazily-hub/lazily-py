@@ -192,11 +192,3 @@ def test_nodeid_exact_range_conformance() -> None:
         f"loaded {declared} scenarios but accepted {accepted} — lazily-py has no "
         f"identifier in this corpus it may refuse, so every one must decode"
     )
-
-    # NOTE (#lzcorpusfloorguard): this literal is NOT the live guard any more —
-    # the constant-free `accepted == declared` assertion above is. It survives
-    # only as the anchor lazily-spec's `scripts/check-assertion-ordering.py`
-    # matches for the `py` binding (the `accepted == 6` equality, ORDERED_CHECKS).
-    # Deleting it here alone turns `make check` red on a contract owned by
-    # another repo. Remove it together with that anchor.
-    assert accepted == 6

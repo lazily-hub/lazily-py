@@ -1,5 +1,7 @@
 ## Unreleased
 
+## 0.41.0
+
 ### Added
 
 - `lazily.projected_chart` — a state chart that projects an external authority

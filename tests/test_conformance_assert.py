@@ -892,6 +892,21 @@ def test_a_skipped_scenario_is_reported(tmp_path: Path) -> None:
     reset(fixture=_SELFTEST)
 
 
+def test_scenario_floor_counts_runtime_replays_and_fails_at_n_plus_one(
+    tmp_path: Path,
+) -> None:
+    record_scenario(_SELFTEST, {"name": "replayed"})
+    failures, _ = scenario_failures(
+        [_SELFTEST],
+        corpus=_corpus(tmp_path, [{"name": "replayed"}]),
+        minimum=2,
+    )
+    assert any("scenario replay population was 1" in line for line in failures)
+    assert any("MIN_SCENARIOS=2" in line for line in failures)
+
+    reset(fixture=_SELFTEST)
+
+
 def test_an_unidentified_corpus_scenario_is_a_failure(tmp_path: Path) -> None:
     """Not a notice (#lzspecscenarioids). It used to be, and that is the bug.
 
@@ -1110,6 +1125,16 @@ _ARRAY_ELEMENT_PROBE = (
     ),
     ("a nested array is one level too deep", {"expect": [[{"a": 1}]]}, []),
     (
+        "an object block is descended into",
+        {"assertions": {"expect": {"a": 1}}},
+        ["assertions", "assertions.expect"],
+    ),
+    (
+        "an emitted array element is descended into",
+        {"expect": [{"assertions": {"a": 1}}]},
+        ["expect[0]", "expect[0].assertions"],
+    ),
+    (
         "an UNTRACKED key is still not a block",
         {"scenarios": [{"a": 1}]},
         [],
@@ -1136,11 +1161,18 @@ def test_the_array_element_rule_on_synthetic_shapes(doc: dict, owed: list[str]) 
 def _tracked_labels(node: object) -> list[str]:
     """Every ``TrackedBlock`` label an instrumented document carries.
 
-    A tracked block is recorded and NOT descended into, mirroring the walk: the
-    tracker owns everything beneath it from there on.
+    Descend through a tracker's backing data as well as recording the tracker:
+    nested assertion blocks are separate bindable sites.
     """
     if isinstance(node, TrackedBlock):
-        return [node.block]
+        return [
+            node.block,
+            *[
+                label
+                for value in node._data.values()
+                for label in _tracked_labels(value)
+            ],
+        ]
     if isinstance(node, dict):
         return [label for value in node.values() for label in _tracked_labels(value)]
     if isinstance(node, list):
@@ -1166,6 +1198,18 @@ def test_instrument_wraps_exactly_what_the_walk_enumerates(
     """
     labels = _tracked_labels(instrument(doc, name="selftest/probe.json"))
     assert sorted(labels) == sorted(owed)
+
+
+def test_nested_array_element_sites_bind_with_plain_fixture_digests(
+    block_ledger,
+) -> None:
+    """Recursive views must not change the content identity of their parents."""
+
+    doc = {"expect": [{"assertions": {"value": 1}}]}
+    record_declared_blocks("selftest/nested-element.json", json.dumps(doc))
+    instrument(doc, name="selftest/nested-element.json")
+
+    assert not block_bind_failures()
 
 
 def test_two_elements_of_one_array_are_named_separately(block_ledger) -> None:

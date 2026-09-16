@@ -374,11 +374,3 @@ def test_nodekey_null_leniency_conformance() -> None:
         f"decoded {keys_decoded} keys but {present_on_wire} scenarios carry a "
         f"string in the raw `key` slot"
     )
-
-    # NOTE (#lzcorpusfloorguard): this literal is NOT the live guard any more —
-    # the constant-free `replayed == declared` assertion above is. It survives only as the
-    # anchor lazily-spec's `scripts/check-assertion-ordering.py` matches for the
-    # `py` binding (the `replayed == 12` equality, ORDERED_CHECKS["py"]); deleting it here alone turns
-    # `make check` red on a contract owned by another repo. Remove it together
-    # with that anchor.
-    assert replayed == 12
