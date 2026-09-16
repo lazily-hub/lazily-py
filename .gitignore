@@ -80,3 +80,6 @@ Thumbs.db
 
 .mise.toml
 .tsift/
+
+# Local Claude agent worktrees are machine-specific and must never be packaged.
+/.claude/worktrees/
