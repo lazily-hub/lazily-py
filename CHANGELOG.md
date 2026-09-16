@@ -1,5 +1,14 @@
 ## Unreleased
 
+## 0.41.1
+
+### Fixed
+
+- Removed an orphaned local-worktree gitlink and an absolute local-worktree
+  symlink that broke Git dependency initialization and safe source-archive
+  extraction. Local agent worktrees are now ignored and covered by a repository
+  hygiene regression test so they cannot be packaged again.
+
 ## 0.41.0
 
 ### Added

@@ -422,7 +422,7 @@ wheels = [
 
 [[package]]
 name = "lazily"
-version = "0.41.0"
+version = "0.41.1"
 source = { editable = "." }
 dependencies = [
     { name = "mypy-extensions" },
