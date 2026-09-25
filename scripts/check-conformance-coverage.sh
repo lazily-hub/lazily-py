@@ -66,6 +66,11 @@ KNOWN_UNCOVERED=(
   # implemented here, but this binding has no canonical replay for the new
   # registers corpus yet; the Registers coverage row is `~` until it does.
   "collections/registers_convergence.json"
+  # Phase 0 durable-owner contracts are not implemented in this binding.
+  "durable-owner/atomic_crash_boundary.json"
+  "durable-owner/inbox_outbox_deduplication.json"
+  "durable-owner/ordered_replay.json"
+  "durable-owner/projection_fingerprint.json"
   # Reactive egress is currently Rust-only; Python has no egress replay runner.
   "egress/egress_generation_fence.json"
   "egress/egress_inflight_window.json"
