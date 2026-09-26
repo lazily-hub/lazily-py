@@ -14,6 +14,17 @@ from dataclasses import asdict
 from typing import Any
 
 from .crdt_plane import CrdtPlaneRuntime
+from .durable_client import (
+    DurableBrokerPubAck,
+    DurableClient,
+    DurableHostReceipt,
+    DurableIngressEnvelope,
+    DurableProjectionCompleteness,
+    DurableProjectionEvent,
+    DurableProjectionFingerprint,
+    DurableProjectionHealth,
+    compare_durable_projection_fingerprints,
+)
 from .ipc import CrdtOp, CrdtSync, IpcMessage
 from .stdlib import (
     RevisionBarrier,
@@ -28,6 +39,15 @@ from .stdlib import (
 
 
 PROTOCOL_VERSION = 1
+DURABLE_FEATURE = "durable_client_v1"
+
+
+class _DurableTransport:
+    def publish(self, subject: str, payload: bytes) -> DurableBrokerPubAck:
+        return DurableBrokerPubAck("INTEROP", 1)
+
+    def subscribe(self, subject: str) -> object:
+        return {"subject": subject}
 
 
 class InteropPeer:
@@ -86,6 +106,7 @@ class InteropPeer:
                 "stdlib_timer_v1",
                 "stdlib_timeout_v1",
                 "stdlib_revision_barrier_v1",
+                DURABLE_FEATURE,
             ],
             # `msgpack` left the carve-out list when lazily-py grew the wire the
             # token actually names (#lzmsgpackseven): externally tagged envelope
@@ -106,6 +127,7 @@ class InteropPeer:
             "stdlib_timer_v1",
             "stdlib_timeout_v1",
             "stdlib_revision_barrier_v1",
+            DURABLE_FEATURE,
         }
 
     def _feature_reset(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -117,7 +139,12 @@ class InteropPeer:
                 "unsupported": True,
             }
         assert isinstance(feature, str)
-        self._stdlib[feature] = {"last": None}
+        self._stdlib[feature] = {
+            "last": None,
+            "durable": DurableClient(_DurableTransport())
+            if feature == DURABLE_FEATURE
+            else None,
+        }
         return {"ok": True, "feature": feature}
 
     def _feature_step(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -134,6 +161,8 @@ class InteropPeer:
             observation = self._timeout_step(state, step)
         elif feature == "stdlib_revision_barrier_v1":
             observation = self._barrier_step(state, step)
+        elif feature == DURABLE_FEATURE:
+            observation = self._durable_step(state, step)
         else:
             # The old `else` ran the revision-barrier arm for every feature
             # token that was not one of the first two, so a peer stepping a
@@ -279,6 +308,94 @@ class InteropPeer:
             result["cancellation_calls"] = cancellation_calls
         return result
 
+    @staticmethod
+    def _durable_step(state: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
+        client = state.get("durable")
+        if not isinstance(client, DurableClient):
+            raise ValueError("durable client is not initialized")
+        operation = step.get("operation")
+        if operation == "validate_envelope":
+            try:
+                DurableIngressEnvelope.from_wire(step.get("envelope"))
+            except ValueError as error:
+                return {
+                    "accepted": False,
+                    "reason": str(error),
+                    "payload_decoded": False,
+                    "owner_authority": False,
+                }
+            return {
+                "accepted": True,
+                "reason": "accepted",
+                "payload_decoded": True,
+                "owner_authority": False,
+            }
+        if operation == "order_projection":
+            positions = step.get("observed_source_positions")
+            if not isinstance(positions, list):
+                raise ValueError("order_projection requires positions")
+            classifications: list[str] = []
+            for position in positions:
+                if not isinstance(position, int):
+                    raise ValueError("source position must be an integer")
+                admission = client.observe_projection(
+                    DurableProjectionEvent(
+                        1,
+                        "interop-owner",
+                        1,
+                        position,
+                        position,
+                        1,
+                        1,
+                        DurableProjectionCompleteness.COMPLETE_HISTORY,
+                        [position],
+                        f"source-{position}",
+                        f"projection-{position}",
+                        DurableProjectionHealth.HEALTHY,
+                    )
+                )
+                if admission.kind.value == "buffered":
+                    classifications.append("buffered")
+                elif admission.kind.value == "dropped":
+                    classifications.append("duplicate")
+                else:
+                    classifications.append("applied")
+            return {
+                "applied_source_positions": client.applied_source_positions(
+                    "interop-owner"
+                ),
+                "delivery_classification": classifications,
+                "broker_order_authoritative": False,
+                "may_authorize_transition": False,
+            }
+        if operation == "classify_dedup":
+            deliveries = step.get("deliveries")
+            if not isinstance(deliveries, list):
+                raise ValueError("classify_dedup requires deliveries")
+            return {
+                "classification": [
+                    client.observe_ingress(DurableIngressEnvelope.from_wire(item)).value
+                    for item in deliveries
+                ],
+                "owner_authority": False,
+            }
+        if operation == "observe_receipt":
+            receipt = DurableHostReceipt.from_wire(step.get("receipt"))
+            client.observe_host_receipt(receipt)
+            return {
+                "receipt": receipt.to_wire(),
+                "terminal_owner_receipt": True,
+                "transport_ack_equivalent": False,
+                "owner_authority": False,
+            }
+        if operation == "compare_projection_fingerprints":
+            comparison = compare_durable_projection_fingerprints(
+                DurableProjectionFingerprint.from_wire(step.get("left")),
+                DurableProjectionFingerprint.from_wire(step.get("right")),
+            )
+            return {**asdict(comparison), "may_authorize_transition": False}
+        raise ValueError(f"unknown durable client operation {operation}")
+
     def _local_set(self, request: dict[str, Any]) -> dict[str, Any]:
         runtime, peer_id = self._ready()
         node = request.get("node")
@@ -397,6 +514,72 @@ def self_check() -> None:
             assert peer.handle(
                 {"cmd": "feature_step", "feature": feature, "step": step}
             )["ok"]
+    durable_steps = [
+        {
+            "operation": "validate_envelope",
+            "envelope": {
+                "protocol_version": 1,
+                "message_id": "sample-owner/message-1",
+                "schema_version": 7,
+                "codec_version": 11,
+                "payload": [0, 255],
+            },
+        },
+        {"operation": "order_projection", "observed_source_positions": [2, 1, 2]},
+        {
+            "operation": "classify_dedup",
+            "deliveries": [
+                {
+                    "protocol_version": 1,
+                    "message_id": "sample-owner/message-1",
+                    "schema_version": 7,
+                    "codec_version": 11,
+                    "payload": [65],
+                },
+                {
+                    "protocol_version": 1,
+                    "message_id": "sample-owner/message-1",
+                    "schema_version": 7,
+                    "codec_version": 11,
+                    "payload": [65],
+                },
+            ],
+        },
+        {
+            "operation": "observe_receipt",
+            "receipt": {
+                "protocol_version": 1,
+                "receipt_id": "sample-owner/receipt-1",
+                "message_id": "sample-owner/message-1",
+                "outcome": "committed",
+                "owner_position": 1,
+            },
+        },
+        {
+            "operation": "compare_projection_fingerprints",
+            "left": {
+                "projection_id": "orders",
+                "source_position": 1,
+                "fingerprint": "aa",
+                "completeness": "complete_history",
+                "may_authorize_transition": False,
+            },
+            "right": {
+                "projection_id": "orders",
+                "source_position": 1,
+                "fingerprint": "aa",
+                "completeness": "latest_state_only",
+                "may_authorize_transition": False,
+            },
+        },
+    ]
+    assert peer.handle({"cmd": "feature_reset", "feature": DURABLE_FEATURE})["ok"]
+    for step in durable_steps:
+        assert peer.handle(
+            {"cmd": "feature_step", "feature": DURABLE_FEATURE, "step": step}
+        )["ok"]
+    observed = peer.handle({"cmd": "feature_observe", "feature": DURABLE_FEATURE})
+    assert observed["observation"]["equivalent"] is False
 
 
 def main() -> int:
