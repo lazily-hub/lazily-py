@@ -1,5 +1,18 @@
 ## Unreleased
 
+## 0.42.0
+
+### Added
+
+- Added the durable-client protocol surface and canonical conformance replay,
+  including ingress publication, host receipts, ordered projection events,
+  fingerprint comparison, and interop-peer support.
+
+### Changed
+
+- Adopted Apache-2.0 package licensing and refreshed the generated durable
+  capability coverage documentation.
+
 ## 0.41.1
 
 ### Fixed

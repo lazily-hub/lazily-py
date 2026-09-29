@@ -99,7 +99,7 @@ class InteropPeer:
         return {
             "ok": True,
             "binding": "lazily-py",
-            "version": "0.41.1",
+            "version": "0.42.0",
             "protocol_version": PROTOCOL_VERSION,
             "features": [
                 "distributed_crdt",
