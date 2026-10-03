@@ -1,5 +1,18 @@
 ## Unreleased
 
+### Changed
+
+- `ReceiptOutcome`, `CausalReceipt` and `CausalReceipts` are generated from
+  lazily-spec `schemas/receipts.json` into `lazily._receipts_wire_gen` and are
+  still exported from `lazily` and `lazily.ipc` (`#lzwiremodel2`). Their
+  non-wire behaviour (`is_terminal`, `group_by_causation`, `encode_json`,
+  `decode_json`) lives in the hand-written `lazily._receipt_semantics`.
+- Receipt decoding is strict. `from_wire` / `decode_json` now reject an
+  unknown key, a missing `reason`, `payload_hash` or `receipts` (all used to
+  default), and a value of the wrong JSON type. `generation` is also checked
+  against the u64 upper bound. Every conforming producer emits all of these
+  keys.
+
 ## 0.42.0
 
 ### Added

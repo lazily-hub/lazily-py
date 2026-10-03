@@ -85,6 +85,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from ._receipts_wire_gen import CausalReceipt, CausalReceipts, ReceiptOutcome
 from .msgpack_codec import msgpack_pack, msgpack_unpack
 
 
@@ -1814,148 +1815,11 @@ class CapabilityHandshake:
 
 # ---------------------------------------------------------------------------
 # Causal receipts (generic outcome projection — NOT a transport ACK)
+#
+# ``ReceiptOutcome``, ``CausalReceipt`` and ``CausalReceipts`` are generated
+# from lazily-spec ``schemas/receipts.json`` into ``_receipts_wire_gen`` and
+# re-exported here; their non-wire behaviour lives in ``_receipt_semantics``.
 # ---------------------------------------------------------------------------
-
-
-class ReceiptOutcome(Enum):
-    """Generic receipt outcome vocabulary.
-
-    Mirrors ``LazilyFormal.Receipt.ReceiptOutcome`` and
-    ``lazily-spec/protocol.md § Causal Receipts``. ``observed`` and
-    ``accepted`` are **non-terminal** (an ACK-like transport/queue observation,
-    never proof an effect happened); ``applied`` and ``rejected`` are
-    **terminal** (the generic outcome a domain fact refines).
-    """
-
-    OBSERVED = "observed"
-    ACCEPTED = "accepted"
-    APPLIED = "applied"
-    REJECTED = "rejected"
-
-    @property
-    def is_terminal(self) -> bool:
-        """Whether this outcome completes the causation projection."""
-        return self in (ReceiptOutcome.APPLIED, ReceiptOutcome.REJECTED)
-
-    @classmethod
-    def from_wire(cls, value: str) -> ReceiptOutcome:
-        try:
-            return cls(value)
-        except ValueError as exc:
-            raise ValueError(
-                f"unknown receipt outcome: {value!r} "
-                "(expected one of observed/accepted/applied/rejected)"
-            ) from exc
-
-
-@dataclass(frozen=True, slots=True)
-class CausalReceipt:
-    """One causal receipt event — an idempotent observation of a command/effect.
-
-    A receipt records that an ``observer`` (peer, process, or subsystem) saw a
-    particular ``causation_id`` at a producer/editor ``generation`` and resolved
-    it to an :class:`ReceiptOutcome`. The primitive is projection data: it is
-    deliberately **not** a transport ACK, and a non-terminal
-    ``observed``/``accepted`` receipt is never authority that an effect
-    happened. Terminal ``applied``/``rejected`` receipts are the generic outcome
-    vocabulary that domain-specific facts refine.
-
-    ``receipt_id`` is the idempotency key — duplicates are no-ops.
-    ``payload_hash`` is an optional hash of the state/payload the receipt
-    observed; ``reason`` is an optional human/debug rejection reason. Both are
-    ``None`` when absent and serialize as JSON ``null``.
-    """
-
-    receipt_id: str
-    causation_id: str
-    observer: str
-    generation: int
-    outcome: ReceiptOutcome
-    reason: str | None = None
-    payload_hash: str | None = None
-
-    def __post_init__(self) -> None:
-        if not self.receipt_id:
-            raise ValueError("receipt_id must be a non-empty string")
-        if not self.causation_id:
-            raise ValueError("causation_id must be a non-empty string")
-        if not self.observer:
-            raise ValueError("observer must be a non-empty string")
-        if self.generation < 0:
-            raise ValueError(f"generation must be >= 0, got {self.generation}")
-
-    def to_wire(self) -> dict[str, Any]:
-        return {
-            "receipt_id": self.receipt_id,
-            "causation_id": self.causation_id,
-            "observer": self.observer,
-            "generation": self.generation,
-            "outcome": self.outcome.value,
-            "reason": self.reason,
-            "payload_hash": self.payload_hash,
-        }
-
-    @classmethod
-    def from_wire(cls, d: dict[str, Any]) -> CausalReceipt:
-        return cls(
-            receipt_id=d["receipt_id"],
-            causation_id=d["causation_id"],
-            observer=d["observer"],
-            generation=d["generation"],
-            outcome=ReceiptOutcome.from_wire(d["outcome"]),
-            reason=d.get("reason"),
-            payload_hash=d.get("payload_hash"),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CausalReceipts:
-    """Wire frame carrying a batch of :class:`CausalReceipt` events.
-
-    Serialized as a standalone externally-tagged JSON object
-    (``{"CausalReceipts": {"receipts": [...]}}``) — like
-    :class:`CapabilityHandshake`, a :class:`CausalReceipts` frame is **not** an
-    :class:`IpcMessage` variant; transports may carry it on any channel without
-    touching the Snapshot/Delta/CrdtSync envelope. A frame may carry receipts
-    for several ``causation_id`` s; :meth:`group_by_causation` splits them for
-    per-causation projection.
-    """
-
-    receipts: list[CausalReceipt] = field(default_factory=list)
-
-    def to_wire(self) -> dict[str, dict[str, list[dict[str, Any]]]]:
-        return {"CausalReceipts": {"receipts": [r.to_wire() for r in self.receipts]}}
-
-    @classmethod
-    def from_wire(cls, d: dict[str, Any]) -> CausalReceipts:
-        if not (isinstance(d, dict) and set(d.keys()) == {"CausalReceipts"}):
-            raise ValueError(f"malformed CausalReceipts wire value: {d!r}")
-        body = d["CausalReceipts"]
-        return cls(
-            receipts=[CausalReceipt.from_wire(r) for r in body.get("receipts", [])]
-        )
-
-    def group_by_causation(self) -> dict[str, list[CausalReceipt]]:
-        """Group the frame's receipts by ``causation_id``.
-
-        The map a caller iterates to build one :class:`ReceiptProjection` per
-        causation id. Insertion order is the order receipts appear in the frame.
-        """
-        groups: dict[str, list[CausalReceipt]] = {}
-        for receipt in self.receipts:
-            groups.setdefault(receipt.causation_id, []).append(receipt)
-        return groups
-
-    def encode_json(self) -> bytes:
-        """Serialize to transport-agnostic JSON bytes."""
-        return json.dumps(self.to_wire(), separators=(",", ":")).encode("utf-8")
-
-    @classmethod
-    def decode_json(cls, data: bytes | str) -> CausalReceipts:
-        """Parse JSON bytes (or str) produced by any lazily binding."""
-        if isinstance(data, (bytes, bytearray)):
-            data = bytes(data).decode("utf-8")
-        return cls.from_wire(json.loads(data))
 
 
 class ReceiptApplyResult(Enum):
