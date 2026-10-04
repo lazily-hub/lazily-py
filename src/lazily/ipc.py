@@ -42,6 +42,9 @@ __all__ = [
     "DeltaOp_Invalidate",
     "DeltaOp_NodeAdd",
     "DeltaOp_NodeRemove",
+    "DeltaOp_QueueClose",
+    "DeltaOp_QueuePop",
+    "DeltaOp_QueuePush",
     "DeltaOp_SlotValue",
     "EdgeSnapshot",
     "IpcMessage",
@@ -891,7 +894,7 @@ class Snapshot:
 
 
 # ---------------------------------------------------------------------------
-# Delta ops (externally-tagged enum, 7 variants)
+# Delta ops (externally-tagged enum, 10 variants)
 # ---------------------------------------------------------------------------
 
 
@@ -940,6 +943,18 @@ class DeltaOp:
         return DeltaOp_EdgeRemove(dependent, dependency)
 
     @staticmethod
+    def queue_push(node: NodeId, payload: IpcValue | ShmBlobRef | bytes) -> DeltaOp:
+        return DeltaOp_QueuePush(node, IpcValue.of(payload))
+
+    @staticmethod
+    def queue_pop(node: NodeId) -> DeltaOp:
+        return DeltaOp_QueuePop(node)
+
+    @staticmethod
+    def queue_close(node: NodeId) -> DeltaOp:
+        return DeltaOp_QueueClose(node)
+
+    @staticmethod
     def from_wire(value: Any) -> DeltaOp:
         if not (isinstance(value, dict) and len(value) == 1):
             raise ValueError(f"malformed DeltaOp wire value: {value!r}")
@@ -966,6 +981,15 @@ class DeltaOp:
             return DeltaOp_EdgeAdd(body["dependent"], body["dependency"])
         if tag == "EdgeRemove":
             return DeltaOp_EdgeRemove(body["dependent"], body["dependency"])
+        # QueueCell op-log delta form (protocol.md § "QueueCell op-log delta
+        # form", ``#queue-oplog``): ``QueuePush`` shares ``CellSet``'s body,
+        # ``QueuePop`` / ``QueueClose`` share ``Invalidate``'s.
+        if tag == "QueuePush":
+            return DeltaOp_QueuePush(body["node"], IpcValue.from_wire(body["payload"]))
+        if tag == "QueuePop":
+            return DeltaOp_QueuePop(body["node"])
+        if tag == "QueueClose":
+            return DeltaOp_QueueClose(body["node"])
         raise ValueError(f"unknown DeltaOp variant: {tag!r}")
 
 
@@ -1079,6 +1103,51 @@ class DeltaOp_EdgeRemove(DeltaOp):
         return permissions.can_read(peer, self.dependent) and permissions.can_read(
             peer, self.dependency
         )
+
+
+@dataclass(frozen=True)
+class DeltaOp_QueuePush(DeltaOp):
+    """A QueueCell appended ``payload`` to its op log (``#queue-oplog``).
+
+    Same body shape as ``CellSet``; the payload spills/resolves like one.
+    Applying it needs a queue projection adapter — the graph-state projection
+    cannot.
+    """
+
+    node: NodeId
+    payload: IpcValue
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"QueuePush": {"node": self.node, "payload": self.payload.to_wire()}}
+
+    def _target_readable(self, permissions: PeerPermissions, peer: PeerId) -> bool:
+        return permissions.can_read(peer, self.node)
+
+
+@dataclass(frozen=True)
+class DeltaOp_QueuePop(DeltaOp):
+    """A QueueCell popped its head item (``#queue-oplog``); carries no bytes."""
+
+    node: NodeId
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"QueuePop": {"node": self.node}}
+
+    def _target_readable(self, permissions: PeerPermissions, peer: PeerId) -> bool:
+        return permissions.can_read(peer, self.node)
+
+
+@dataclass(frozen=True)
+class DeltaOp_QueueClose(DeltaOp):
+    """A QueueCell was closed (``#queue-oplog``); carries no bytes."""
+
+    node: NodeId
+
+    def to_wire(self) -> dict[str, Any]:
+        return {"QueueClose": {"node": self.node}}
+
+    def _target_readable(self, permissions: PeerPermissions, peer: PeerId) -> bool:
+        return permissions.can_read(peer, self.node)
 
 
 # ---------------------------------------------------------------------------

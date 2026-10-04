@@ -1,5 +1,16 @@
 ## Unreleased
 
+### Added
+
+- `DeltaOp_QueuePush`, `DeltaOp_QueuePop` and `DeltaOp_QueueClose` — the
+  QueueCell op-log `DeltaOp` variants of protocol.md § "QueueCell op-log delta
+  form" (`#lzdeltaqueueops`). They decode and encode in the `json` and
+  `msgpack` codecs, are read-filtered per node like `Invalidate` / `CellSet`,
+  and `spill_message` spills a large `QueuePush` payload exactly like a
+  `CellSet` one. A schema-valid `Delta` carrying one used to be rejected as an
+  unknown variant. `DeltaOp.queue_push` / `queue_pop` / `queue_close`
+  constructors match the other variants'.
+
 ### Changed
 
 - `ReceiptOutcome`, `CausalReceipt` and `CausalReceipts` are generated from

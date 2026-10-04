@@ -38,6 +38,7 @@ from .ipc import (
     Delta,
     DeltaOp_CellSet,
     DeltaOp_NodeAdd,
+    DeltaOp_QueuePush,
     DeltaOp_SlotValue,
     IpcMessage,
     IpcValue,
@@ -387,9 +388,9 @@ def spill_message(message: IpcMessage, backend: BlobBackend, threshold: int) -> 
     """Spill large payloads across an :class:`~lazily.ipc.IpcMessage`'s
     value/state sites and return the total bytes spilled.
 
-    Snapshot node states, Delta ``CellSet`` / ``SlotValue`` payloads + ``NodeAdd``
-    states, and ``CrdtSync`` op states are each written to ``backend`` when above
-    ``threshold`` and replaced with a descriptor — the message stays small on the
+    Snapshot node states, Delta ``CellSet`` / ``SlotValue`` / ``QueuePush``
+    payloads + ``NodeAdd`` states, and ``CrdtSync`` op states are each written
+    to ``backend`` when above ``threshold`` and replaced with a descriptor — the message stays small on the
     wire. Sites already carrying a descriptor are left untouched.
 
     The message's op/node lists are mutated in place (their frozen elements are
@@ -421,7 +422,9 @@ def _spill_snapshot(snapshot: Snapshot, backend: BlobBackend, threshold: int) ->
 def _spill_delta(delta: Delta, backend: BlobBackend, threshold: int) -> int:
     total = 0
     for i, op in enumerate(delta.ops):
-        if isinstance(op, (DeltaOp_CellSet, DeltaOp_SlotValue)):
+        # ``QueuePush`` carries an ``IpcValue`` exactly like ``CellSet``; the
+        # bodyless ``QueuePop`` / ``QueueClose`` have nothing to spill.
+        if isinstance(op, (DeltaOp_CellSet, DeltaOp_SlotValue, DeltaOp_QueuePush)):
             new_payload, spilled = spill_value(op.payload, backend, threshold)
             if spilled:
                 delta.ops[i] = replace(op, payload=new_payload)

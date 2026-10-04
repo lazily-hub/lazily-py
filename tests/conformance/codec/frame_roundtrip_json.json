@@ -67,13 +67,13 @@
     {
       "id": "delta_frame_round_trips_json",
       "name": "delta_frame_round_trips_json",
-      "description": "The `Delta` variant survives a json round trip across all seven DeltaOp variants. Op ORDER and op IDENTITY are the discriminating fields: a codec that re-encodes the externally-tagged op envelope as an internally-tagged `{\"type\": ...}` object, or reorders ops, fails `op_variants` even though `op_count` still matches.",
+      "description": "The `Delta` variant survives a json round trip across all ten DeltaOp variants, including the QueueCell op-log ops QueuePush / QueuePop / QueueClose (protocol.md § QueueCell op-log delta form, #lzdeltaqueueops). Op ORDER and op IDENTITY are the discriminating fields: a codec that re-encodes the externally-tagged op envelope as an internally-tagged `{\"type\": ...}` object, or reorders ops, fails `op_variants` even though `op_count` still matches.",
       "variant": "Delta",
       "expect": {
         "round_trip_equals_source": true,
         "base_epoch": 40,
         "epoch": 41,
-        "op_count": 7,
+        "op_count": 10,
         "op_variants": [
           "CellSet",
           "SlotValue",
@@ -81,7 +81,10 @@
           "NodeAdd",
           "NodeRemove",
           "EdgeAdd",
-          "EdgeRemove"
+          "EdgeRemove",
+          "QueuePush",
+          "QueuePop",
+          "QueueClose"
         ],
         "first_op_payload": [10],
         "node_add_type_tag": "u64"
@@ -103,7 +106,10 @@
             },
             { "NodeRemove": { "node": 5 } },
             { "EdgeAdd": { "dependent": 2, "dependency": 1 } },
-            { "EdgeRemove": { "dependent": 3, "dependency": 1 } }
+            { "EdgeRemove": { "dependent": 3, "dependency": 1 } },
+            { "QueuePush": { "node": 6, "payload": { "Inline": [97] } } },
+            { "QueuePop": { "node": 6 } },
+            { "QueueClose": { "node": 6 } }
           ]
         }
       }

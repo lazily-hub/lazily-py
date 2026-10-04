@@ -468,7 +468,7 @@ observers across processes and languages. The JSON representation is
 | `NodeKey` | Bare string path (`scores/alice`); optional on `NodeSnapshot` / `NodeAdd` |
 | `EdgeSnapshot` | `{ dependent, dependency }` |
 | `Delta` | `{ base_epoch, epoch, ops[] }` |
-| `DeltaOp` | 7 variants: `CellSet`, `SlotValue`, `Invalidate`, `NodeAdd`, `NodeRemove`, `EdgeAdd`, `EdgeRemove` (`NodeAdd` carries an optional `key`) |
+| `DeltaOp` | 10 variants: `CellSet`, `SlotValue`, `Invalidate`, `NodeAdd`, `NodeRemove`, `EdgeAdd`, `EdgeRemove`, `QueuePush`, `QueuePop`, `QueueClose` (`NodeAdd` carries an optional `key`; the three `Queue*` ops are the QueueCell op-log form, `#queue-oplog`) |
 | `IpcValue` | `{"Inline": [u8…]}` \| `{"SharedBlob": {…}}` |
 | `ShmBlobRef` | `{ offset, len, generation, epoch, checksum }` |
 | `WireStamp` | `{ wall_time, logical, peer }` (CRDT HLC stamp mirror) |

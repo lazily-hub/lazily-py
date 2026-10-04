@@ -815,9 +815,9 @@ Two message kinds flow over any transport (WebSocket text, WebRTC data, FFI
 buffer):
 
 - **`Snapshot`** — the full graph state at an epoch (`nodes`, `edges`, `roots`).
-- **`Delta`** — an ordered batch of the 7 `DeltaOp` variants (`CellSet`,
-  `SlotValue`, `Invalidate`, `NodeAdd`, `NodeRemove`, `EdgeAdd`, `EdgeRemove`)
-  applied with epoch sequencing and fail-closed resync.
+- **`Delta`** — an ordered batch of the 10 `DeltaOp` variants (`CellSet`,
+  `SlotValue`, `Invalidate`, `NodeAdd`, `NodeRemove`, `EdgeAdd`, `EdgeRemove`,
+  and the QueueCell op-log `QueuePush`, `QueuePop`, `QueueClose`) applied with epoch sequencing and fail-closed resync.
 
 ```python
 from lazily import (

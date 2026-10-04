@@ -70,7 +70,7 @@
     {
       "id": "delta_frame_round_trips_msgpack",
       "name": "delta_frame_round_trips_msgpack",
-      "description": "The `Delta` variant survives a msgpack round trip across all seven DeltaOp variants, with the op envelope still externally tagged and the op body still a named-field map.",
+      "description": "The `Delta` variant survives a msgpack round trip across all ten DeltaOp variants (including QueuePush / QueuePop / QueueClose, #lzdeltaqueueops), with the op envelope still externally tagged and the op body still a named-field map.",
       "variant": "Delta",
       "expect": {
         "round_trip_equals_source": true,
@@ -78,7 +78,7 @@
         "encoded_body_field_names": ["base_epoch", "epoch", "ops"],
         "base_epoch": 40,
         "epoch": 41,
-        "op_count": 7,
+        "op_count": 10,
         "op_variants": [
           "CellSet",
           "SlotValue",
@@ -86,7 +86,10 @@
           "NodeAdd",
           "NodeRemove",
           "EdgeAdd",
-          "EdgeRemove"
+          "EdgeRemove",
+          "QueuePush",
+          "QueuePop",
+          "QueueClose"
         ],
         "first_op_payload": [10],
         "node_add_type_tag": "u64"
@@ -108,7 +111,10 @@
             },
             { "NodeRemove": { "node": 5 } },
             { "EdgeAdd": { "dependent": 2, "dependency": 1 } },
-            { "EdgeRemove": { "dependent": 3, "dependency": 1 } }
+            { "EdgeRemove": { "dependent": 3, "dependency": 1 } },
+            { "QueuePush": { "node": 6, "payload": { "Inline": [97] } } },
+            { "QueuePop": { "node": 6 } },
+            { "QueueClose": { "node": 6 } }
           ]
         }
       }
