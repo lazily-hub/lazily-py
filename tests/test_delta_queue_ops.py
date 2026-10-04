@@ -137,6 +137,7 @@ def test_queue_push_below_threshold_stays_inline() -> None:
     ],
 )
 def test_queue_ops_missing_required_field_rejected(wire: dict) -> None:
-    # Same strictness as CellSet / Invalidate: a required field is not defaulted.
-    with pytest.raises(KeyError):
+    # Same strictness as CellSet / Invalidate: a required field is not defaulted,
+    # and the refusal names it in the ValueError family every decode raises.
+    with pytest.raises(ValueError, match="missing field"):
         DeltaOp.from_wire(wire)

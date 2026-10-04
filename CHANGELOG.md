@@ -13,6 +13,24 @@
 
 ### Changed
 
+- `DeltaOp` (all ten variants), `IpcValue`, `NodeState`, `Delta` and `NodeId`
+  are generated from lazily-spec `schemas/delta.json` into
+  `lazily._delta_wire_gen` and are still exported from `lazily` and
+  `lazily.ipc` under the same names and constructor signatures
+  (`#lzwiremodel5`). Their non-wire behaviour (the `DeltaOp.*` constructors,
+  `IpcValue.of`, `Delta.next` / `new` / `apply_status` / `filter_readable`)
+  lives in the hand-written `lazily._delta_semantics`. `NodeKey`,
+  `NodeKeyError`, `BlobBackendKind` and `ShmBlobRef` moved to
+  `lazily._wire_scalars` and are re-exported unchanged.
+- Delta decoding is strict. `Delta.from_wire` / `DeltaOp.from_wire` now
+  reject an unknown key, a missing `ops` list (it used to default to empty), a
+  node id or epoch that is not an unsigned integer (including a bool) or is
+  past 2^64-1, a byte outside 0..=255, a non-array where bytes belong, the
+  dict form `{"Opaque": ...}` of the `Opaque` unit variant, and a non-string
+  `NodeKey`. Every refusal is a `ValueError` naming the field; a missing field
+  used to raise `KeyError`. Constructing a `DeltaOp` with an out-of-range node
+  id now raises too. An explicit `key: null` and `backend: null` still read as
+  absent.
 - `ReceiptOutcome`, `CausalReceipt` and `CausalReceipts` are generated from
   lazily-spec `schemas/receipts.json` into `lazily._receipts_wire_gen` and are
   still exported from `lazily` and `lazily.ipc` (`#lzwiremodel2`). Their
