@@ -548,7 +548,7 @@ __all__ = [
     "word_lcs_len",
     "workflow_context",
 ]
-__version__ = "0.42.0"
+__version__ = "0.43.0"
 
 import warnings
 from typing import TYPE_CHECKING, Any
