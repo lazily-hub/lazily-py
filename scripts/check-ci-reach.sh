@@ -435,6 +435,7 @@ EXPECTED_CLOSURE_TARGETS=(
 	conformance-coverage
 	core-api
 	core-artifact-consumer-check
+	core-facade-check
 	format-check
 	lint
 	test
@@ -534,6 +535,7 @@ EXPECTED_GATE_STEPS=(
 	"conformance-coverage      Conformance coverage guard (make conformance-coverage)"
 	"core-api                  Core API compatibility (make core-api)"
 	"core-artifact-consumer-check Clean wheel Core consumer"
+	"core-facade-check         Core facade contract"
 	"format-check              Format (make format)"
 	"lint                      Lint (make lint)"
 	"test                      Test (make test)"

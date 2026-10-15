@@ -63,7 +63,10 @@ jobs:
       - name: Clean wheel Core consumer
         env:
           UV_PYTHON: ${{ matrix.python-version }}
-        run: make core-artifact-consumer-check
+        run: ./scripts/core-artifact-consumer-check.sh
+
+      - name: Core facade contract
+        run: uv run pytest tests/test_core_facade.py -q
 
       # The steps below are `poe precommit` unrolled, one step per gate that
       # `make check` runs, in the same order (#lzcheckcireachguard). Same work,

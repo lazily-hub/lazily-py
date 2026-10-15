@@ -73,7 +73,8 @@ from test_ci_reach_make_failure import (
 #: the wrong reason.
 _CHECK_RULE = (
     "check: format-check lint type-check core-api test conformance-coverage "
-    "test-interop-peer assertion-ordering-check ci-reach\n"
+    "test-interop-peer assertion-ordering-check core-facade-check "
+    "core-artifact-consumer-check ci-reach\n"
 )
 
 #: The gate the conditional and classification attacks land on, and the command
