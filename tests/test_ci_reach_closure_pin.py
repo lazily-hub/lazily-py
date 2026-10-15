@@ -72,7 +72,7 @@ from test_ci_reach_make_failure import (
 #: silently matched nothing would leave the tree healthy and the test green for
 #: the wrong reason.
 _CHECK_RULE = (
-    "check: format-check lint type-check test conformance-coverage "
+    "check: format-check lint type-check core-api test conformance-coverage "
     "test-interop-peer assertion-ordering-check ci-reach\n"
 )
 

@@ -433,6 +433,7 @@ EXPECTED_CLOSURE_TARGETS=(
 	check
 	ci-reach
 	conformance-coverage
+	core-api
 	format-check
 	lint
 	test
@@ -530,6 +531,7 @@ EXPECTED_GATE_STEPS=(
 	"assertion-ordering-check  Assertion observation ordering (#lzassertordering)"
 	"ci-reach                  CI-reachability guard (#lzcheckcireachguard)"
 	"conformance-coverage      Conformance coverage guard (make conformance-coverage)"
+	"core-api                  Core API compatibility (make core-api)"
 	"format-check              Format (make format)"
 	"lint                      Lint (make lint)"
 	"test                      Test (make test)"

@@ -55,6 +55,7 @@ prometheus = ["prometheus-client>=0.20"]
 structs = ["lazily[attrs,msgspec,pydantic]"]
 dev = [
     "build==1.4.0",
+    "griffe>=1.0,<2",
     "jsonschema==4.23.0",
     "lazily[prometheus,structs]",
     "mypy[mypyc]>=2.3",
@@ -119,6 +120,7 @@ init = "uv sync --all-groups"
 # layout, and a gate that only ever executes on a laptop is how they quietly
 # stop agreeing.
 interop_peer = "python -m lazily.interop_peer --self-check"
+core_api = "python scripts/check-core-api.py"
 # The lint/format GATES (#lzruffautofixvacuity). Non-repairing on purpose: a
 # linter that rewrites the tree it is judging exits 0 no matter what it found,
 # so `precommit` used to self-heal to green instead of gating, and formatting
@@ -152,6 +154,7 @@ sequence = [
     "ty",
     "ruff_format_check",
     "ruff_check",
+    "core_api",
     "run_readme",
     "conformance_manifest",
     "test",

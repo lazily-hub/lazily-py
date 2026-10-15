@@ -107,7 +107,11 @@ test-interop-peer:
 assertion-ordering-check:
 	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding py --root .
 
-check: format-check lint type-check test conformance-coverage test-interop-peer assertion-ordering-check ci-reach
+check: format-check lint type-check core-api test conformance-coverage test-interop-peer assertion-ordering-check ci-reach
+
+.PHONY: core-api
+core-api:
+	uv run poe core_api
 
 # Run the micro-benchmark suite (see BENCHMARKS.md)
 bench:

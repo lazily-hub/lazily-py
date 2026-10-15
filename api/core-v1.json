@@ -1,0 +1,1695 @@
+{
+  "schema_version": 1,
+  "package": "lazily",
+  "surface_module": "lazily.core",
+  "core_api_generation": 1,
+  "module_compatibility": {
+    "independently_shipped": false,
+    "oldest_supported_core_api_generation": 1,
+    "current_core_api_generation": 1
+  },
+  "deprecation_policy": {
+    "minimum_compatibility_window_generations": 2
+  },
+  "deprecations": [],
+  "surface": [
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "AsyncComputed",
+      "signature": "AsyncComputed(ctx: AsyncContext, compute: Callable[[AsyncComputeContext], Awaitable[T]], *, eq: Callable[[T, T], bool] | None = None)",
+      "target": "lazily.async_context.AsyncComputed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "AsyncComputed.disposed",
+      "signature": null,
+      "target": "lazily.async_context.AsyncComputed.disposed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T | None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncComputed.get",
+      "signature": "get() -> T | None",
+      "target": "lazily.async_context.AsyncComputed.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [
+        "async"
+      ],
+      "path": "AsyncComputed.get_async",
+      "signature": "get_async() -> T",
+      "target": "lazily.async_context.AsyncComputed.get_async",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncComputed.hard_clear",
+      "signature": "hard_clear() -> None",
+      "target": "lazily.async_context.AsyncComputed.hard_clear",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncComputed.invalidate",
+      "signature": "invalidate() -> None",
+      "target": "lazily.async_context.AsyncComputed.invalidate",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "AsyncComputed.revision",
+      "signature": null,
+      "target": "lazily.async_context.AsyncComputed.revision",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "SlotState",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "AsyncComputed.state",
+      "signature": null,
+      "target": "lazily.async_context.AsyncComputed.state",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "AsyncContext",
+      "signature": "AsyncContext()",
+      "target": "lazily.async_context.AsyncContext",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "R",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.batch",
+      "signature": "batch(run: Callable[[], R]) -> R",
+      "target": "lazily.async_context.AsyncContext.batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncSource[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.cell",
+      "signature": "cell(value: T) -> AsyncSource[T]",
+      "target": "lazily.async_context.AsyncContext.cell",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncComputed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.computed",
+      "signature": "computed(compute: Callable[[AsyncComputeContext], Awaitable[T]]) -> AsyncComputed[T]",
+      "target": "lazily.async_context.AsyncContext.computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncComputed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.computed_async",
+      "signature": "computed_async(compute: Callable[[AsyncComputeContext], Awaitable[T]]) -> AsyncComputed[T]",
+      "target": "lazily.async_context.AsyncContext.computed_async",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncComputed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.computed_ripple_when",
+      "signature": "computed_ripple_when(compute: Callable[[AsyncComputeContext], Awaitable[T]], changed: Callable[[T, T], bool]) -> AsyncComputed[T]",
+      "target": "lazily.async_context.AsyncContext.computed_ripple_when",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncComputed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.computed_ripple_when_async",
+      "signature": "computed_ripple_when_async(compute: Callable[[AsyncComputeContext], Awaitable[T]], changed: Callable[[T, T], bool]) -> AsyncComputed[T]",
+      "target": "lazily.async_context.AsyncContext.computed_ripple_when_async",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncComputed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.computed_with_equals",
+      "signature": "computed_with_equals(compute: Callable[[AsyncComputeContext], Awaitable[T]], eq: Callable[[T, T], bool]) -> AsyncComputed[T]",
+      "target": "lazily.async_context.AsyncContext.computed_with_equals",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.dependency_count",
+      "signature": "dependency_count(node: object) -> int",
+      "target": "lazily.async_context.AsyncContext.dependency_count",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.dependent_count",
+      "signature": "dependent_count(node: object) -> int",
+      "target": "lazily.async_context.AsyncContext.dependent_count",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [
+        "async"
+      ],
+      "path": "AsyncContext.dispose_async",
+      "signature": "dispose_async() -> None",
+      "target": "lazily.async_context.AsyncContext.dispose_async",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [
+        "async"
+      ],
+      "path": "AsyncContext.dispose_async_effect",
+      "signature": "dispose_async_effect(handle: AsyncEffectHandle) -> None",
+      "target": "lazily.async_context.AsyncContext.dispose_async_effect",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.dispose_cell",
+      "signature": "dispose_cell(handle: AsyncSource[Any]) -> None",
+      "target": "lazily.async_context.AsyncContext.dispose_cell",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.dispose_computed",
+      "signature": "dispose_computed(handle: AsyncComputed[Any]) -> None",
+      "target": "lazily.async_context.AsyncContext.dispose_computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.dispose_slot",
+      "signature": "dispose_slot(handle: AsyncComputed[Any]) -> None",
+      "target": "lazily.async_context.AsyncContext.dispose_slot",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.dispose_source",
+      "signature": "dispose_source(handle: AsyncSource[Any]) -> None",
+      "target": "lazily.async_context.AsyncContext.dispose_source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "AsyncContext.disposed",
+      "signature": null,
+      "target": "lazily.async_context.AsyncContext.disposed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncEffectHandle",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.effect_async",
+      "signature": "effect_async(body: Callable[[AsyncComputeContext], Awaitable[Any]]) -> AsyncEffectHandle",
+      "target": "lazily.async_context.AsyncContext.effect_async",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T | None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.get",
+      "signature": "get(handle: AsyncSource[T] | AsyncComputed[T]) -> T | None",
+      "target": "lazily.async_context.AsyncContext.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [
+        "async"
+      ],
+      "path": "AsyncContext.get_async",
+      "signature": "get_async(handle: AsyncComputed[T]) -> T",
+      "target": "lazily.async_context.AsyncContext.get_async",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.get_cell",
+      "signature": "get_cell(handle: AsyncSource[T]) -> T",
+      "target": "lazily.async_context.AsyncContext.get_cell",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncComputed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.memo_async",
+      "signature": "memo_async(compute: Callable[[AsyncComputeContext], Awaitable[T]], eq: Callable[[T, T], bool]) -> AsyncComputed[T]",
+      "target": "lazily.async_context.AsyncContext.memo_async",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncTeardownScope",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.scope",
+      "signature": "scope() -> AsyncTeardownScope",
+      "target": "lazily.async_context.AsyncContext.scope",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.set",
+      "signature": "set(handle: AsyncSource[T], value: T) -> None",
+      "target": "lazily.async_context.AsyncContext.set",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.set_cell",
+      "signature": "set_cell(handle: AsyncSource[T], value: T) -> None",
+      "target": "lazily.async_context.AsyncContext.set_cell",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncSource[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncContext.source",
+      "signature": "source(value: T) -> AsyncSource[T]",
+      "target": "lazily.async_context.AsyncContext.source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "AsyncSource",
+      "signature": "AsyncSource(ctx: AsyncContext, value: T)",
+      "target": "lazily.async_context.AsyncSource",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "str",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncSource.__repr__",
+      "signature": "__repr__() -> str",
+      "target": "lazily.async_context.AsyncSource.__repr__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "AsyncSource.disposed",
+      "signature": null,
+      "target": "lazily.async_context.AsyncSource.disposed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncSource.get",
+      "signature": "get() -> T",
+      "target": "lazily.async_context.AsyncSource.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "AsyncSource.peek",
+      "signature": null,
+      "target": "lazily.async_context.AsyncSource.peek",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncSource.set",
+      "signature": "set(value: T) -> None",
+      "target": "lazily.async_context.AsyncSource.set",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "AsyncTeardownScope",
+      "signature": "AsyncTeardownScope(ctx: AsyncContext)",
+      "target": "lazily.async_context.AsyncTeardownScope",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncTeardownScope",
+      "kind": "function",
+      "labels": [
+        "async"
+      ],
+      "path": "AsyncTeardownScope.__aenter__",
+      "signature": "__aenter__() -> AsyncTeardownScope",
+      "target": "lazily.async_context.AsyncTeardownScope.__aenter__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "function",
+      "labels": [
+        "async"
+      ],
+      "path": "AsyncTeardownScope.__aexit__",
+      "signature": "__aexit__(*_exc: Any) -> bool",
+      "target": "lazily.async_context.AsyncTeardownScope.__aexit__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncTeardownScope.__len__",
+      "signature": "__len__() -> int",
+      "target": "lazily.async_context.AsyncTeardownScope.__len__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [
+        "async"
+      ],
+      "path": "AsyncTeardownScope.aclose",
+      "signature": "aclose() -> None",
+      "target": "lazily.async_context.AsyncTeardownScope.aclose",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "N",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncTeardownScope.adopt",
+      "signature": "adopt(node: N) -> N",
+      "target": "lazily.async_context.AsyncTeardownScope.adopt",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "AsyncTeardownScope.armed",
+      "signature": null,
+      "target": "lazily.async_context.AsyncTeardownScope.armed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncComputed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncTeardownScope.computed",
+      "signature": "computed(compute: Callable[[AsyncComputeContext], Awaitable[T]]) -> AsyncComputed[T]",
+      "target": "lazily.async_context.AsyncTeardownScope.computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncTeardownScope.disarm",
+      "signature": "disarm() -> None",
+      "target": "lazily.async_context.AsyncTeardownScope.disarm",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncEffectHandle",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncTeardownScope.effect_async",
+      "signature": "effect_async(body: Callable[[AsyncComputeContext], Awaitable[Any]]) -> AsyncEffectHandle",
+      "target": "lazily.async_context.AsyncTeardownScope.effect_async",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "AsyncSource[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "AsyncTeardownScope.source",
+      "signature": "source(value: T) -> AsyncSource[T]",
+      "target": "lazily.async_context.AsyncTeardownScope.source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "Compute",
+      "signature": "Compute(ctx: dict, node: Any)",
+      "target": "lazily.compute.Compute",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.__contains__",
+      "signature": "__contains__(key: Any) -> bool",
+      "target": "lazily.compute.Compute.__contains__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.__delitem__",
+      "signature": "__delitem__(key: Any) -> None",
+      "target": "lazily.compute.Compute.__delitem__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.__getitem__",
+      "signature": "__getitem__(key: Any) -> Any",
+      "target": "lazily.compute.Compute.__getitem__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.__iter__",
+      "signature": "__iter__() -> Any",
+      "target": "lazily.compute.Compute.__iter__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.__len__",
+      "signature": "__len__() -> int",
+      "target": "lazily.compute.Compute.__len__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.__setitem__",
+      "signature": "__setitem__(key: Any, value: Any) -> None",
+      "target": "lazily.compute.Compute.__setitem__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.batch",
+      "signature": "batch(run: Callable[[], Any]) -> Any",
+      "target": "lazily.compute.Compute.batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.computed",
+      "signature": "computed(callable: Callable[[Any], Any]) -> Any",
+      "target": "lazily.compute.Compute.computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.computed_ripple_when",
+      "signature": "computed_ripple_when(callable: Callable[[Any], Any], changed: Callable[[Any, Any], bool]) -> Any",
+      "target": "lazily.compute.Compute.computed_ripple_when",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.dispose",
+      "signature": "dispose(node: Any) -> None",
+      "target": "lazily.compute.Compute.dispose",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "ComputeEffect",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.effect",
+      "signature": "effect(body: Callable[[Compute], Any]) -> ComputeEffect",
+      "target": "lazily.compute.Compute.effect",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.get",
+      "signature": "get(key: Any, default: Any = None) -> Any",
+      "target": "lazily.compute.Compute.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.items",
+      "signature": "items() -> Any",
+      "target": "lazily.compute.Compute.items",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.keys",
+      "signature": "keys() -> Any",
+      "target": "lazily.compute.Compute.keys",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "attribute",
+      "labels": [
+        "instance-attribute"
+      ],
+      "path": "Compute.node",
+      "signature": null,
+      "target": "lazily.compute.Compute.node",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.pop",
+      "signature": "pop(key: Any, *default: Any) -> Any",
+      "target": "lazily.compute.Compute.pop",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.read",
+      "signature": "read(node: Any) -> Any",
+      "target": "lazily.compute.Compute.read",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.set",
+      "signature": "set(cell: Any, value: Any) -> None",
+      "target": "lazily.compute.Compute.set",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.setdefault",
+      "signature": "setdefault(key: Any, default: Any = None) -> Any",
+      "target": "lazily.compute.Compute.setdefault",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.slot",
+      "signature": "slot(callable: Callable[[Any], Any]) -> Any",
+      "target": "lazily.compute.Compute.slot",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.source",
+      "signature": "source(callable: Callable[[Any], Any] = _none_as_t) -> Any",
+      "target": "lazily.compute.Compute.source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "dict",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "Compute.underlying",
+      "signature": null,
+      "target": "lazily.compute.Compute.underlying",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Context",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.untracked",
+      "signature": "untracked() -> Context",
+      "target": "lazily.compute.Compute.untracked",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Compute.values",
+      "signature": "values() -> Any",
+      "target": "lazily.compute.Compute.values",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "ComputeOps",
+      "signature": "",
+      "target": "lazily.compute.ComputeOps",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.batch",
+      "signature": "batch(run: Any) -> Any",
+      "target": "lazily.compute.ComputeOps.batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.computed",
+      "signature": "computed(callable: Any) -> Any",
+      "target": "lazily.compute.ComputeOps.computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.computed_ripple_when",
+      "signature": "computed_ripple_when(callable: Any, changed: Any) -> Any",
+      "target": "lazily.compute.ComputeOps.computed_ripple_when",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.dispose",
+      "signature": "dispose(node: Any) -> None",
+      "target": "lazily.compute.ComputeOps.dispose",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.effect",
+      "signature": "effect(body: Any) -> Any",
+      "target": "lazily.compute.ComputeOps.effect",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.read",
+      "signature": "read(node: Any) -> Any",
+      "target": "lazily.compute.ComputeOps.read",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.set",
+      "signature": "set(cell: Any, value: Any) -> None",
+      "target": "lazily.compute.ComputeOps.set",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.slot",
+      "signature": "slot(callable: Any) -> Any",
+      "target": "lazily.compute.ComputeOps.slot",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.source",
+      "signature": "source(callable: Any = ...) -> Any",
+      "target": "lazily.compute.ComputeOps.source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "ComputeOps.untracked",
+      "signature": "untracked() -> Any",
+      "target": "lazily.compute.ComputeOps.untracked",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "Computed",
+      "signature": "Computed(ctx: Any, callable: Callable[[dict], T], changed: Callable[[T, T], bool] | None = None)",
+      "target": "lazily.signal.Computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [],
+      "path": "Computed.__call__",
+      "signature": "__call__() -> T",
+      "target": "lazily.signal.Computed.__call__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "dict",
+      "kind": "attribute",
+      "labels": [
+        "instance-attribute"
+      ],
+      "path": "Computed.ctx",
+      "signature": null,
+      "target": "lazily.signal.Computed.ctx",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Computed.dispose",
+      "signature": "dispose() -> None",
+      "target": "lazily.signal.Computed.dispose",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Computed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "Computed.eager",
+      "signature": "eager() -> Computed[T]",
+      "target": "lazily.signal.Computed.eager",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [],
+      "path": "Computed.get",
+      "signature": "get() -> T",
+      "target": "lazily.signal.Computed.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "function",
+      "labels": [],
+      "path": "Computed.is_eager",
+      "signature": "is_eager() -> bool",
+      "target": "lazily.signal.Computed.is_eager",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Computed.lazy",
+      "signature": "lazy() -> None",
+      "target": "lazily.signal.Computed.lazy",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Computed.touch",
+      "signature": "touch() -> None",
+      "target": "lazily.signal.Computed.touch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "Computed.value",
+      "signature": null,
+      "target": "lazily.signal.Computed.value",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "Context",
+      "signature": "Context(ctx: dict)",
+      "target": "lazily.compute.Context",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.__contains__",
+      "signature": "__contains__(key: Any) -> bool",
+      "target": "lazily.compute.Context.__contains__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.__delitem__",
+      "signature": "__delitem__(key: Any) -> None",
+      "target": "lazily.compute.Context.__delitem__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.__getitem__",
+      "signature": "__getitem__(key: Any) -> Any",
+      "target": "lazily.compute.Context.__getitem__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.__iter__",
+      "signature": "__iter__() -> Any",
+      "target": "lazily.compute.Context.__iter__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.__len__",
+      "signature": "__len__() -> int",
+      "target": "lazily.compute.Context.__len__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.__setitem__",
+      "signature": "__setitem__(key: Any, value: Any) -> None",
+      "target": "lazily.compute.Context.__setitem__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.batch",
+      "signature": "batch(run: Callable[[], Any]) -> Any",
+      "target": "lazily.compute.Context.batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.computed",
+      "signature": "computed(callable: Callable[[Any], Any]) -> Any",
+      "target": "lazily.compute.Context.computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.computed_ripple_when",
+      "signature": "computed_ripple_when(callable: Callable[[Any], Any], changed: Callable[[Any, Any], bool]) -> Any",
+      "target": "lazily.compute.Context.computed_ripple_when",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "attribute",
+      "labels": [
+        "instance-attribute"
+      ],
+      "path": "Context.ctx",
+      "signature": null,
+      "target": "lazily.compute.Context.ctx",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.dispose",
+      "signature": "dispose(node: Any) -> None",
+      "target": "lazily.compute.Context.dispose",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "ComputeEffect",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.effect",
+      "signature": "effect(body: Callable[[Compute], Any]) -> ComputeEffect",
+      "target": "lazily.compute.Context.effect",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.get",
+      "signature": "get(key: Any, default: Any = None) -> Any",
+      "target": "lazily.compute.Context.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.items",
+      "signature": "items() -> Any",
+      "target": "lazily.compute.Context.items",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.keys",
+      "signature": "keys() -> Any",
+      "target": "lazily.compute.Context.keys",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.pop",
+      "signature": "pop(key: Any, *default: Any) -> Any",
+      "target": "lazily.compute.Context.pop",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.read",
+      "signature": "read(node: Any) -> Any",
+      "target": "lazily.compute.Context.read",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.set",
+      "signature": "set(cell: Any, value: Any) -> None",
+      "target": "lazily.compute.Context.set",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.setdefault",
+      "signature": "setdefault(key: Any, default: Any = None) -> Any",
+      "target": "lazily.compute.Context.setdefault",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.slot",
+      "signature": "slot(callable: Callable[[Any], Any]) -> Any",
+      "target": "lazily.compute.Context.slot",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.source",
+      "signature": "source(callable: Callable[[Any], Any] = _none_as_t) -> Any",
+      "target": "lazily.compute.Context.source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "dict",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "Context.underlying",
+      "signature": null,
+      "target": "lazily.compute.Context.underlying",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Context",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.untracked",
+      "signature": "untracked() -> Context",
+      "target": "lazily.compute.Context.untracked",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Any",
+      "kind": "function",
+      "labels": [],
+      "path": "Context.values",
+      "signature": "values() -> Any",
+      "target": "lazily.compute.Context.values",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "Effect",
+      "signature": "Effect(body: Callable[[dict], Any | None])",
+      "target": "lazily.effect.Effect",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.__call__",
+      "signature": "__call__(ctx: dict) -> None",
+      "target": "lazily.effect.Effect.__call__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "str",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.__repr__",
+      "signature": "__repr__() -> str",
+      "target": "lazily.slot.BaseSlot.__repr__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Callable[[Any], T]",
+      "kind": "attribute",
+      "labels": [
+        "instance-attribute"
+      ],
+      "path": "Effect.callable",
+      "signature": null,
+      "target": "lazily.slot.BaseSlot.callable",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.dependency_count",
+      "signature": "dependency_count() -> int",
+      "target": "lazily.slot.Slot.dependency_count",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.dependent_count",
+      "signature": "dependent_count() -> int",
+      "target": "lazily.slot.Slot.dependent_count",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.dispose",
+      "signature": "dispose() -> None",
+      "target": "lazily.effect.Effect.dispose",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "Effect.disposed",
+      "signature": null,
+      "target": "lazily.slot.Slot.disposed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T | None",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.get",
+      "signature": "get(ctx: C_in) -> T | None",
+      "target": "lazily.slot.BaseSlot.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.is_in",
+      "signature": "is_in(ctx: C_in) -> bool",
+      "target": "lazily.slot.BaseSlot.is_in",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "Effect.is_running",
+      "signature": null,
+      "target": "lazily.effect.Effect.is_running",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.reset",
+      "signature": "reset(ctx: Any) -> None",
+      "target": "lazily.effect.Effect.reset",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Callable[[C_in], C_ctx]",
+      "kind": "attribute",
+      "labels": [
+        "instance-attribute"
+      ],
+      "path": "Effect.resolve_ctx",
+      "signature": null,
+      "target": "lazily.slot.BaseSlot.resolve_ctx",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Effect.touch",
+      "signature": "touch(ctx: C_ctx) -> None",
+      "target": "lazily.slot.Slot.touch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "Source",
+      "signature": "Source(ctx: Any, initial_value: T)",
+      "target": "lazily.cell.Source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [],
+      "path": "Source.__call__",
+      "signature": "__call__() -> T",
+      "target": "lazily.cell.Source.__call__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "dict",
+      "kind": "attribute",
+      "labels": [
+        "instance-attribute"
+      ],
+      "path": "Source.ctx",
+      "signature": null,
+      "target": "lazily.cell.Source.ctx",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "Source.dependency_count",
+      "signature": "dependency_count() -> int",
+      "target": "lazily.cell.Source.dependency_count",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "Source.dependent_count",
+      "signature": "dependent_count() -> int",
+      "target": "lazily.cell.Source.dependent_count",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Source.dispose",
+      "signature": "dispose() -> None",
+      "target": "lazily.cell.Source.dispose",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "Source.disposed",
+      "signature": null,
+      "target": "lazily.cell.Source.disposed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [],
+      "path": "Source.get",
+      "signature": "get() -> T",
+      "target": "lazily.cell.Source.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Source.set",
+      "signature": "set(value: T) -> None",
+      "target": "lazily.cell.Source.set",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "Source.touch",
+      "signature": "touch() -> None",
+      "target": "lazily.cell.Source.touch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "attribute",
+      "labels": [
+        "property",
+        "writable"
+      ],
+      "path": "Source.value",
+      "signature": null,
+      "target": "lazily.cell.Source.value",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "TeardownScope",
+      "signature": "TeardownScope(ctx: dict)",
+      "target": "lazily.teardown.TeardownScope",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "TeardownScope",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.__enter__",
+      "signature": "__enter__() -> TeardownScope",
+      "target": "lazily.teardown.TeardownScope.__enter__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.__exit__",
+      "signature": "__exit__(*_exc: Any) -> bool",
+      "target": "lazily.teardown.TeardownScope.__exit__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "int",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.__len__",
+      "signature": "__len__() -> int",
+      "target": "lazily.teardown.TeardownScope.__len__",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "N",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.adopt",
+      "signature": "adopt(node: N) -> N",
+      "target": "lazily.teardown.TeardownScope.adopt",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "TeardownScope.armed",
+      "signature": null,
+      "target": "lazily.teardown.TeardownScope.armed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Cell[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.cell",
+      "signature": "cell(initial_value: T) -> Cell[T]",
+      "target": "lazily.teardown.TeardownScope.cell",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.close",
+      "signature": "close() -> None",
+      "target": "lazily.teardown.TeardownScope.close",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Slot[dict, dict, T]",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.computed",
+      "signature": "computed(callable: Callable[[dict], T]) -> Slot[dict, dict, T]",
+      "target": "lazily.teardown.TeardownScope.computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "attribute",
+      "labels": [
+        "instance-attribute"
+      ],
+      "path": "TeardownScope.ctx",
+      "signature": null,
+      "target": "lazily.teardown.TeardownScope.ctx",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.disarm",
+      "signature": "disarm() -> None",
+      "target": "lazily.teardown.TeardownScope.disarm",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Effect",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.effect",
+      "signature": "effect(body: Callable[[dict], Any | None]) -> Effect",
+      "target": "lazily.teardown.TeardownScope.effect",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Cell[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "TeardownScope.source",
+      "signature": "source(initial_value: T) -> Cell[T]",
+      "target": "lazily.teardown.TeardownScope.source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "class",
+      "labels": [],
+      "path": "ThreadSafeContext",
+      "signature": "ThreadSafeContext()",
+      "target": "lazily.thread_safe.ThreadSafeContext",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "tuple[dict[Any, tuple[Any | None, Any]], list[Any]]",
+      "kind": "function",
+      "labels": [
+        "staticmethod"
+      ],
+      "path": "ThreadSafeContext.apply_batch",
+      "signature": "apply_batch(nodes: dict[Any, tuple[Any | None, Any]], batch: list[tuple[Any, Any]]) -> tuple[dict[Any, tuple[Any | None, Any]], list[Any]]",
+      "target": "lazily.thread_safe.ThreadSafeContext.apply_batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "R",
+      "kind": "function",
+      "labels": [],
+      "path": "ThreadSafeContext.batch",
+      "signature": "batch(run: Callable[[], R]) -> R",
+      "target": "lazily.thread_safe.ThreadSafeContext.batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "dict[Any, tuple[Any | None, Any]]",
+      "kind": "function",
+      "labels": [
+        "staticmethod"
+      ],
+      "path": "ThreadSafeContext.flush_batch",
+      "signature": "flush_batch(nodes: dict[Any, tuple[Any | None, Any]], dependents: dict[Any, list[Any]], batch: list[tuple[Any, Any]]) -> dict[Any, tuple[Any | None, Any]]",
+      "target": "lazily.thread_safe.ThreadSafeContext.flush_batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "T",
+      "kind": "function",
+      "labels": [],
+      "path": "ThreadSafeContext.get",
+      "signature": "get(cell: Cell[T]) -> T",
+      "target": "lazily.thread_safe.ThreadSafeContext.get",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "threading.RLock",
+      "kind": "attribute",
+      "labels": [
+        "property"
+      ],
+      "path": "ThreadSafeContext.lock",
+      "signature": null,
+      "target": "lazily.thread_safe.ThreadSafeContext.lock",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "TeardownScope",
+      "kind": "function",
+      "labels": [],
+      "path": "ThreadSafeContext.scope",
+      "signature": "scope(ctx: dict) -> TeardownScope",
+      "target": "lazily.thread_safe.ThreadSafeContext.scope",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "ThreadSafeContext.set",
+      "signature": "set(cell: Cell[T], value: T) -> None",
+      "target": "lazily.thread_safe.ThreadSafeContext.set",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "ThreadSafeContext.set_cell",
+      "signature": "set_cell(cell: Cell[T], value: T) -> None",
+      "target": "lazily.thread_safe.ThreadSafeContext.set_cell",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "list[Any]",
+      "kind": "function",
+      "labels": [
+        "staticmethod"
+      ],
+      "path": "ThreadSafeContext.union_dependents",
+      "signature": "union_dependents(dependents: dict[Any, list[Any]], sources: list[Any]) -> list[Any]",
+      "target": "lazily.thread_safe.ThreadSafeContext.union_dependents",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "R",
+      "kind": "function",
+      "labels": [],
+      "path": "batch",
+      "signature": "batch(run: Callable[[], R]) -> R",
+      "target": "lazily.batch.batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": null,
+      "kind": "function",
+      "labels": [],
+      "path": "batch_context",
+      "signature": "batch_context()",
+      "target": "lazily.batch.batch_context",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Computed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "computed",
+      "signature": "computed(ctx: Any, callable: Callable[[dict], T]) -> Computed[T]",
+      "target": "lazily.signal.computed",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Computed[T]",
+      "kind": "function",
+      "labels": [],
+      "path": "computed_ripple_when",
+      "signature": "computed_ripple_when(ctx: Any, callable: Callable[[dict], T], changed: Callable[[T, T], bool]) -> Computed[T]",
+      "target": "lazily.signal.computed_ripple_when",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "None",
+      "kind": "function",
+      "labels": [],
+      "path": "dispose_node",
+      "signature": "dispose_node(node: Any, ctx: dict) -> None",
+      "target": "lazily.teardown.dispose_node",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "Effect",
+      "kind": "function",
+      "labels": [],
+      "path": "effect",
+      "signature": "effect(body: Callable[[dict], Any | None]) -> Effect",
+      "target": "lazily.effect.effect",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "bool",
+      "kind": "function",
+      "labels": [],
+      "path": "in_batch",
+      "signature": "in_batch() -> bool",
+      "target": "lazily.batch.in_batch",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "SourceSlot[C_ctx, C_ctx, T]",
+      "kind": "function",
+      "labels": [],
+      "path": "source",
+      "signature": "source(callable: Callable[[C_ctx], T] = _none_as_t) -> SourceSlot[C_ctx, C_ctx, T]",
+      "target": "lazily.cell.source",
+      "introduced_generation": 1
+    },
+    {
+      "annotation": "TeardownScope",
+      "kind": "function",
+      "labels": [],
+      "path": "teardown_scope",
+      "signature": "teardown_scope(ctx: dict) -> TeardownScope",
+      "target": "lazily.teardown.teardown_scope",
+      "introduced_generation": 1
+    }
+  ]
+}

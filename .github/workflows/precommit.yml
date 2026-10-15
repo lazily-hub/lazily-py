@@ -97,6 +97,9 @@ jobs:
       - name: Type check (make type-check)
         run: uv run poe ty
 
+      - name: Core API compatibility (make core-api)
+        run: uv run poe core_api
+
       # Not part of `make check`, but part of the old `poe precommit` list —
       # keep it running rather than losing it in the unroll.
       - name: README examples
