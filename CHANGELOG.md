@@ -1,3 +1,16 @@
+## 0.44.0
+
+### Added
+
+- `lazily.core` — the Lazily Core facade over the candidate `core-v1`
+  profile, with a committed API snapshot (`api/core-v1.json`) checked by a
+  griffe-based `core_api` gate.
+- Core qualification evidence: `scripts/core-conformance.json` and
+  `scripts/generate-core-conformance.py`. Each assertion route is proved by a
+  mutation that the runner must reject with a library `DIVERGENCE`, never a
+  runner error.
+- A packaged wheel consumer check (`make core-artifact-consumer-check`).
+
 ## 0.43.0
 
 ### Added
