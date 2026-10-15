@@ -60,6 +60,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      - name: Clean wheel Core consumer
+        env:
+          UV_PYTHON: ${{ matrix.python-version }}
+        run: make core-artifact-consumer-check
+
       # The steps below are `poe precommit` unrolled, one step per gate that
       # `make check` runs, in the same order (#lzcheckcireachguard). Same work,
       # same commands, no aggregate wrapper.

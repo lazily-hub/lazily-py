@@ -1,4 +1,7 @@
-.PHONY: init build test lint lint-fix format-check format-fix type-check clean publish-test publish bench bench-scale compile conformance-coverage assertion-ordering-check ci-reach
+.PHONY: init build test lint lint-fix format-check format-fix type-check clean publish-test publish bench bench-scale compile core-artifact-consumer-check conformance-coverage assertion-ordering-check ci-reach
+
+core-artifact-consumer-check:
+	./scripts/core-artifact-consumer-check.sh
 
 # ---- One run id per make invocation (#lzstalemanifest) ----
 #
@@ -107,7 +110,7 @@ test-interop-peer:
 assertion-ordering-check:
 	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding py --root .
 
-check: format-check lint type-check core-api test conformance-coverage test-interop-peer assertion-ordering-check ci-reach
+check: format-check lint type-check core-api test conformance-coverage test-interop-peer assertion-ordering-check core-artifact-consumer-check ci-reach
 
 .PHONY: core-api
 core-api:

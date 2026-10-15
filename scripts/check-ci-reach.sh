@@ -434,6 +434,7 @@ EXPECTED_CLOSURE_TARGETS=(
 	ci-reach
 	conformance-coverage
 	core-api
+	core-artifact-consumer-check
 	format-check
 	lint
 	test
@@ -532,6 +533,7 @@ EXPECTED_GATE_STEPS=(
 	"ci-reach                  CI-reachability guard (#lzcheckcireachguard)"
 	"conformance-coverage      Conformance coverage guard (make conformance-coverage)"
 	"core-api                  Core API compatibility (make core-api)"
+	"core-artifact-consumer-check Clean wheel Core consumer"
 	"format-check              Format (make format)"
 	"lint                      Lint (make lint)"
 	"test                      Test (make test)"
