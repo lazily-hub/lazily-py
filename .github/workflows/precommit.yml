@@ -66,7 +66,7 @@ jobs:
         run: ./scripts/core-artifact-consumer-check.sh
 
       - name: Core facade contract
-        run: uv run pytest tests/test_core_facade.py -q
+        run: uv run pytest tests/test_core_facade.py -q --noconftest
 
       # The steps below are `poe precommit` unrolled, one step per gate that
       # `make check` runs, in the same order (#lzcheckcireachguard). Same work,

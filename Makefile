@@ -4,7 +4,7 @@ core-artifact-consumer-check:
 	./scripts/core-artifact-consumer-check.sh
 
 core-facade-check:
-	uv run pytest tests/test_core_facade.py -q
+	uv run pytest tests/test_core_facade.py -q --noconftest
 
 # ---- One run id per make invocation (#lzstalemanifest) ----
 #
