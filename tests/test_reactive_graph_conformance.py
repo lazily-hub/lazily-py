@@ -66,6 +66,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import os
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -218,6 +219,29 @@ EXPECTED_SKIPS: dict[str, dict[str, str]] = {
 # py was the family outlier. Fixed in 83bdc68; the entry is gone rather than
 # grandfathered.
 KNOWN_DIVERGENCES: frozenset[str] = frozenset()
+
+_CORE_REPORT_PATH = os.environ.get("LAZILY_CORE_REACTIVE_REPORT_PATH")
+
+
+def _record_core_run(
+    model: str,
+    replayed: set[str],
+    skipped: dict[str, str],
+    total_ops: int,
+    total_checks: int,
+) -> None:
+    """Append one proven execution-flavor result for the Core report generator."""
+    if not _CORE_REPORT_PATH:
+        return
+    record = {
+        "model": model,
+        "replayed": sorted(replayed),
+        "skipped": skipped,
+        "ops": total_ops,
+        "checks": total_checks,
+    }
+    with open(_CORE_REPORT_PATH, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
 
 
 _SUPPORTED_OPS = frozenset(
@@ -1255,6 +1279,7 @@ def _run_corpus(model_cls: Any) -> None:
     assert len(replayed) > 0, f"{model_name}: replayed zero fixtures"
     assert total_ops > 0, f"{model_name}: executed zero ops"
     assert total_checks > 0, f"{model_name}: executed zero assertions"
+    _record_core_run(model_name, replayed, skipped, total_ops, total_checks)
 
 
 @pytest.mark.parametrize("model_cls", MODELS, ids=lambda m: m.NAME)  # type: ignore[misc]

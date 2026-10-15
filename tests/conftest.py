@@ -56,6 +56,10 @@ _RUN_ID = os.environ.get("LAZILY_CONFORMANCE_RUN_ID")
 #: Fixed prefix of the stamp line. Shared spelling with
 #: `scripts/check-conformance-coverage.sh` and the `conformance_manifest` task.
 _RUN_ID_PREFIX = "# lazily-run-id "
+# A focused Core report run intentionally opens only the Core reactive-graph
+# closure. It still enforces every opened block/key/scenario; only the unrelated
+# corpus-wide population floor is disabled.
+_CORE_FOCUSED_RUN = os.environ.get("LAZILY_CORE_FOCUSED_RUN") == "1"
 
 
 def _corpus_roots() -> tuple[str, ...]:
@@ -254,7 +258,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untype
 
     # Rung 0 runs FIRST because it is the rung the others stand on: an unbound
     # block makes every verdict below it silent rather than wrong.
-    unbound = block_bind_failures(enforce_floor=bool(_opened))
+    unbound = block_bind_failures(enforce_floor=bool(_opened) and not _CORE_FOCUSED_RUN)
     if unbound:
         report += [
             "",

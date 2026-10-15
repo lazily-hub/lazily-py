@@ -107,6 +107,21 @@ notes and platform carve-outs lives in
 A family cell summarises 83 feature rows. For row-level marks, per-cell notes, and platform carve-outs see [the canonical coverage matrix in `lazily-spec`](https://github.com/lazily-hub/lazily-spec/blob/main/docs/coverage.md).
 <!-- coverage-table:end -->
 
+### Core conformance evidence
+
+[`scripts/core-conformance.json`](scripts/core-conformance.json) declares the
+shell-free Core report command. The command replays the canonical Core fixture
+closure against the single-threaded, thread-safe, and async contexts, then writes
+fresh mutation-kill evidence below `LAZILY_CORE_REPORTS_ROOT/python` and the
+observed report to `LAZILY_CORE_REPORT_PATH`.
+
+The report is intentionally partial today: the async context has no signal
+surface for the three signal fixtures, and every context lacks the bounded
+feedback-drain diagnostic required by
+`feedback_drain_bound_reports_exhaustion.json`. The Python package also does not
+claim the native C-ABI consumer proof: its `ctypes` wire helpers are not a
+shipped native artifact boundary.
+
 ## Installation
 
 ```

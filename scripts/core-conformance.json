@@ -1,0 +1,33 @@
+{
+  "$schema": "../../lazily-spec/schemas/core-conformance-declaration.schema.json",
+  "schema_version": 1,
+  "profile_id": "core-v1",
+  "binding_id": "python",
+  "report_command": ["uv", "run", "python", "scripts/generate-core-conformance.py"],
+  "runtime_skips": [
+    {
+      "fixture": "reactive-graph/feedback_drain_bound_reports_exhaustion.json",
+      "scenario": "*",
+      "reason": "unsupported expectation `drain_exhausted`"
+    },
+    {
+      "fixture": "reactive-graph/dispose_signal_reverts_to_lazy.json",
+      "scenario": "*",
+      "execution_flavor": "async",
+      "reason": "unsupported op `signal`"
+    },
+    {
+      "fixture": "reactive-graph/signal_materializes_once_per_batch.json",
+      "scenario": "*",
+      "execution_flavor": "async",
+      "reason": "unsupported op `signal`"
+    },
+    {
+      "fixture": "reactive-graph/signal_materializes_without_a_read.json",
+      "scenario": "*",
+      "execution_flavor": "async",
+      "reason": "unsupported op `signal`"
+    }
+  ],
+  "fixtureless_claims": []
+}
