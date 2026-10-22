@@ -1,3 +1,13 @@
+## 0.45.0
+
+### Fixed
+
+- Added generation-aware stale-handle conformance coverage for source,
+  computed, and effect disposal across synchronous and asynchronous contexts.
+  Python does not recycle logical node IDs, so its exact capability ledger now
+  records `recycled_node_ids` as unsupported while still proving stale-handle
+  safety exhaustively.
+
 ## 0.44.0
 
 ### Added
