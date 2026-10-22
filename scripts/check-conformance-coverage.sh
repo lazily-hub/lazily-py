@@ -30,6 +30,14 @@
 # before OK is printed.
 set -euo pipefail
 
+# Binding capabilities that the canonical optional coverage matrix may gate.
+# Python graph handles are object identities rather than recyclable logical ids,
+# so the ABA-style recycled-id vector is structurally inapplicable here. Keep
+# this multiline shape: lazily-spec reads the declaration as binding evidence.
+UNSUPPORTED_CAPABILITIES=(
+  "recycled_node_ids"
+)
+
 SPEC_DIR="${LAZILY_SPEC_CONFORMANCE_DIR:-../lazily-spec/conformance}"
 if [ ! -d "$SPEC_DIR" ]; then
   # Skipping is right for a local checkout without the sibling clone, and wrong
