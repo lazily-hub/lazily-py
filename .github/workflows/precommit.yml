@@ -108,6 +108,9 @@ jobs:
       - name: Core API compatibility (make core-api)
         run: uv run poe core_api
 
+      - name: Core conformance replay and mutation evidence (make core-conformance)
+        run: ./scripts/core-conformance-check.sh
+
       # Not part of `make check`, but part of the old `poe precommit` list —
       # keep it running rather than losing it in the unroll.
       - name: README examples

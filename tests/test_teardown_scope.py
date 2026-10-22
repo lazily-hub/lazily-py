@@ -21,9 +21,14 @@ from typing import Any
 import pytest
 
 from lazily import Cell, Effect, Slot, effect
-from lazily.async_context import AsyncContext
+from lazily.async_context import (
+    AsyncComputed,
+    AsyncContext,
+    AsyncEffectHandle,
+    AsyncSource,
+)
 from lazily.slot import DisposedError
-from lazily.teardown import TeardownScope, teardown_scope
+from lazily.teardown import TeardownScope, dispose_node, teardown_scope
 
 
 # --------------------------------------------------------------------------- #
@@ -174,6 +179,87 @@ def test_disposal_is_idempotent_and_terminal() -> None:
         _ = src.value
     # A write to a torn-down source is inert rather than an error.
     src.set(99)
+
+
+@pytest.mark.parametrize(
+    ("stale_kind", "successor_kind"),
+    [
+        (stale_kind, successor_kind)
+        for stale_kind in ("cell", "computed", "effect")
+        for successor_kind in ("cell", "computed", "effect")
+    ],
+)
+def test_stale_sync_handle_cannot_mutate_a_successor(
+    stale_kind: str, successor_kind: str
+) -> None:
+    """Object identity is Python's non-aliasing generation token.
+
+    Python's graph has no reusable numeric node ids: a handle *is* the graph
+    identity. This matrix therefore covers stale references across every same-
+    and cross-kind transition without pretending that CPython's memory address
+    is a reusable allocator slot (the canonical ABA fixture is capability-
+    excluded for that reason). Re-disposing the old object must touch only that
+    object, never the separately allocated live successor.
+    """
+
+    ctx: dict = {}
+    old_cleanups: list[str] = []
+    successor_cleanups: list[str] = []
+
+    def make(kind: str, cleanups: list[str]) -> Any:
+        if kind == "cell":
+            return Cell(ctx, 1)
+        if kind == "computed":
+            return Slot(lambda _c: 1)
+
+        def body(_c: dict) -> Any:
+            return lambda: cleanups.append("cleanup")
+
+        handle = Effect(body)
+        handle(ctx)
+        return handle
+
+    def dispose(handle: Any) -> None:
+        dispose_node(handle, ctx)
+
+    stale = make(stale_kind, old_cleanups)
+    dispose(stale)
+    old_cleanup_count = len(old_cleanups)
+
+    successor = make(successor_kind, successor_cleanups)
+    assert stale is not successor
+    if successor_kind == "computed":
+        assert successor(ctx) == 1
+
+    dispose(stale)
+
+    assert len(old_cleanups) == old_cleanup_count
+    assert successor_cleanups == []
+    assert not successor.disposed
+    if successor_kind == "cell":
+        successor.set(2)
+        assert successor.value == 2
+    elif successor_kind == "computed":
+        assert successor(ctx) == 1
+    else:
+        successor(ctx)
+        assert successor_cleanups == ["cleanup"]
+
+
+def test_thread_safe_stale_source_handle_cannot_mutate_a_successor() -> None:
+    """The thread-safe write facade preserves reference identity too."""
+    from lazily.thread_safe import ThreadSafeContext
+
+    ctx: dict = {}
+    thread_safe = ThreadSafeContext()
+    stale = Cell(ctx, 1)
+    stale.dispose()
+    successor = Cell(ctx, 2)
+
+    stale.dispose()
+    thread_safe.set(successor, 3)
+
+    assert successor.value == 3
 
 
 def test_churn_returns_the_dependent_set_to_baseline() -> None:
@@ -359,6 +445,80 @@ def test_closing_a_scope_twice_is_a_no_op() -> None:
 # --------------------------------------------------------------------------- #
 # Async surface
 # --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("stale_kind", "successor_kind"),
+    [
+        (stale_kind, successor_kind)
+        for stale_kind in ("cell", "computed", "effect")
+        for successor_kind in ("cell", "computed", "effect")
+    ],
+)
+def test_stale_async_handle_cannot_mutate_a_successor(
+    stale_kind: str, successor_kind: str
+) -> None:
+    """The async object-backed graph has the same non-aliasing identity rule."""
+
+    async def main() -> None:
+        ctx = AsyncContext()
+        topic = ctx.source(1)
+        old_cleanups: list[str] = []
+        successor_cleanups: list[str] = []
+
+        async def make(kind: str, cleanups: list[str]) -> Any:
+            if kind == "cell":
+                return ctx.source(1)
+            if kind == "computed":
+
+                async def compute(cc: Any) -> int:
+                    return cc.get(topic)
+
+                handle = ctx.computed(compute)
+                assert await ctx.get_async(handle) == 1
+                return handle
+
+            async def body(cc: Any) -> Any:
+                cc.get(topic)
+                return lambda: cleanups.append("cleanup")
+
+            handle = ctx.effect_async(body)
+            await handle.settle()
+            return handle
+
+        async def dispose(handle: Any) -> None:
+            if isinstance(handle, AsyncEffectHandle):
+                await handle.dispose_async()
+            elif isinstance(handle, AsyncSource):
+                ctx.dispose_source(handle)
+            else:
+                assert isinstance(handle, AsyncComputed)
+                ctx.dispose_computed(handle)
+
+        stale = await make(stale_kind, old_cleanups)
+        await dispose(stale)
+        old_cleanup_count = len(old_cleanups)
+
+        successor = await make(successor_kind, successor_cleanups)
+        assert stale is not successor
+
+        await dispose(stale)
+
+        assert len(old_cleanups) == old_cleanup_count
+        assert successor_cleanups == []
+        assert not successor.disposed
+        if successor_kind == "cell":
+            ctx.set(successor, 2)
+            assert ctx.get(successor) == 2
+        elif successor_kind == "computed":
+            ctx.set(topic, 2)
+            assert await ctx.get_async(successor) == 2
+        else:
+            ctx.set(topic, 2)
+            await successor.settle()
+            assert successor_cleanups == ["cleanup"]
+
+    asyncio.run(main())
 
 
 def test_async_scope_disposes_members_on_exit() -> None:

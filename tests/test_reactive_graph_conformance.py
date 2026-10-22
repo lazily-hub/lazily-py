@@ -75,6 +75,7 @@ from conformance_assert import (
     assert_key_into,
     corpus_subdir,
     excuse_key,
+    excuse_scenario,
     instrument,
     sub_entries,
 )
@@ -135,6 +136,7 @@ FIXTURES = (
     "scoping_bounds_teardown_not_visibility.json",
     "signal_materializes_once_per_batch.json",
     "signal_materializes_without_a_read.json",
+    "stale_effect_handle_cannot_remove_recycled_source.json",
     "teardown_runs_members_in_reverse_creation_order.json",
     "transitive_invalidation_reaches_depth.json",
 )
@@ -175,13 +177,28 @@ MERGEFEED_SKIPS: dict[str, str] = {
 }
 MERGEFEED_FIXTURES = frozenset(MERGEFEED_SKIPS)
 
+STALE_HANDLE_FIXTURE = "stale_effect_handle_cannot_remove_recycled_source.json"
+RECYCLED_ID_FIXTURE = "recycled_id_inherits_nothing.json"
+RECYCLED_ID_FIXTURES = frozenset({RECYCLED_ID_FIXTURE, STALE_HANDLE_FIXTURE})
+_RECYCLED_NODE_IDS_REASON = "unsupported scenario capability `recycled_node_ids`"
+STALE_HANDLE_SCENARIOS = frozenset(
+    f"stale_{stale_kind}_to_{successor_kind}"
+    for stale_kind in ("cell", "computed", "effect")
+    for successor_kind in ("cell", "computed", "effect")
+)
+
 # Fixtures each context executes end to end. Asserted exactly, per context: a
 # fixture that stops replaying, and a fixture that starts replaying, both fail
 # the build.
 EXPECTED_REPLAYED: dict[str, frozenset[str]] = {
-    "Context": frozenset(FIXTURES) - MERGEFEED_FIXTURES,
-    "ThreadSafeContext": frozenset(FIXTURES) - MERGEFEED_FIXTURES,
-    "AsyncContext": frozenset(FIXTURES) - MERGEFEED_FIXTURES - SIGNAL_FIXTURES,
+    "Context": frozenset(FIXTURES) - MERGEFEED_FIXTURES - RECYCLED_ID_FIXTURES,
+    "ThreadSafeContext": frozenset(FIXTURES)
+    - MERGEFEED_FIXTURES
+    - RECYCLED_ID_FIXTURES,
+    "AsyncContext": frozenset(FIXTURES)
+    - MERGEFEED_FIXTURES
+    - SIGNAL_FIXTURES
+    - RECYCLED_ID_FIXTURES,
 }
 
 # Fixtures skipped per context, with the *first* unsupported op or expectation
@@ -201,6 +218,9 @@ EXPECTED_SKIPS: dict[str, dict[str, str]] = {
         **dict.fromkeys(sorted(SIGNAL_FIXTURES), _ASYNC_NO_SIGNAL),
     },
 }
+for _model_skips in EXPECTED_SKIPS.values():
+    for _fixture in RECYCLED_ID_FIXTURES:
+        _model_skips[_fixture] = _RECYCLED_NODE_IDS_REASON
 
 # Fixture assertions an execution model does not satisfy today, as
 # ``<model>/<fixture>[<scenario>]#<step>:<key>``.
@@ -227,6 +247,7 @@ def _record_core_run(
     model: str,
     replayed: set[str],
     skipped: dict[str, str],
+    scenario_skips: dict[str, dict[str, str]],
     total_ops: int,
     total_checks: int,
 ) -> None:
@@ -237,6 +258,7 @@ def _record_core_run(
         "model": model,
         "replayed": sorted(replayed),
         "skipped": skipped,
+        "scenario_skips": scenario_skips,
         "ops": total_ops,
         "checks": total_checks,
     }
@@ -280,6 +302,7 @@ _SIGNAL_OPS = frozenset({"dispose_signal", "drive", "signal", "undrive"})
 _SUPPORTED_EXPECT = frozenset(
     {
         "cleanup_order",
+        "cleanups_of",
         "computes_of",
         "dependencies_of",
         "dependents_of",
@@ -291,6 +314,7 @@ _SUPPORTED_EXPECT = frozenset(
         "readable",
         "scope_owned_count",
         "value",
+        "writable",
     }
 )
 _SUPPORTED_SHAPES = frozenset({"scenarios", "steps"})
@@ -716,6 +740,8 @@ def _unsupported_reason(
     the gap or stop the contexts that do support the op from replaying it.
     """
     shape = fixture.get("shape")
+    if "recycled_node_ids" in fixture.get("requires", []):
+        return _RECYCLED_NODE_IDS_REASON
     if shape is None:
         return "fixture declares no `shape`"
     if shape not in _SUPPORTED_SHAPES:
@@ -726,7 +752,12 @@ def _unsupported_reason(
         scenarios = fixture.get("scenarios")
         if not scenarios:
             return "fixture declares no `scenarios`"
-        streams = [s.get("steps") for s in scenarios]
+        streams = []
+        for scenario in scenarios:
+            requires = scenario.get("requires", [])
+            if "recycled_node_ids" in requires:
+                return _RECYCLED_NODE_IDS_REASON
+            streams.append(scenario.get("steps"))
     for steps in streams:
         if not steps:
             return "fixture declares no `steps`"
@@ -1028,6 +1059,9 @@ async def _replay(
                 # de-eagered signal recomputes.
                 for node_id, count in sub_entries(expect, key):
                     check(f"computes_of.{node_id}", model.computes.get(node_id), count)
+            elif key == "cleanups_of":
+                for node_id, count in sub_entries(expect, key):
+                    check(f"cleanups_of.{node_id}", cleaned.count(node_id), count)
             elif key == "value":
                 if expect.get("error") is not None:
                     pass
@@ -1044,6 +1078,13 @@ async def _replay(
             elif key == "readable":
                 for node_id, want_alive in sub_entries(expect, key):
                     check(f"readable.{node_id}", await alive(node_id), want_alive)
+            elif key == "writable":
+                for node_id, want_writable in sub_entries(expect, key):
+                    check(
+                        f"writable.{node_id}",
+                        isinstance(node_of(node_id), (Cell, AsyncSource)),
+                        want_writable,
+                    )
             elif key == "observed_by":
                 check("observed_by", observed, list(want))
             elif key == "observed_count":
@@ -1188,6 +1229,7 @@ def _run_corpus(model_cls: Any) -> None:
 
     replayed: set[str] = set()
     skipped: dict[str, str] = {}
+    scenario_skips: dict[str, dict[str, str]] = {}
     divergences: set[str] = set()
     total_ops = 0
     total_checks = 0
@@ -1197,6 +1239,16 @@ def _run_corpus(model_cls: Any) -> None:
         reason = _unsupported_reason(raw, model_cls.SUPPORTED_OPS)
         if reason is not None:
             skipped[name] = reason
+            if reason == _RECYCLED_NODE_IDS_REASON and name == STALE_HANDLE_FIXTURE:
+                observed_scenarios = {scenario["id"] for scenario in raw["scenarios"]}
+                assert observed_scenarios == set(STALE_HANDLE_SCENARIOS), (
+                    f"{name}: recycled-node-id scenario matrix drifted "
+                    f"(observed: {sorted(observed_scenarios)}, "
+                    f"expected: {sorted(STALE_HANDLE_SCENARIOS)})"
+                )
+                scenario_skips[name] = dict.fromkeys(sorted(observed_scenarios), reason)
+                for scenario in sorted(observed_scenarios):
+                    excuse_scenario(f"reactive-graph/{name}", scenario, reason)
             continue
 
         # Instrumented only once the pre-flight has accepted the fixture. This
@@ -1279,7 +1331,9 @@ def _run_corpus(model_cls: Any) -> None:
     assert len(replayed) > 0, f"{model_name}: replayed zero fixtures"
     assert total_ops > 0, f"{model_name}: executed zero ops"
     assert total_checks > 0, f"{model_name}: executed zero assertions"
-    _record_core_run(model_name, replayed, skipped, total_ops, total_checks)
+    _record_core_run(
+        model_name, replayed, skipped, scenario_skips, total_ops, total_checks
+    )
 
 
 @pytest.mark.parametrize("model_cls", MODELS, ids=lambda m: m.NAME)  # type: ignore[misc]

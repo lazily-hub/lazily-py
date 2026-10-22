@@ -67,7 +67,10 @@ def run_runner(
 
 def fixture_digest(profile: dict[str, Any], corpus: Path) -> str:
     digest = hashlib.sha256()
-    for fixture in profile["required_fixtures"]:
+    # The profile digest is path-canonical, not presentation-order-dependent.
+    # Required fixtures are grouped for readability, and stale-handle scenarios
+    # exposed the first case where that grouping differs from lexical order.
+    for fixture in sorted(profile["required_fixtures"], key=lambda item: item["path"]):
         rel = fixture["path"]
         path = corpus / rel
         if not path.is_file():
@@ -313,6 +316,12 @@ def main() -> None:
                 for record in records
                 if name in record["skipped"]
             )
+            scenario_skip_ledgers = [
+                record.get("scenario_skips", {}).get(name, {}) for record in records
+            ]
+            scenario_skips = scenario_skip_ledgers[0]
+            if any(ledger != scenario_skips for ledger in scenario_skip_ledgers[1:]):
+                fail(f"execution flavors disagree on scenario skips for {rel}")
             status = (
                 "passed"
                 if len(executed) == len(records)
@@ -321,7 +330,16 @@ def main() -> None:
                 else "skipped"
             )
             if skipped:
-                if not executed:
+                if not executed and scenario_skips:
+                    runtime_skips.extend(
+                        {
+                            "fixture": rel,
+                            "scenario": scenario,
+                            "reason": reason,
+                        }
+                        for scenario, reason in sorted(scenario_skips.items())
+                    )
+                elif not executed:
                     reasons = sorted({reason for _, reason in skipped})
                     runtime_skips.append(
                         {"fixture": rel, "scenario": "*", "reason": "; ".join(reasons)}

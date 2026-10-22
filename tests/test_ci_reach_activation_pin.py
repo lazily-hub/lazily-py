@@ -775,15 +775,15 @@ def test_the_clean_tree_verdict_gained_exactly_two_ok_lines(tree: Path) -> None:
     assert result.stderr == "", result.stderr
     lines = result.stdout.splitlines()
     assert lines[-4:] == [
-        "check-ci-reach: OK — 11 gate(s) reached INSIDE the CI step pinned for each",
-        "check-ci-reach: OK — 11 target(s) reached by CI, 0 excused, 1 carrying no gate",
+        "check-ci-reach: OK — 12 gate(s) reached INSIDE the CI step pinned for each",
+        "check-ci-reach: OK — 12 target(s) reached by CI, 0 excused, 1 carrying no gate",
         "check-ci-reach: OK — 2 trigger(s), 1 trigger filter(s) and 1 gate job(s) "
         "pinned to exact values",
         "check-ci-reach: OK — .github/workflows/precommit.yml gates on push — "
         "unfiltered by path, every branch",
     ], (
         f"the healthy verdict changed. The first two lines are the magnitudes "
-        f"every other ci-reach test is written against (11 reached, 0 excused, 1 "
-        f"carrying no gate, 11 gates step-scoped); the last two are the activation "
+        f"every other ci-reach test is written against (12 reached, 0 excused, 1 "
+        f"carrying no gate, 12 gates step-scoped); the last two are the activation "
         f"pins' and independent floor's own lines.\n{result.stdout}"
     )

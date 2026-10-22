@@ -456,6 +456,55 @@ KNOWN_UNBOUND_BLOCKS: dict[str, str] = {
     ),
 }
 
+_RECYCLED_NODE_IDS_UNBOUND = (
+    "skipped in every context: Python handles are non-aliasing object identities "
+    "and expose no recyclable arena/raw node id, so the canonical reuse premise "
+    "cannot be established without inventing a vacuous adapter id"
+)
+_RECYCLED_ID_UNBOUND_SITES = (
+    "recycled_id_inherits_nothing.json|steps[2].expect",
+    "recycled_id_inherits_nothing.json|steps[3].expect",
+    "recycled_id_inherits_nothing.json|steps[4].expect",
+    "recycled_id_inherits_nothing.json|steps[5].expect",
+    "recycled_id_inherits_nothing.json|steps[6].expect",
+    "recycled_id_inherits_nothing.json|steps[8].expect",
+    "recycled_id_inherits_nothing.json|steps[11].expect",
+    "recycled_id_inherits_nothing.json|steps[12].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_cell_to_cell].steps[4].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_cell_to_cell].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_cell_to_computed].steps[4].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_cell_to_computed].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_cell_to_computed].steps[7].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_cell_to_effect].steps[4].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_cell_to_effect].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_cell_to_effect].steps[6].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_cell].steps[2].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_cell].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_cell].steps[6].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_computed].steps[2].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_computed].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_computed].steps[6].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_computed].steps[8].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_effect].steps[2].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_effect].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_effect].steps[6].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_computed_to_effect].steps[7].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_effect_to_cell].steps[4].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_effect_to_cell].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_effect_to_computed].steps[4].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_effect_to_computed].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_effect_to_computed].steps[7].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_effect_to_effect].steps[4].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_effect_to_effect].steps[5].expect",
+    "stale_effect_handle_cannot_remove_recycled_source.json|scenarios[stale_effect_to_effect].steps[6].expect",
+)
+KNOWN_UNBOUND_BLOCKS.update(
+    {
+        f"reactive-graph/{site}": _RECYCLED_NODE_IDS_UNBOUND
+        for site in _RECYCLED_ID_UNBOUND_SITES
+    }
+)
+
 #: The name of the env var that moves :func:`expected_ledgered_blocks` for one
 #: run. Provided for bisecting an upstream corpus change, not for making a red
 #: run green: the committed pin is the number CI enforces.
@@ -514,7 +563,7 @@ EXPECTED_LEDGERED_BLOCKS_ENV = "EXPECTED_LEDGERED_BLOCKS"
 #: not a statement about the run: it reads a committed constant in this file, so a
 #: ``pytest -k`` subset and a corpus-less checkout are exactly as able to enforce
 #: it as CI is, and a ledger that moves cannot slip in behind a skipped suite.
-_EXPECTED_LEDGERED_BLOCKS = 25
+_EXPECTED_LEDGERED_BLOCKS = 60
 
 #: How many ledger keys the size-pin failure line names before it stops and
 #: points at ``git diff`` for the rest. The per-entry directions below name every
