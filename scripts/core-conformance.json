@@ -17,6 +17,56 @@
       "reason": "unsupported op `signal`"
     },
     {
+      "fixture": "reactive-graph/recycled_id_inherits_nothing.json",
+      "scenario": "*",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_cell_to_cell",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_cell_to_computed",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_cell_to_effect",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_computed_to_cell",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_computed_to_computed",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_computed_to_effect",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_effect_to_cell",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_effect_to_computed",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
+      "fixture": "reactive-graph/stale_effect_handle_cannot_remove_recycled_source.json",
+      "scenario": "stale_effect_to_effect",
+      "reason": "unsupported scenario capability `recycled_node_ids`"
+    },
+    {
       "fixture": "reactive-graph/signal_materializes_once_per_batch.json",
       "scenario": "*",
       "execution_flavor": "async",
