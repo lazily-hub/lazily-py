@@ -1024,6 +1024,14 @@ def test_a_conditional_or_failure_discarding_pinned_step_is_refused(
     for attribute, word in (
         ("if: false", "if"),
         ("continue-on-error: true", "continue-on-error"),
+        # Any value but `false` discards the failure. The rung used to match
+        # the literal `true` only, so these two left the guard green on a
+        # pinned Core step (#lzcorecireachaudit).
+        ("continue-on-error: ${{ true }}", "continue-on-error"),
+        (
+            "continue-on-error: ${{ matrix.python-version == '3.12' }}",
+            "continue-on-error",
+        ),
     ):
         injected = (
             f"      - name: {PIN[_VICTIM]}\n"
@@ -1062,6 +1070,21 @@ def test_a_conditional_or_failure_discarding_pinned_step_is_refused(
     assert benign.returncode == 0, (
         f"`continue-on-error: false` — the DEFAULT — was refused, so this rung "
         f"reddens a legitimate state.\n{benign.stdout}{benign.stderr}"
+    )
+    # Quoted spellings of the default are the default too.
+    _write_changed(
+        path,
+        original.replace(
+            named,
+            f"      - name: {PIN[_VICTIM]}\n"
+            f"        continue-on-error: 'false'\n"
+            f"        run: uv run poe ty\n",
+            1,
+        ),
+    )
+    quoted = _run_guard(tree)
+    assert quoted.returncode == 0, (
+        f"`continue-on-error: 'false'` was refused.\n{quoted.stdout}{quoted.stderr}"
     )
 
 

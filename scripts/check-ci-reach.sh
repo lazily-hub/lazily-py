@@ -1251,10 +1251,17 @@ ci_step_commands() {
 			# (#reversereachdirection). Value ignored for `if:` — this guard
 			# cannot evaluate a GitHub expression, and a step it cannot prove
 			# runs is not reach. `continue-on-error: false` is the default and
-			# is not a guard.
+			# is not a guard — but it is the ONLY value that is not. Any other
+			# value is refused, not just the literal `true`: `${{ true }}` and
+			# `${{ matrix.x }}` discard the failure exactly as well, and a rule
+			# keyed on the literal let `continue-on-error: ${{ true }}` on a
+			# pinned Core step leave this guard green (#lzcorecireachaudit).
 			if (line ~ /^[[:space:]]*if:/) { has_if = 1; next }
-			if (line ~ /^[[:space:]]*continue-on-error:[[:space:]]*("|'"'"')?true/) {
-				has_coe = 1
+			if (line ~ /^[[:space:]]*continue-on-error:/) {
+				v = line
+				sub(/^[[:space:]]*continue-on-error:[[:space:]]*/, "", v)
+				sub(/[[:space:]]+(#.*)?$/, "", v)
+				if (v != "false" && v != "\"false\"" && v != "'"'"'false'"'"'") has_coe = 1
 				next
 			}
 			if (line ~ /^[[:space:]]*run:[[:space:]]*[|>][-+]?[[:space:]]*$/) {
