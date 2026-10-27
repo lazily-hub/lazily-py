@@ -436,6 +436,7 @@ EXPECTED_CLOSURE_TARGETS=(
 	core-api
 	core-artifact-consumer-check
 	core-conformance
+	core-evidence-check
 	core-facade-check
 	format-check
 	lint
@@ -537,6 +538,7 @@ EXPECTED_GATE_STEPS=(
 	"core-api                  Core API compatibility (make core-api)"
 	"core-artifact-consumer-check Clean wheel Core consumer"
 	"core-conformance          Core conformance replay and mutation evidence (make core-conformance)"
+	"core-evidence-check       Core evidence gate (#lzbindingevidenceci)"
 	"core-facade-check         Core facade contract"
 	"format-check              Format (make format)"
 	"lint                      Lint (make lint)"

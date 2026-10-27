@@ -136,6 +136,19 @@ jobs:
       - name: Assertion observation ordering (#lzassertordering)
         run: python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding py --root .
 
+      # Per-binding Core evidence gate (#lzbindingevidenceci): regenerate this
+      # binding's Core report and verify it with lazily-spec's checker on every
+      # push, so evidence drift is caught here rather than at the next cohort
+      # qualification. --require-all fails closed on a missing declaration or
+      # report.
+      - name: Set up Node for the Core evidence gate
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Core evidence gate (#lzbindingevidenceci)
+        run: node ../lazily-spec/scripts/check-core-evidence.mjs --bindings-root .. --binding python --reports build/core-evidence --generate-reports --require-all
+
       # The gate that keeps every step above honest (#lzcheckcireachguard). It
       # compares `make check`'s prerequisite closure against the run: bodies in
       # this file and fails on any target CI does not reach. Comments inside run:

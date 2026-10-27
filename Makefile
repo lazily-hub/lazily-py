@@ -1,7 +1,17 @@
-.PHONY: init build test lint lint-fix format-check format-fix type-check clean publish-test publish bench bench-scale compile core-api core-conformance core-facade-check core-artifact-consumer-check conformance-coverage assertion-ordering-check ci-reach
+.PHONY: init build test lint lint-fix format-check format-fix type-check clean publish-test publish bench bench-scale compile core-api core-conformance core-facade-check core-artifact-consumer-check core-evidence-check conformance-coverage assertion-ordering-check ci-reach
 
 core-artifact-consumer-check:
 	./scripts/core-artifact-consumer-check.sh
+
+# Per-binding Core evidence gate (#lzbindingevidenceci). Runs lazily-spec's
+# verifier for this binding alone: it regenerates the Core report through
+# scripts/core-conformance.json's report_command, then checks it against the
+# canonical profile, so stale evidence handles, unreported skips and a missing
+# report are red on push instead of only at cohort qualification.
+# --require-all turns an absent ../lazily-spec layout or declaration into a
+# failure, never a skip.
+core-evidence-check:
+	node ../lazily-spec/scripts/check-core-evidence.mjs --bindings-root .. --binding python --reports build/core-evidence --generate-reports --require-all
 
 core-facade-check:
 	uv run pytest tests/test_core_facade.py -q --noconftest
@@ -116,7 +126,7 @@ test-interop-peer:
 assertion-ordering-check:
 	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding py --root .
 
-check: format-check lint type-check core-api core-conformance test conformance-coverage test-interop-peer assertion-ordering-check core-facade-check core-artifact-consumer-check ci-reach
+check: format-check lint type-check core-api core-conformance test conformance-coverage test-interop-peer assertion-ordering-check core-facade-check core-artifact-consumer-check core-evidence-check ci-reach
 
 core-api:
 	uv run poe core_api
