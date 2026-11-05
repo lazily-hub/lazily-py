@@ -45,6 +45,7 @@ second definition to keep in step.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import subprocess
@@ -62,21 +63,126 @@ if TYPE_CHECKING:
 # exercise — the copy IS the premise of every assertion below.
 from test_ci_reach_make_failure import (
     CI_REACH_SCRIPT,
+    REPO_ROOT,
     _run_guard,
     _scratch_tree,
 )
 
 
-#: The `check:` line as it stands. Every perturbation below rewrites this exact
-#: string, and asserts it appeared exactly once first: a perturbation that
-#: silently matched nothing would leave the tree healthy and the test green for
-#: the wrong reason.
-_CHECK_RULE = (
-    "check: format-check lint type-check core-api core-conformance test "
-    "conformance-coverage "
-    "test-interop-peer assertion-ordering-check core-facade-check "
-    "core-artifact-consumer-check ci-reach\n"
-)
+# ------------------------------------------------------------ the make oracle
+#
+# What `make check` runs is make's to say, not a literal's. These tests used to
+# carry the `check:` line and the gate count as hand-copied literals; when
+# c346950 added `core-evidence-check` as a 13th gate, the guard's own pins moved
+# with it and these literals did not, so five tests went red on a count and a
+# string that described no Makefile at all. Everything below is derived from
+# make's printed database (`make -pqrR`) — the rules make PARSED, conditionals
+# and all — and the guard's hand-maintained pins are compared against it, so a
+# gate added or dropped in one place and not the other fails naming the target.
+
+
+def _make_database(root: Path) -> dict[str, tuple[list[str], list[str]]]:
+    """make's own parse of `root`'s Makefile: target -> (prerequisites, recipe).
+
+    `-p` prints the database, `-q` runs no recipe, `-rR` drops the built-in
+    rules and variables so only this Makefile's targets appear. `-q` exits 1
+    whenever anything is out of date — every phony target always is — and 2 on
+    a real error, so 0 and 1 are the healthy codes and 2 is refused rather than
+    parsed. MAKEFLAGS and friends are dropped so that running under
+    `make -k check` (or a jobserver) cannot change what is printed.
+    """
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES"}
+    }
+    result = subprocess.run(
+        ["make", "-pqrR"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode in (0, 1), (
+        f"`make -pqrR` in {root} exited {result.returncode}, so make could not "
+        f"parse the Makefile and there is no database to derive the closure "
+        f"from.\nstderr:\n{result.stderr}"
+    )
+    lines = result.stdout.splitlines()
+    assert "# Files" in lines, (
+        f"`make -pqrR` printed no `# Files` section, so this parser is reading a "
+        f"database shape it does not know and would derive an empty closure.\n"
+        f"{result.stdout[:2000]}"
+    )
+    database: dict[str, tuple[list[str], list[str]]] = {}
+    not_a_target = False
+    current: str | None = None
+    for line in lines[lines.index("# Files") + 1 :]:
+        if line.startswith("# files hash-table stats"):
+            break
+        if line == "# Not a target:":
+            not_a_target = True
+            continue
+        if not line:
+            current, not_a_target = None, False
+            continue
+        if line.startswith("\t"):
+            if current is not None:
+                database[current][1].append(line[1:])
+            continue
+        if line.startswith("#"):
+            continue
+        header = re.match(r"^([^:#=\s]+):(?![:=])(.*)$", line)
+        if header is None or not_a_target:
+            continue
+        current = header.group(1)
+        prerequisites = [p for p in header.group(2).split() if p != "|"]
+        database[current] = (prerequisites, [])
+    return database
+
+
+def _make_closure(root: Path, target: str = "check") -> set[str]:
+    """`target` plus every target make would build on its way there."""
+    database = _make_database(root)
+    assert target in database, (
+        f"make's database for {root} has no `{target}` rule, so there is no "
+        f"closure to derive. Targets make knows: {sorted(database)}"
+    )
+    closure: set[str] = set()
+    pending = [target]
+    while pending:
+        name = pending.pop()
+        if name in closure:
+            continue
+        closure.add(name)
+        pending.extend(database.get(name, ([], []))[0])
+    return closure
+
+
+def _make_recipeless(root: Path, target: str = "check") -> set[str]:
+    """Members of `target`'s closure for which make holds no recipe at all."""
+    database = _make_database(root)
+    return {
+        name
+        for name in _make_closure(root, target)
+        if not database.get(name, ([], []))[1]
+    }
+
+
+@functools.cache
+def _check_rule() -> str:
+    """The `check:` line as make parsed it, rendered as one source line.
+
+    Every perturbation below rewrites this exact string, and asserts it appears
+    exactly once first: a perturbation that silently matched nothing would leave
+    the tree healthy and the test green for the wrong reason. Rendering it from
+    make's database rather than copying it by hand means that assertion now also
+    says the Makefile's `check:` line IS the rule make reads — one line, in
+    make's order — instead of saying it matches a literal that went stale.
+    """
+    prerequisites, _ = _make_database(REPO_ROOT)["check"]
+    return "check: " + " ".join(prerequisites) + "\n"
+
 
 #: The gate the conditional and classification attacks land on, and the command
 #: that proves whether make really runs it. `type-check` is a one-line recipe
@@ -98,13 +204,13 @@ def _tree(tmp_path: Path) -> Path:
 def _rewrite_check_rule(tree: Path, replacement: str) -> None:
     makefile = tree / "Makefile"
     source = makefile.read_text(encoding="utf-8")
-    assert source.count(_CHECK_RULE) == 1, (
+    assert source.count(_check_rule()) == 1, (
         f"expected exactly one copy of the `check:` rule line to perturb; found "
-        f"{source.count(_CHECK_RULE)}. A perturbation that matches nothing leaves "
+        f"{source.count(_check_rule())}. A perturbation that matches nothing leaves "
         f"a healthy tree, and every assertion below would then be measuring the "
         f"healthy run."
     )
-    makefile.write_text(source.replace(_CHECK_RULE, replacement, 1), encoding="utf-8")
+    makefile.write_text(source.replace(_check_rule(), replacement, 1), encoding="utf-8")
 
 
 def _make_n(tree: Path, target: str, **env: str) -> subprocess.CompletedProcess[str]:
@@ -147,9 +253,9 @@ def test_a_dead_make_conditional_cannot_decouple_the_closure_from_make(
     _rewrite_check_rule(
         tree,
         "ifeq (0,1)\n"
-        + _CHECK_RULE
+        + _check_rule()
         + "else\n"
-        + _CHECK_RULE.replace(f" {_VICTIM}", "")
+        + _check_rule().replace(f" {_VICTIM}", "")
         + "endif\n",
     )
 
@@ -214,9 +320,9 @@ def test_the_oracle_is_silent_on_the_honest_branch_of_a_live_conditional(
     _rewrite_check_rule(
         tree,
         "ifeq ($(SKIP_SLOW),)\n"
-        + _CHECK_RULE
+        + _check_rule()
         + "else\n"
-        + _CHECK_RULE.replace(f" {_VICTIM}", "")
+        + _check_rule().replace(f" {_VICTIM}", "")
         + "endif\n",
     )
 
@@ -314,7 +420,7 @@ def test_a_per_invocation_run_id_does_not_red_the_oracle(tree: Path) -> None:
 def test_a_dropped_prerequisite_is_refused_and_named(tree: Path) -> None:
     """The original defect: a gate leaves and only a count changes."""
     _healthy(tree)
-    _rewrite_check_rule(tree, _CHECK_RULE.replace(f" {_DROPPED}", ""))
+    _rewrite_check_rule(tree, _check_rule().replace(f" {_DROPPED}", ""))
 
     root = _make_n(tree, "check")
     assert root.returncode == 0, (
@@ -358,7 +464,7 @@ def test_a_swap_is_refused_in_both_directions(tree: Path) -> None:
     _healthy(tree)
     _rewrite_check_rule(
         tree,
-        _CHECK_RULE.replace(f" {_DROPPED}", "").rstrip("\n")
+        _check_rule().replace(f" {_DROPPED}", "").rstrip("\n")
         + " smuggled-in\n"
         + "\nsmuggled-in:\n\tuv run ruff check --no-fix src/lazily/ tests/\n",
     )
@@ -611,3 +717,48 @@ def test_the_reported_accounting_partitions_the_pinned_closure(tree: Path) -> No
         f"{nogate} target(s) were classified as carrying no gate, but "
         f"EXPECTED_NO_GATE_TARGETS pins {len(nogate_pin)}."
     )
+
+
+def test_the_guard_pins_are_the_closure_make_builds() -> None:
+    """The guard's hand-kept pins against make's own database, by name.
+
+    `EXPECTED_CLOSURE_TARGETS`, `EXPECTED_NO_GATE_TARGETS` and the target column
+    of `EXPECTED_GATE_STEPS` are three hand-maintained lists. Inside the guard
+    they are compared with an awk scan of the Makefile and with `make -n`; here
+    they are compared with the closure make itself derives from its parsed
+    rules, so a gate added to or dropped from `check` without the matching pin
+    edit fails naming the target — in both directions — rather than as a count
+    one higher or lower than some literal somewhere expected.
+    """
+    closure = _make_closure(REPO_ROOT)
+    recipeless = _make_recipeless(REPO_ROOT)
+    gates = closure - recipeless
+
+    for name, pinned, derived in (
+        (
+            "EXPECTED_CLOSURE_TARGETS",
+            set(_bash_array("EXPECTED_CLOSURE_TARGETS")),
+            closure,
+        ),
+        (
+            "EXPECTED_NO_GATE_TARGETS",
+            set(_bash_array("EXPECTED_NO_GATE_TARGETS")),
+            recipeless,
+        ),
+        (
+            "EXPECTED_GATE_STEPS",
+            {row.strip('"').split()[0] for row in _bash_array("EXPECTED_GATE_STEPS")},
+            gates,
+        ),
+    ):
+        built_not_pinned = sorted(derived - pinned)
+        pinned_not_built = sorted(pinned - derived)
+        assert not built_not_pinned and not pinned_not_built, (
+            f"`{name}` in {CI_REACH_SCRIPT} does not describe what make builds for "
+            f"`check` (from `make -pqrR`).\n"
+            f"  make builds it, the pin omits it:  {built_not_pinned}\n"
+            f"  pinned, make does not build it:    {pinned_not_built}\n"
+            f"Add or remove the gate in the Makefile's `check:` rule and in the "
+            f"guard's pins together; one without the other is an unreviewed change "
+            f"to what CI is held to."
+        )

@@ -44,7 +44,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from test_ci_reach_closure_pin import _bash_array
+from test_ci_reach_closure_pin import _bash_array, _make_closure, _make_recipeless
 from test_ci_reach_make_failure import CI_REACH_SCRIPT, _run_guard, _scratch_tree
 from test_ci_reach_step_pin import WORKFLOW, _write_changed
 
@@ -770,20 +770,30 @@ def test_the_clean_tree_verdict_gained_exactly_two_ok_lines(tree: Path) -> None:
     does not run does not make a single reach verdict wrong, and pre-empting them
     would hide which gate is in which step while telling the reader the workflow
     is dead. So the healthy output is the old one plus the pin and floor lines.
+
+    The magnitudes are make's, not literals: the gate count is the closure make
+    derives for `check` minus the members make holds no recipe for. A literal
+    `12` here went stale the moment c346950 added a 13th gate, and a stale count
+    says only that some number changed; which gate moved is
+    `test_the_guard_pins_are_the_closure_make_builds`'s to name.
     """
+    recipeless = _make_recipeless(tree)
+    gates = len(_make_closure(tree) - recipeless)
+    nogate = len(recipeless)
     result = _healthy_activation(tree)
     assert result.stderr == "", result.stderr
     lines = result.stdout.splitlines()
     assert lines[-4:] == [
-        "check-ci-reach: OK — 12 gate(s) reached INSIDE the CI step pinned for each",
-        "check-ci-reach: OK — 12 target(s) reached by CI, 0 excused, 1 carrying no gate",
+        f"check-ci-reach: OK — {gates} gate(s) reached INSIDE the CI step pinned for each",
+        f"check-ci-reach: OK — {gates} target(s) reached by CI, 0 excused, "
+        f"{nogate} carrying no gate",
         "check-ci-reach: OK — 2 trigger(s), 1 trigger filter(s) and 1 gate job(s) "
         "pinned to exact values",
         "check-ci-reach: OK — .github/workflows/precommit.yml gates on push — "
         "unfiltered by path, every branch",
     ], (
         f"the healthy verdict changed. The first two lines are the magnitudes "
-        f"every other ci-reach test is written against (12 reached, 0 excused, 1 "
-        f"carrying no gate, 12 gates step-scoped); the last two are the activation "
+        f"make's database implies ({gates} reached, 0 excused, {nogate} carrying "
+        f"no gate, {gates} gates step-scoped); the last two are the activation "
         f"pins' and independent floor's own lines.\n{result.stdout}"
     )
