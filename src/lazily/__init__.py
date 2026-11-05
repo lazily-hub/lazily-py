@@ -32,6 +32,7 @@ __all__ = [
     "ROOT",
     "SHM_BLOB_HEADER_LEN",
     "SHM_DEFAULT_CAPACITY",
+    "SQLITE_STORE_BUSY_TIMEOUT",
     "Alignment",
     "ArrowBackend",
     "AsyncCellHandle",
@@ -932,6 +933,7 @@ from .relay import (
     WindowPolicy,
 )
 from .reliable_sync import (
+    SQLITE_STORE_BUSY_TIMEOUT,
     Clock,
     DriverError,
     DurableOutbox,

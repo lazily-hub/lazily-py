@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "SQLITE_STORE_BUSY_TIMEOUT",
     "Clock",
     "DriverError",
     "DurableOutbox",
@@ -344,8 +345,45 @@ CREATE TABLE IF NOT EXISTS reliable_sync_outbox_cursor (
 """
 
 
+#: Busy timeout, in seconds, :class:`SqliteStore` installs on the connection it
+#: opens (``#lazilysqlitestoreopen``; parity with lazily-rs
+#: ``SQLITE_STORE_BUSY_TIMEOUT``, pinned by ``lazily-spec/sqlite-stores.json``).
+#:
+#: The outbox tables are routinely co-tenants of a database other writers share
+#: (agent-doc keeps them in its ``state.db``). A statement that needs the write
+#: lock while another connection holds it waits at most this long, then fails
+#: with ``sqlite3.OperationalError: database is locked``. ``sqlite3.connect``'s
+#: implicit default is 5 seconds; the explicit value matches the 30-second
+#: budget agent-doc applies to every other ``state.db`` connection.
+SQLITE_STORE_BUSY_TIMEOUT: float = 30.0
+
+
+def _connect_sqlite_store(path: str | Path) -> sqlite3.Connection:
+    """The one sanctioned ``sqlite3.connect`` call (``#lazilysqlitestoreopen``).
+
+    ``isolation_level=None`` puts the connection in autocommit mode: the
+    ``sqlite3`` module never opens an implicit DEFERRED transaction, so every
+    store operation is one autocommit statement. That is what makes the busy
+    timeout effective: SQLite runs the busy handler only when a statement
+    acquires the write lock from no open transaction. A DEFERRED transaction
+    that has already read and then tries to write is refused with an immediate
+    ``database is locked`` that no timeout waits out, so any read-then-write
+    transaction added here MUST be ``BEGIN IMMEDIATE``.
+    ``tests/test_sqlite_store_busy.py::test_sqlite_connections_never_open_deferred_transactions``
+    enforces both rules over ``src/lazily``.
+    """
+    return sqlite3.connect(
+        path, timeout=SQLITE_STORE_BUSY_TIMEOUT, isolation_level=None
+    )
+
+
 class SqliteStore:
-    """SQLite :class:`OutboxStore`, namespaced by document hash."""
+    """SQLite :class:`OutboxStore`, namespaced by document hash.
+
+    Opens its connection with the :data:`SQLITE_STORE_BUSY_TIMEOUT` busy timeout
+    in autocommit mode: every operation is a single autocommit statement, never
+    a read-then-write transaction (``#lazilysqlitestoreopen``).
+    """
 
     __slots__ = ("_connection", "document_hash")
 
@@ -353,7 +391,7 @@ class SqliteStore:
         path = Path(path)
         if str(path) != ":memory:":
             path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(path)
+        self._connection = _connect_sqlite_store(path)
         self.document_hash = document_hash
         self._connection.executescript(OUTBOX_SCHEMA)
 
@@ -361,20 +399,17 @@ class SqliteStore:
         self._connection.close()
 
     def put(self, epoch: int, frame: bytes) -> None:
-        with self._connection:
-            self._connection.execute(
-                "INSERT OR REPLACE INTO reliable_sync_outbox "
-                "(document_hash, epoch, frame_json) VALUES (?, ?, ?)",
-                (self.document_hash, epoch, frame),
-            )
+        self._connection.execute(
+            "INSERT OR REPLACE INTO reliable_sync_outbox "
+            "(document_hash, epoch, frame_json) VALUES (?, ?, ?)",
+            (self.document_hash, epoch, frame),
+        )
 
     def delete_through(self, epoch: int) -> None:
-        with self._connection:
-            self._connection.execute(
-                "DELETE FROM reliable_sync_outbox "
-                "WHERE document_hash = ? AND epoch <= ?",
-                (self.document_hash, epoch),
-            )
+        self._connection.execute(
+            "DELETE FROM reliable_sync_outbox WHERE document_hash = ? AND epoch <= ?",
+            (self.document_hash, epoch),
+        )
 
     def scan_after(self, cursor: int) -> list[tuple[int, bytes]]:
         rows = self._connection.execute(
@@ -393,14 +428,13 @@ class SqliteStore:
         return 0 if row is None else int(row[0])
 
     def save_cursor(self, epoch: int) -> None:
-        with self._connection:
-            self._connection.execute(
-                "INSERT INTO reliable_sync_outbox_cursor "
-                "(document_hash, acked_through) VALUES (?, ?) "
-                "ON CONFLICT(document_hash) DO UPDATE SET "
-                "acked_through = MAX(acked_through, excluded.acked_through)",
-                (self.document_hash, epoch),
-            )
+        self._connection.execute(
+            "INSERT INTO reliable_sync_outbox_cursor "
+            "(document_hash, acked_through) VALUES (?, ?) "
+            "ON CONFLICT(document_hash) DO UPDATE SET "
+            "acked_through = MAX(acked_through, excluded.acked_through)",
+            (self.document_hash, epoch),
+        )
 
 
 class SqliteOutbox(Outbox[SqliteStore]):
