@@ -57,8 +57,17 @@ jobs:
       - name: Install Python
         run: uv python install ${{ matrix.python-version }}
 
+      # Before ANY step that runs `uv sync` or `uv run` (#lazilylockstale). Both
+      # re-lock a stale uv.lock and exit 0 unless told not to, so a lock left
+      # behind by a version bump used to be rewritten here in silence and the
+      # run went green. `uv lock --check` fails on that drift instead.
+      - name: Lockfile is current (make lock-check)
+        run: uv lock --check
+
+      # `--locked`, not `--frozen`: `--frozen` installs from uv.lock WITHOUT
+      # checking it against pyproject.toml, which is the opposite of a gate.
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --locked
 
       - name: Clean wheel Core consumer
         env:

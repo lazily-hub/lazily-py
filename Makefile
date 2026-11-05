@@ -1,4 +1,4 @@
-.PHONY: init build test lint lint-fix format-check format-fix type-check clean publish-test publish bench bench-scale compile core-api core-conformance core-facade-check core-artifact-consumer-check core-evidence-check conformance-coverage assertion-ordering-check ci-reach
+.PHONY: init build test lint lint-fix format-check format-fix type-check clean publish-test publish bench bench-scale compile core-api core-conformance core-facade-check core-artifact-consumer-check core-evidence-check conformance-coverage assertion-ordering-check ci-reach lock-check
 
 core-artifact-consumer-check:
 	./scripts/core-artifact-consumer-check.sh
@@ -118,6 +118,26 @@ lint-fix:
 type-check:
 	poe ty
 
+# Lockfile gate (#lazilylockstale). Fails when uv.lock no longer matches
+# pyproject.toml, instead of letting the next `uv run` quietly rewrite it.
+#
+# Every `uv run` / `uv sync` without `--locked` or `--frozen` RE-LOCKS a stale
+# lockfile and exits 0. That is how `release: prepare 0.45.0` shipped a uv.lock
+# still recording lazily 0.44.0: nothing failed, and every later `uv run` in any
+# checkout rewrote the file and left the worktree dirty.
+#
+# ORDER MATTERS: this must be the FIRST prerequisite of `check`. Any gate that
+# runs `uv run` before it repairs the lock first, and then `uv lock --check`
+# passes on the repaired file — a green verdict about a lock nobody committed.
+# tests/test_lockfile_current.py pins both the order and the CI side (a
+# `uv lock --check` step before the first `uv run`, and `uv sync --locked`).
+#
+# Only content drift fails it: a lock whose sole difference is an older
+# `revision =` format number passes, so a newer uv on CI does not red the build
+# by itself.
+lock-check:
+	uv lock --check
+
 # Run all checks
 .PHONY: test-interop-peer
 test-interop-peer:
@@ -126,7 +146,7 @@ test-interop-peer:
 assertion-ordering-check:
 	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding py --root .
 
-check: format-check lint type-check core-api core-conformance test conformance-coverage test-interop-peer assertion-ordering-check core-facade-check core-artifact-consumer-check core-evidence-check ci-reach
+check: lock-check format-check lint type-check core-api core-conformance test conformance-coverage test-interop-peer assertion-ordering-check core-facade-check core-artifact-consumer-check core-evidence-check ci-reach
 
 core-api:
 	uv run poe core_api

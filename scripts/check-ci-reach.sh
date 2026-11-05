@@ -440,6 +440,7 @@ EXPECTED_CLOSURE_TARGETS=(
 	core-facade-check
 	format-check
 	lint
+	lock-check
 	test
 	test-interop-peer
 	type-check
@@ -542,6 +543,7 @@ EXPECTED_GATE_STEPS=(
 	"core-facade-check         Core facade contract"
 	"format-check              Format (make format)"
 	"lint                      Lint (make lint)"
+	"lock-check                Lockfile is current (make lock-check)"
 	"test                      Test (make test)"
 	"test-interop-peer         Interop peer self-check (make test-interop-peer)"
 	"type-check                Type check (make type-check)"
