@@ -30,10 +30,14 @@ import shutil
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
+
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -62,10 +66,32 @@ def _uv() -> str:
     return uv
 
 
-def _uv_env() -> dict[str, str]:
-    # The suite runs under `uv run`; drop settings that would change what
-    # `uv lock --check` means (a frozen/locked override, or a project redirect).
-    env = {k: v for k, v in os.environ.items() if not k.startswith("UV_")}
+# `UV_*` variables that only say WHERE uv's own state lives, never what a
+# resolution means (#lazilypyci). Everything else under `UV_` is dropped.
+#
+# The suite runs under `uv run`, so the inherited environment may carry settings
+# that change what `uv lock --check` proves: `UV_FROZEN` / `UV_LOCKED` /
+# `UV_OFFLINE`, an index redirect, `UV_PROJECT`, `UV_PYTHON`. Stripping all of
+# `UV_*` removed those, and also removed the locators. pyproject.toml sets
+# `python-preference = "only-managed"`, so the system interpreter is never a
+# candidate; `astral-sh/setup-uv` installs the managed Python under
+# `UV_PYTHON_INSTALL_DIR` (`_temp/uv-python-dir`), and without it uv looks only
+# in the default managed directory, which is empty on a fresh runner. Every
+# scratch check then exited 2 with "No interpreter found ... uv is set to
+# offline mode" — CI run 41986502172 — while passing on any machine with a
+# managed Python in the default location.
+#
+# Passing `--python sys.executable` would also have found an interpreter, but
+# it bypasses the project's interpreter discovery, so the scratch check would
+# no longer run uv the way `make lock-check` and the CI gate step do.
+_UV_LOCATORS = frozenset({"UV_PYTHON_INSTALL_DIR", "UV_CACHE_DIR"})
+
+
+def _uv_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    source = os.environ if environ is None else environ
+    env = {
+        k: v for k, v in source.items() if not k.startswith("UV_") or k in _UV_LOCATORS
+    }
     env.pop("VIRTUAL_ENV", None)
     return env
 
@@ -80,10 +106,17 @@ def _scratch_project(tmp_path: Path) -> Path:
     return tree
 
 
+# `uv lock --check` exits 1 for "the lock needs to be updated" and 2 when uv
+# could not reach a verdict at all (no interpreter, unreadable project). Only
+# exit 1 is evidence about the lock.
+_STALE_EXIT = 1
+_STALE_MESSAGE = "needs to be updated"
+
+
 def _lock_check(tree: Path) -> subprocess.CompletedProcess[str]:
     # --offline: a current lock is verified from the lock alone, so this needs
     # no network and no cache; a stale one fails the same way online or off.
-    return subprocess.run(
+    result = subprocess.run(
         [_uv(), "lock", "--check", "--offline"],
         cwd=tree,
         env=_uv_env(),
@@ -92,6 +125,13 @@ def _lock_check(tree: Path) -> subprocess.CompletedProcess[str]:
         timeout=120,
         check=False,
     )
+    # A uv that could not run is neither a pass nor a stale-lock verdict; say so
+    # instead of letting the caller report "uv.lock is stale" (#lazilypyci).
+    assert result.returncode in (0, _STALE_EXIT), (
+        f"`uv lock --check` exited {result.returncode} without a verdict on the lock\n"
+        f"{result.stderr}"
+    )
+    return result
 
 
 def _locked_lazily(lock: dict[str, Any]) -> dict[str, Any]:
@@ -144,10 +184,10 @@ def test_lock_check_fails_on_a_version_bump_the_lock_does_not_record(
     )
 
     result = _lock_check(tree)
-    assert result.returncode != 0, (
+    assert result.returncode == _STALE_EXIT, (
         "uv lock --check passed a lock that records the wrong project version"
     )
-    assert "needs to be updated" in result.stderr, result.stderr
+    assert _STALE_MESSAGE in result.stderr, result.stderr
 
 
 def test_lock_check_ignores_an_older_revision_number(tmp_path: Path) -> None:
@@ -166,6 +206,33 @@ def test_lock_check_ignores_an_older_revision_number(tmp_path: Path) -> None:
 
     result = _lock_check(tree)
     assert result.returncode == 0, result.stderr
+
+
+# ---- the scratch check runs uv the way the gate does -----------------------
+
+
+def test_uv_env_keeps_only_the_uv_locators() -> None:
+    inherited = {
+        "PATH": "/usr/bin",
+        "HOME": "/home/runner",
+        "VIRTUAL_ENV": "/repo/.venv",
+        "UV_PYTHON_INSTALL_DIR": "/home/runner/work/_temp/uv-python-dir",
+        "UV_CACHE_DIR": "/home/runner/work/_temp/setup-uv-cache",
+        "UV_FROZEN": "1",
+        "UV_LOCKED": "1",
+        "UV_OFFLINE": "0",
+        "UV_INDEX_URL": "https://example.invalid/simple",
+        "UV_DEFAULT_INDEX": "https://example.invalid/simple",
+        "UV_PROJECT": "/elsewhere",
+        "UV_PYTHON": "3.13",
+        "UV_PYTHON_PREFERENCE": "only-system",
+    }
+    assert _uv_env(inherited) == {
+        "PATH": "/usr/bin",
+        "HOME": "/home/runner",
+        "UV_PYTHON_INSTALL_DIR": "/home/runner/work/_temp/uv-python-dir",
+        "UV_CACHE_DIR": "/home/runner/work/_temp/setup-uv-cache",
+    }
 
 
 # ---- nothing repairs the lock before the gate: make ------------------------
