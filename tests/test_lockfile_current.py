@@ -12,7 +12,10 @@ The gate is `uv lock --check` (`make lock-check`, and the
 at the lock BEFORE anything rewrites it, so this file pins three things:
 
 * the lock itself is current (statically, and through uv on a scratch copy);
-* the gate bites — a pyproject version bump the lock does not record fails it;
+* the gate bites — a pyproject version bump the lock does not record fails
+  `uv lock --check`. That proof is online. `--offline` re-resolves the
+  `python_full_version >= '3.15'` split and exits 1 on a cache miss for
+  `build==1.4.0` before it can say the lock is stale (CI run 42055705429);
 * the ordering: `uv lock --check` is the first command `make check` runs, the
   CI step runs before any `uv sync` / `uv run` step, and the CI install uses
   `uv sync --locked`, never `--frozen`.
@@ -113,11 +116,22 @@ _STALE_EXIT = 1
 _STALE_MESSAGE = "needs to be updated"
 
 
-def _lock_check(tree: Path) -> subprocess.CompletedProcess[str]:
-    # --offline: a current lock is verified from the lock alone, so this needs
-    # no network and no cache; a stale one fails the same way online or off.
+def _lock_check(
+    tree: Path, *, offline: bool = True
+) -> subprocess.CompletedProcess[str]:
+    # A current lock is verified from the lock alone, so the default is
+    # `--offline`: no network and no cache. A version bump is not. uv then
+    # re-resolves every `requires-python` split, including
+    # `python_full_version >= '3.15'`, and `--offline` exits 1 because
+    # `build==1.4.0` is absent from a cache that only holds the active
+    # interpreter's artifacts (CI run 42055705429). That message is not a
+    # stale-lock verdict. `make lock-check` is `uv lock --check` with the
+    # network available, and the version-bump proof uses that command.
+    command = [_uv(), "lock", "--check"]
+    if offline:
+        command.append("--offline")
     result = subprocess.run(
-        [_uv(), "lock", "--check", "--offline"],
+        command,
         cwd=tree,
         env=_uv_env(),
         capture_output=True,
@@ -183,7 +197,7 @@ def test_lock_check_fails_on_a_version_bump_the_lock_does_not_record(
         _PROJECT_VERSION.sub(f'version = "{current.group(1)}.post999"', text, count=1)
     )
 
-    result = _lock_check(tree)
+    result = _lock_check(tree, offline=False)
     assert result.returncode == _STALE_EXIT, (
         "uv lock --check passed a lock that records the wrong project version"
     )
