@@ -137,7 +137,10 @@ publish-test: build
 publish: build
 	@echo "WARNING: This will publish to the real PyPI!"
 	@read -p "Are you sure? (y/N) " confirm && [ "$$confirm" = "y" ]
-	python -m twine upload dist/*
+	@set +x; \
+		token="$$(passage btak/PYPI_PUBLISH_TOKEN)" || { printf '%s\n' 'PYPI_PUBLISH_TOKEN lookup failed' >&2; exit 1; }; \
+		test -n "$$token" || { printf '%s\n' 'PYPI_PUBLISH_TOKEN lookup returned empty' >&2; exit 1; }; \
+		TWINE_USERNAME=__token__ TWINE_PASSWORD="$$token" python -m twine upload dist/*
 
 # Conformance-coverage guard (#portconformancecoverage). Static: fails when the
 # canonical corpus grows a fixture no test in this repo even names. Naming is not
