@@ -135,6 +135,8 @@ def _claim_value(claim: lazily.EgressClaim[int]) -> dict[str, Any]:
 def _ack_value(ack: lazily.EgressAck) -> dict[str, Any]:
     if ack.kind is lazily.EgressAckKind.STALE_GENERATION:
         return {"ack": "stale_generation", "current": ack.current}
+    if ack.kind is lazily.EgressAckKind.BEYOND_SENT:
+        return {"ack": "beyond_sent", "next_sequence": ack.next_sequence}
     return {"ack": str(ack.kind), "through": ack.through}
 
 
@@ -532,3 +534,51 @@ def test_thread_safe_flavor_serializes_core_access_on_the_shared_lock() -> None:
         assert cell.next_sequence == 0  # re-entrant: this thread owns the lock
     thread.join(5)
     assert done.is_set() and cell.next_sequence == 1
+
+
+@pytest.mark.parametrize("flavor", FLAVORS, ids=lambda flavor: flavor.name)
+def test_an_ack_beyond_next_sequence_is_refused_and_changes_nothing(
+    flavor: type[_Flavor],
+) -> None:
+    """Acknowledging a sequence never assigned would advance the watermark over
+    it, and the record later enqueued at that sequence would be pruned unsent."""
+    cell = flavor.cls({}, 1, lazily.EgressPolicy())
+    cell.enqueue(10)
+    _materialize(cell)
+    before = (cell.acked_through(), cell.pending(), cell.next_sequence)
+    for through in (1, 5):
+        assert cell.ack(1, through) == lazily.EgressAck(
+            lazily.EgressAckKind.BEYOND_SENT, next_sequence=1
+        )
+        assert _snapshot(cell) == dict.fromkeys(READER_KINDS, True), (
+            "a refused ACK invalidates nothing"
+        )
+    assert (cell.acked_through(), cell.pending(), cell.next_sequence) == before
+    cell.enqueue(20)
+    assert cell.ack(1, 1).kind is lazily.EgressAckKind.ADVANCED
+    assert cell.pending() == []
+
+
+@pytest.mark.parametrize("flavor", FLAVORS, ids=lambda flavor: flavor.name)
+def test_reconnect_with_nothing_replayed_still_invalidates_pending(
+    flavor: type[_Flavor],
+) -> None:
+    """Reconnect rewrites every pending envelope to the new generation, so a
+    warm `pending` reader is stale even when no in-flight record was replayed."""
+    cell = flavor.cls({}, 1, lazily.EgressPolicy())
+    cell.enqueue(10)
+    _materialize(cell)
+    reconnect = cell.reconnect(2)
+    assert reconnect.replayed == 0
+    assert _snapshot(cell) == {
+        "pending": False,
+        "inflight": True,
+        "acked_through": True,
+        "retry": True,
+    }
+    assert [e.generation for e in cell.pending()] == [2]
+    # And with nothing pending at all, nothing is invalidated.
+    empty = flavor.cls({}, 1, lazily.EgressPolicy())
+    _materialize(empty)
+    empty.reconnect(2)
+    assert _snapshot(empty) == dict.fromkeys(READER_KINDS, True)

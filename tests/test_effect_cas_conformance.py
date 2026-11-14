@@ -502,3 +502,21 @@ def test_thread_safe_shell_serializes_core_access_on_the_shared_lock() -> None:
         assert not done.wait(0.2), "upsert reached the core without the lock"
     thread.join(5)
     assert done.is_set() and cas.pending_keys(0) == ["doc"]
+
+
+def test_same_epoch_upsert_compares_the_original_intent_not_the_advanced_cursor() -> (
+    None
+):
+    """After a plan step applies, the retained cursor expects the step's returned
+    authority; a re-sent ORIGINAL intent is still the same intent."""
+    core: Any = Core(1)
+    original = _intent("plan", 1, "doc", 10, ["canonical", "snapshot"])
+    core.upsert_desired(original)
+    first = _claimed(core, "doc", 1, 0)
+    core.record_applied("doc", first.identity, "r0", 11)
+    assert core.state("doc").pending.expected == 11
+    assert core.upsert_desired(original)[1].kind == "unchanged"
+    advanced = _intent("plan", 1, "doc", 11, ["canonical", "snapshot"])
+    assert core.upsert_desired(advanced)[1].kind == "epoch_conflict"
+    _claimed(core, "doc", 1, 0)
+    assert core.upsert_desired(original)[1].kind == "unchanged"

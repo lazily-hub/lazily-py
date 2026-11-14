@@ -13,6 +13,11 @@
   / `AsyncEffectCas` shells. The core and every shell replay
   `conformance/egress/effect_cas.json` (9 scenarios); the scenario floor is
   re-pinned to 165.
+- Egress `ack` refuses a watermark at or past `next_sequence`
+  (`EgressAckKind.BEYOND_SENT`, carrying `next_sequence`) without changing or
+  invalidating anything, and `reconnect` invalidates `pending` whenever anything
+  is pending (every envelope is rewritten to the new generation), not only when
+  records were replayed. Matches lazily-spec ec718e3 / lazily-rs a185d27.
 
 ## 0.45.0
 

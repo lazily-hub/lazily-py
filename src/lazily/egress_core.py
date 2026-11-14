@@ -104,6 +104,7 @@ class EgressClaim[T]:
 class EgressAckKind(StrEnum):
     ADVANCED = "advanced"
     UNCHANGED = "unchanged"
+    BEYOND_SENT = "beyond_sent"
     STALE_GENERATION = "stale_generation"
 
 
@@ -112,6 +113,7 @@ class EgressAck:
     kind: EgressAckKind
     through: int | None = None
     current: int | None = None
+    next_sequence: int | None = None
 
 
 class EgressFailureKind(StrEnum):
@@ -283,10 +285,21 @@ class EgressCore[T]:
         )
 
     def ack(self, generation: int, through: int) -> tuple[EgressChange, EgressAck]:
-        """Advance the cumulative watermark and prune acknowledged records."""
+        """Advance the cumulative watermark and prune acknowledged records.
+
+        An ACK at or past ``next_sequence`` is refused (``BEYOND_SENT``) and
+        changes nothing.
+        """
         if generation != self._generation:
             return _NO_CHANGE, EgressAck(
                 EgressAckKind.STALE_GENERATION, current=self._generation
+            )
+        if through >= self._next_sequence:
+            # Refused: nothing at or past `next_sequence` was ever assigned, so
+            # acknowledging it would advance the watermark over sequences that
+            # do not exist yet and silently drop them when they are enqueued.
+            return _NO_CHANGE, EgressAck(
+                EgressAckKind.BEYOND_SENT, next_sequence=self._next_sequence
             )
         if self._acked_through is not None and through <= self._acked_through:
             return _NO_CHANGE, EgressAck(
@@ -395,9 +408,13 @@ class EgressCore[T]:
             record.generation = generation
         retry_changed = self._retry is not None
         self._retry = None
+        # Every pending envelope was rewritten to the new generation, so the
+        # `pending` projection changed whenever anything is pending — not only
+        # when something was replayed into it.
+        pending_changed = replayed > 0 or bool(self._pending)
         return (
             EgressChange(
-                pending=replayed > 0, inflight=replayed > 0, retry=retry_changed
+                pending=pending_changed, inflight=replayed > 0, retry=retry_changed
             ),
             EgressReconnect(
                 EgressReconnectKind.ADVANCED, generation=generation, replayed=replayed
