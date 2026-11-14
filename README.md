@@ -817,6 +817,58 @@ the reorder buffer, and the observed clock, so there is nothing to await.
 Awaiting belongs to the transport, and the transport is outside the primitive by
 construction.
 
+## Transport-agnostic reactive egress — `lazily.egress`
+
+The send-side mirror of ingress. `EgressCore` owns delivery authority — monotone
+sequence assignment, a bounded unacknowledged window, a cumulative ACK
+watermark, bounded retry/backoff/exhaustion, and the producer-generation fence —
+and `EgressCell` projects it as four readers (`pending`, `inflight`,
+`acked_through`, `retry`). Transport I/O lives in exactly one attachment Effect
+per incarnation: it observes `pending` / `inflight`, asks the core to claim, and
+sends. An acknowledgement is domain delivery input that reopens the window, not
+an acknowledgement of a projection request.
+
+```python
+from lazily import EgressCell, EgressPolicy
+
+sent: list[int] = []
+
+
+class Transport:
+    def send(self, envelope) -> bool:
+        sent.append(envelope.sequence)
+        return True
+
+
+ctx: dict = {}
+egress = EgressCell[str](ctx, 1, EgressPolicy(inflight_limit=1))
+attachment = egress.attach_transport(Transport())
+egress.enqueue("a")
+egress.enqueue("b")
+assert sent == [0]                    # the window holds one unacknowledged send
+egress.ack(1, 0)                      # cumulative ACK reopens it reactively
+assert sent == [0, 1]
+egress.reconnect(2)                   # fences the old attachment, replays seq 1
+assert [e.generation for e in egress.pending()] == [2]
+attachment.dispose()
+```
+
+`ThreadSafeEgressCell` and `AsyncEgressCell` are the other two flavors; all
+three replay `lazily-spec/conformance/egress/egress_*.json`. The async flavor
+keeps the delivery-state readers synchronous — only
+`AsyncEgressCell.attach_transport_async` (an `async def send` transport driven
+from an `asyncio` task) is async-coloured.
+
+`EffectCasCore` (`lazily.effect_cas`, `#lzeffectcas`) is the generic keyed
+compare-and-swap effect authority beside it: stable effect identity, an opaque
+expected authority token, keyed single-flight, latest-wins supersession,
+logical-clock retry, reconnect fencing, exact terminal receipts, and resumable
+ordered plans. The application adapter supplies one atomic
+`compare_and_apply(attempt)`; the core makes every policy decision.
+`durable_state()` / `hydrate()` carry the full image across a crash. The core and
+the `EffectCas` / `ThreadSafeEffectCas` / `AsyncEffectCas` shells replay
+`lazily-spec/conformance/egress/effect_cas.json`.
+
 ## IPC — the `lazily-spec` wire protocol
 
 `lazily.ipc` implements the language-agnostic [`lazily-spec`](https://github.com/lazily-hub/lazily-spec)

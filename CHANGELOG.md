@@ -1,3 +1,19 @@
+## Unreleased
+
+### Added
+
+- Transport-agnostic reactive egress family (`#lzegress`): `EgressCore` plus
+  the `EgressCell` / `ThreadSafeEgressCell` / `AsyncEgressCell` shells, with one
+  transport attachment Effect per incarnation (`attach_transport`, and
+  `attach_transport_async` on the async flavor). All three flavors replay the
+  canonical `conformance/egress/egress_*.json` corpus, asserting returns, full
+  projected state, and per-reader invalidation in both directions.
+- Generic keyed effect compare-and-swap (`#lzeffectcas`): `EffectCasCore` with
+  `durable_state()` / `hydrate()`, and the `EffectCas` / `ThreadSafeEffectCas`
+  / `AsyncEffectCas` shells. The core and every shell replay
+  `conformance/egress/effect_cas.json` (9 scenarios); the scenario floor is
+  re-pinned to 165.
+
 ## 0.45.0
 
 ### Fixed

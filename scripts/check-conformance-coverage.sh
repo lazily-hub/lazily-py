@@ -79,11 +79,6 @@ KNOWN_UNCOVERED=(
   "durable-owner/inbox_outbox_deduplication.json"
   "durable-owner/ordered_replay.json"
   "durable-owner/projection_fingerprint.json"
-  # Reactive egress is currently Rust-only; Python has no egress replay runner.
-  "egress/egress_generation_fence.json"
-  "egress/egress_inflight_window.json"
-  "egress/egress_ordered_ack.json"
-  "egress/egress_retry_budget.json"
   # Experimental protobuf-v1 generation is piloted in Rust/Kotlin/TypeScript;
   # Python must negotiate the capability before replaying this typed trace.
   "protobuf/graph_boundary_traces.json"
