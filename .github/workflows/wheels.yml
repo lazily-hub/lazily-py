@@ -34,8 +34,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-14 (Apple Silicon) builds both arm64 + x86_64 (cross-compiled).
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-14]
+        # macos-15 (Apple Silicon) builds both arm64 + x86_64 (cross-compiled).
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

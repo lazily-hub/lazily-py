@@ -19,6 +19,12 @@
   is pending (every envelope is rewritten to the new generation), not only when
   records were replayed. Matches lazily-spec ec718e3 / lazily-rs a185d27.
 
+### Fixed
+
+- The macOS wheel job runs on `macos-15`. GitHub no longer accepts the
+  `macos-14` runner label, so the job was cancelled at start and the PyPI
+  publish (which needs every build job) was skipped.
+
 ## 0.45.0
 
 ### Fixed
