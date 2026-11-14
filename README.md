@@ -80,7 +80,7 @@ notes and platform carve-outs lives in
 | Work queue | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | CRDT data types | ✅ | ~ | ~ | ~ | ~ | ~ | ~ | ~ | ✅ | — |
 | Lossless tree | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| Egress | ✅ | ~ | ~ | ~ | ~ | ~ | ~ | ~ | ~ | ~ |
+| Egress | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ~ |
 | Ingress | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Wire codec | ✅ | ✅ | ✅ | ✅ | ~ | ✅ | ✅ | ✅ | ✅ | — |
 | Transport & FFI | ✅ | ~ | ~ | ~ | ~ | ✅ | ✅ | ~ | ✅ | — |
