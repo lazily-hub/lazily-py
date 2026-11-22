@@ -1,3 +1,15 @@
+## Unreleased
+
+### Changed
+
+- CI publishes to PyPI through trusted publishing (OIDC) instead of the
+  long-lived `PYPI_PUBLISH_TOKEN` repository secret. The `wheels.yml` publish
+  job requests `id-token: write`, and `pypa/gh-action-pypi-publish` exchanges
+  the job's GitHub identity for a short-lived upload token. The trusted
+  publisher registered on PyPI for `lazily` is `lazily-hub/lazily-py`, workflow
+  `wheels.yml`, no environment. Local `make publish` still resolves its token
+  from passage at point of use.
+
 ## 0.46.0
 
 ### Added
