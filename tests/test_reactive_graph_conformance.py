@@ -99,6 +99,7 @@ from lazily.thread_safe import ThreadSafeContext
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -122,6 +123,7 @@ FIXTURES = (
     "disarm_disposes_nothing.json",
     "dispose_detaches_edges_both_directions.json",
     "dispose_signal_reverts_to_lazy.json",
+    "effect_cleanup_is_optional.json",
     "failed_compute_is_never_cached.json",
     "disposal_does_not_run_surviving_effects.json",
     "exact_fold_paths_stay_exact.json",
@@ -344,6 +346,29 @@ def _ok(value: Any) -> tuple[str, Any]:
     return ("ok", value)
 
 
+def _cleanup_runs_for(name: str, cleanup: str | None) -> Callable[[int], bool]:
+    """Which runs of an effect body return a cleanup (`#lzeffectvoid`).
+
+    The `effect` op's `cleanup` field: `every_run` (the default when absent),
+    `none`, or `alternate` (odd runs return a cleanup, even runs none; the run
+    at creation is run 1). The no-cleanup form is lazily-py's idiomatic one —
+    the body returns nothing, i.e. ``None`` — never a no-op closure, which would
+    be observationally identical to a cleanup and test nothing.
+
+    An unknown value is a hard runner failure, never a silent default: a fixture
+    asking for a body shape this runner does not build must not replay as
+    `every_run` and report green.
+    """
+    mode = "every_run" if cleanup is None else cleanup
+    if mode == "every_run":
+        return lambda _run: True
+    if mode == "none":
+        return lambda _run: False
+    if mode == "alternate":
+        return lambda run: run % 2 == 1
+    raise AssertionError(f"effect {name}: unknown cleanup mode {cleanup!r}")
+
+
 # --------------------------------------------------------------------------- #
 # Execution models — one per context lazily-py ships.
 #
@@ -418,11 +443,19 @@ class SyncModel:
 
         return compute
 
-    def _body(self, name: str, reads: list[Any]) -> Any:
+    def _body(self, name: str, reads: list[Any], cleanup_mode: str | None) -> Any:
+        returns_cleanup = _cleanup_runs_for(name, cleanup_mode)
+        run = 0
+
         def body(_ctx: dict) -> Any:
+            nonlocal run
+            run += 1
             self.runs.append(name)
             for dep in reads:
                 self._value_of(dep, _ctx)
+            if not returns_cleanup(run):
+                # `none` / the even runs of `alternate`: return nothing.
+                return None
 
             def cleanup() -> None:
                 self.cleanups.append(name)
@@ -472,8 +505,14 @@ class SyncModel:
     async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
         batch(lambda: [cell.set(value) for cell, value in writes])
 
-    async def effect(self, name: str, reads: list[Any], scope: str | None) -> Any:
-        body = self._body(name, reads)
+    async def effect(
+        self,
+        name: str,
+        reads: list[Any],
+        scope: str | None,
+        cleanup: str | None = None,
+    ) -> Any:
+        body = self._body(name, reads, cleanup)
         if scope is not None:
             return self.scopes[scope].effect(body)
         handle = Effect(body)
@@ -610,11 +649,19 @@ class AsyncModel:
 
         return compute
 
-    def _body(self, name: str, reads: list[Any]) -> Any:
+    def _body(self, name: str, reads: list[Any], cleanup_mode: str | None) -> Any:
+        returns_cleanup = _cleanup_runs_for(name, cleanup_mode)
+        run = 0
+
         async def body(cc: Any) -> Any:
+            nonlocal run
+            run += 1
             self.runs.append(name)
             for dep in reads:
                 await self._value_of(cc, dep)
+            if not returns_cleanup(run):
+                # `none` / the even runs of `alternate`: return nothing.
+                return None
 
             def cleanup() -> None:
                 self.cleanups.append(name)
@@ -641,8 +688,14 @@ class AsyncModel:
     async def batch_writes(self, writes: list[tuple[Any, Any]]) -> None:
         self.ctx.batch(lambda: [self.ctx.set(cell, value) for cell, value in writes])
 
-    async def effect(self, name: str, reads: list[Any], scope: str | None) -> Any:
-        body = self._body(name, reads)
+    async def effect(
+        self,
+        name: str,
+        reads: list[Any],
+        scope: str | None,
+        cleanup: str | None = None,
+    ) -> Any:
+        body = self._body(name, reads, cleanup)
         if scope is not None:
             return self.scopes[scope].effect_async(body)
         return self.ctx.effect_async(body)
@@ -927,7 +980,10 @@ async def _replay(
             )
         elif kind == "effect":
             reads = [node_of(r) for r in op.get("reads", [])]
-            register(op["id"], await model.effect(op["id"], reads, op.get("scope")))
+            register(
+                op["id"],
+                await model.effect(op["id"], reads, op.get("scope"), op.get("cleanup")),
+            )
         elif kind == "read":
             result = await read_id(op["id"])
             if result in (_ERR, _FAIL):
