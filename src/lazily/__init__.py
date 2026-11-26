@@ -147,9 +147,12 @@ __all__ = [
     "DurableProjectionFingerprint",
     "DurableProjectionFingerprintComparison",
     "DurableProjectionHealth",
+    "Edge",
+    "EdgeKind",
     "EdgeSnapshot",
     "Effect",
     "EffectEvent",
+    "EffectRun",
     "EffectState",
     "EntryKind",
     "Ephemeral",
@@ -161,6 +164,10 @@ __all__ = [
     "Fold",
     "FramedTransport",
     "GaugeCell",
+    "GraphEdit",
+    "GraphIr",
+    "GraphIrError",
+    "GraphRuntime",
     "Health",
     "HealthCell",
     "HealthCore",
@@ -274,6 +281,7 @@ __all__ = [
     "PhiAccrual",
     "PlaneEntry",
     "PnCounter",
+    "Policy",
     "PresenceCell",
     "PriorityStorage",
     "ProbabilisticSampleCell",
@@ -706,6 +714,16 @@ from .ffi import (
     encode_message,
     ffi_bytes_of,
     kind_of,
+)
+from .graph_ir import (
+    Edge,
+    EdgeKind,
+    EffectRun,
+    GraphEdit,
+    GraphIr,
+    GraphIrError,
+    GraphRuntime,
+    Policy,
 )
 from .ingress import IngressCell, IngressScopeReaders
 from .ingress_core import (
