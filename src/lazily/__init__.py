@@ -502,6 +502,7 @@ __all__ = [
     "TumblingTimeCore",
     "UnsupportedStructError",
     "VecDequeStorage",
+    "View",
     "WindowPolicy",
     "WireLwwRegister",
     "WireStamp",
@@ -1166,6 +1167,7 @@ from .stable_id import (
 )
 from .state_machine import StateMachine
 from .statechart import ChartDef, StateChart
+from .view import View
 from .stdlib import (
     RevisionBarrier,
     RevisionBarrierObservation,
