@@ -607,7 +607,7 @@ __all__ = [
     "word_lcs_len",
     "workflow_context",
 ]
-__version__ = "0.46.0"
+__version__ = "0.47.0"
 
 import warnings
 from typing import TYPE_CHECKING, Any
@@ -1167,7 +1167,6 @@ from .stable_id import (
 )
 from .state_machine import StateMachine
 from .statechart import ChartDef, StateChart
-from .view import View
 from .stdlib import (
     RevisionBarrier,
     RevisionBarrierObservation,
@@ -1233,6 +1232,7 @@ from .transport import (
 )
 from .tree import SourceTree, TreeNode
 from .types import LazilyCallable
+from .view import View
 from .windowing import (
     SessionCell,
     SessionCore,

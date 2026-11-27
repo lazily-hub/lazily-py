@@ -9,6 +9,7 @@ from conformance_assert import corpus_subdir, instrument
 
 from lazily.view import View
 
+
 _SPEC = corpus_subdir("view")
 _FIXTURES = (
     "batch_send.json",
@@ -34,7 +35,9 @@ def test_view_fixture_set() -> None:
     assert found == _FIXTURES
 
 
-@pytest.mark.parametrize("name", ["counter.json", "field_change.json", "batch_send.json"])
+@pytest.mark.parametrize(
+    "name", ["counter.json", "field_change.json", "batch_send.json"]
+)
 def test_view_conformance(name: str) -> None:
     _skip_if_absent()
     fixture = _load(name)

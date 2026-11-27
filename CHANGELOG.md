@@ -1,5 +1,11 @@
 ## Unreleased
 
+## 0.47.0
+
+### Added
+
+- Replay the portable View conformance fixtures from lazily-spec v0.48.0.
+
 ### Changed
 
 - CI publishes to PyPI through trusted publishing (OIDC) instead of the

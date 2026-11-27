@@ -15,6 +15,7 @@ from .effect import effect
 from .signal import computed
 from .statechart import ChartDef, StateChart
 
+
 _ROLES = {"text", "button", "field", "list", "region"}
 _FLOWS = {"row", "column", "stack"}
 _ALIGNS = {"start", "center", "end", "stretch"}
@@ -142,7 +143,9 @@ def _validate_expr(expr: dict[str, Any], signals: set[str], in_effect: bool) -> 
         _validate_arg(args[0], signals, in_effect)
 
 
-def _validate_effect(effect_doc: dict[str, Any], signals: set[str], has_chart: bool) -> None:
+def _validate_effect(
+    effect_doc: dict[str, Any], signals: set[str], has_chart: bool
+) -> None:
     _allow(effect_doc, {"op", "args"}, "effect")
     op = _req(effect_doc, "op", "effect")
     if op not in _EFFECT_OPS:
@@ -214,7 +217,9 @@ def _parse_layout(nid: str, value: Any) -> str | None:
     if align is not None and align not in _ALIGNS:
         raise ValueError(f"unknown align `{align}`")
     grow = value.get("grow")
-    if grow is not None and (isinstance(grow, bool) or not isinstance(grow, int) or grow < 0):
+    if grow is not None and (
+        isinstance(grow, bool) or not isinstance(grow, int) or grow < 0
+    ):
         raise ValueError(f"node `{nid}` layout.grow must be an integer >= 0")
     return flow if isinstance(flow, str) else None
 
@@ -352,7 +357,9 @@ class View:
             role = _req(raw, "role", f"node `{nid}`")
             if role not in _ROLES:
                 raise ValueError(f"unknown role `{role}`")
-            children = _parse_children(nid, raw["children"]) if "children" in raw else []
+            children = (
+                _parse_children(nid, raw["children"]) if "children" in raw else []
+            )
             flow = _parse_layout(nid, raw["layout"]) if "layout" in raw else None
             if "bind" in raw:
                 bind = raw["bind"]
@@ -361,12 +368,22 @@ class View:
                 if bind not in signal_ids:
                     raise ValueError(f"bind names unknown signal `{bind}`")
             if "text" in raw:
-                expr_docs.append((f"{nid}.text", _standing_text(raw["text"], signal_ids)))
+                expr_docs.append(
+                    (f"{nid}.text", _standing_text(raw["text"], signal_ids))
+                )
             if "hidden" in raw:
-                expr_docs.append((f"{nid}.hidden", _standing_flag("hidden", raw["hidden"], signal_ids)))
+                expr_docs.append(
+                    (
+                        f"{nid}.hidden",
+                        _standing_flag("hidden", raw["hidden"], signal_ids),
+                    )
+                )
             if "disabled" in raw:
                 expr_docs.append(
-                    (f"{nid}.disabled", _standing_flag("disabled", raw["disabled"], signal_ids))
+                    (
+                        f"{nid}.disabled",
+                        _standing_flag("disabled", raw["disabled"], signal_ids),
+                    )
                 )
             if "effects" in raw:
                 raw_effects = raw["effects"]
@@ -403,6 +420,7 @@ class View:
 
         exprs: dict[str, Any] = {}
         for key, expr in expr_docs:
+
             def compute(c: Any, expr: dict[str, Any] = expr) -> Any:
                 def read(sid: str) -> Any:
                     cell = signals.get(sid)
@@ -414,7 +432,11 @@ class View:
 
             exprs[key] = computed(ctx, compute)
 
-        chart = StateChart(ctx, ChartDef.from_chart(chart_doc)) if has_chart else None
+        chart = (
+            StateChart(ctx, ChartDef.from_chart(chart_doc))
+            if chart_doc is not None
+            else None
+        )
         watched = list(exprs.values()) or list(signals.values())
 
         def subscribe(c: Any) -> None:
